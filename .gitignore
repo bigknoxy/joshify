@@ -1,0 +1,44 @@
+# Rust build artifacts
+/target
+**/target/
+
+# Cargo lock for libraries (keep for apps)
+# Cargo.lock
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Rust analyzer
+.rust-analyzer/
+
+# Build output
+**/*.rs.bk
+*.pdb
+
+# Test/coverage
+*.gcda
+*.gcno
+*.gcov
+*.tarpaulin/
+*.profraw
+*.profdata
+coverage/
+
+# Credentials and secrets
+.env
+.env.local
+*.pem
+*.key
+credentials.json
+oauth_tokens.json
+
+# Logs
+*.log
+
+# Cache
+.cache/

@@ -1,0 +1,952 @@
+mod auth;
+mod api;
+mod player;
+mod ui;
+mod setup;
+mod album_art;
+
+use anyhow::Result;
+use ratatui::{
+    prelude::*,
+    widgets::Paragraph,
+};
+use ratatui::backend::CrosstermBackend;
+use rspotify::prelude::Id;
+use std::io;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Content state for main view
+#[derive(Clone, PartialEq)]
+pub struct TrackListItem {
+    pub name: String,
+    pub artist: String,
+    pub uri: String,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct PlaylistListItem {
+    pub name: String,
+    pub id: String,
+    pub track_count: u32,
+}
+
+/// Main content state
+#[derive(PartialEq)]
+pub enum MainContentState {
+    Home,
+    Loading(String),
+    LoadingInProgress(String), // Tracks that we've spawned a task for this state
+    LikedSongs(Vec<TrackListItem>),
+    Playlists(Vec<PlaylistListItem>),
+    PlaylistTracks(String, Vec<TrackListItem>), // playlist name, tracks
+    SearchResults(String, Vec<TrackListItem>),  // query, results
+    Error(String),
+}
+
+/// Focus target for Tab navigation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusTarget {
+    Sidebar,
+    MainContent,
+    PlayerBar,
+}
+
+/// Async load action to determine what data to fetch
+enum LoadAction {
+    LikedSongs,
+    Playlists,
+    PlaylistTracks(String, String), // name, id
+    Search(String),
+}
+
+/// Application state
+struct App {
+    /// Current navigation selection
+    selected_nav: ui::NavItem,
+    /// Whether we're authenticated
+    is_authenticated: bool,
+    /// Current playback state
+    player_state: player::PlayerState,
+    /// Status message
+    status_message: Option<String>,
+    /// Last poll time for playback
+    last_poll_ms: u64,
+    /// Poll interval in ms
+    poll_interval_ms: u64,
+    /// Current focus target for Tab navigation
+    focus: FocusTarget,
+    /// Show queue overlay
+    show_queue: bool,
+    /// Help message lines
+    help_lines: Option<Vec<String>>,
+    /// Last frame area (for mouse handling)
+    area: Option<Rect>,
+    /// Main content state
+    content_state: MainContentState,
+    /// Current selection index in content list
+    selected_index: usize,
+    /// Scroll offset for long lists
+    scroll_offset: usize,
+    /// Search input buffer
+    search_query: String,
+    /// Whether we're in search input mode
+    is_searching: bool,
+    /// Album art cache
+    album_art_cache: album_art::AlbumArtCache,
+    /// Last fetched album art URI to detect changes
+    last_fetched_art_uri: Option<String>,
+}
+
+impl App {
+    fn new() -> Self {
+        Self {
+            selected_nav: ui::NavItem::Home,
+            is_authenticated: false,
+            player_state: player::PlayerState::default(),
+            status_message: None,
+            last_poll_ms: 0,
+            poll_interval_ms: 1000, // Poll every second
+            focus: FocusTarget::Sidebar,
+            show_queue: false,
+            help_lines: None,
+            area: None,
+            content_state: MainContentState::Home,
+            selected_index: 0,
+            scroll_offset: 0,
+            search_query: String::new(),
+            is_searching: false,
+            album_art_cache: album_art::AlbumArtCache::new(),
+            last_fetched_art_uri: None,
+        }
+    }
+
+    /// Cycle focus to next target
+    fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            FocusTarget::Sidebar => FocusTarget::MainContent,
+            FocusTarget::MainContent => FocusTarget::PlayerBar,
+            FocusTarget::PlayerBar => FocusTarget::Sidebar,
+        };
+    }
+
+    /// Cycle focus to previous target
+    fn focus_previous(&mut self) {
+        self.focus = match self.focus {
+            FocusTarget::Sidebar => FocusTarget::PlayerBar,
+            FocusTarget::MainContent => FocusTarget::Sidebar,
+            FocusTarget::PlayerBar => FocusTarget::MainContent,
+        };
+    }
+
+    /// Poll Spotify API for current playback state
+    async fn poll_playback(
+        &mut self,
+        client: &Arc<Mutex<api::SpotifyClient>>,
+        tx_art: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    ) {
+        let client_guard = client.lock().await;
+        match client_guard.current_playback().await {
+            Ok(Some(ctx)) => {
+                // Update player state from context
+                let old_track_uri = self.player_state.current_track_uri.clone();
+                self.player_state = player::PlayerState::from_context(&ctx);
+
+                // Clear any previous error message on success
+                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
+                    self.status_message = None;
+                }
+
+                // Fetch album art when track changes
+                let new_track_uri = self.player_state.current_track_uri.clone();
+                let new_album_art_url = self.player_state.current_album_art_url.clone();
+
+                if new_track_uri != old_track_uri && new_track_uri.is_some() && new_album_art_url.is_some() {
+                    // Track changed and we have album art URL - fetch it
+                    let art_url = new_album_art_url.unwrap();
+                    let art_uri = new_track_uri.unwrap();
+
+                    // Clone cache for async task
+                    let cache = self.album_art_cache.clone();
+                    let tx_art_clone = tx_art.clone();
+                    let art_uri_for_closure = art_uri.clone();
+
+                    // Spawn async task to fetch album art
+                    tokio::spawn(async move {
+                        match cache.get_or_fetch(&art_url).await {
+                            Some(image_data) => {
+                                println!("Fetched album art for {}", art_uri_for_closure);
+                                // Send data back to main loop
+                                let _ = tx_art_clone.send((art_uri_for_closure, image_data)).await;
+                            }
+                            None => {
+                                eprintln!("Failed to fetch album art for {}", art_url);
+                            }
+                        }
+                    });
+
+                    // Store URI so we know when track changes again
+                    self.last_fetched_art_uri = Some(art_uri);
+                }
+            }
+            Ok(None) => {
+                // No active playback - this is normal, not an error
+                self.player_state.is_playing = false;
+                self.player_state.current_track_name = Some("Nothing playing".to_string());
+                self.player_state.current_artist_name = Some("".to_string());
+                // Clear playback error messages
+                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
+                    self.status_message = None;
+                }
+            }
+            Err(e) => {
+                // Only show error if it's not already displayed
+                let err_msg = format!("Playback error: {}", e);
+                if self.status_message.as_ref() != Some(&err_msg) {
+                    self.status_message = Some(err_msg);
+                }
+            }
+        }
+    }
+}
+
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize terminal
+    ratatui::init();
+
+    // Setup Ctrl-C handler for clean exit
+    let result = tokio::select! {
+        res = run() => res,
+        _ = tokio::signal::ctrl_c() => {
+            // Clean exit on Ctrl-C
+            let _ = crossterm::execute!(
+                io::stdout(),
+                crossterm::event::DisableMouseCapture
+            );
+            ratatui::restore();
+            println!("Goodbye!");
+            return Ok(());
+        }
+    };
+
+    // Restore terminal on exit - disable mouse capture first
+    let _ = crossterm::execute!(
+        io::stdout(),
+        crossterm::event::DisableMouseCapture
+    );
+    ratatui::restore();
+
+    result
+}
+
+async fn run() -> Result<()> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    // Enable mouse capture and cursor visibility
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::event::EnableMouseCapture
+    )?;
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::cursor::Show
+    )?;
+
+    let mut app = App::new();
+
+    // Ensure we have credentials configured (runs interactive setup if needed)
+    let config = setup::ensure_configured()?;
+
+    // Run OAuth browser flow to get access tokens
+    match setup::run_oauth_flow(&config).await {
+        Ok(true) => {
+            // Already authenticated with valid credentials
+            app.is_authenticated = true;
+            app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
+        }
+        Ok(false) => {
+            // Fresh authentication completed
+            app.is_authenticated = true;
+            app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
+        }
+        Err(e) => {
+            app.status_message = Some(format!("OAuth error: {}", e));
+            // Continue anyway - may have cached credentials
+        }
+    }
+
+    // Clear any leftover output and force redraw
+    terminal.clear()?;
+
+    // Initialize Spotify client wrapped in Arc<Mutex> for shared access
+    let client = match api::SpotifyClient::new(&config).await {
+        Ok(client) => {
+            app.is_authenticated = true;
+            app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
+            Some(Arc::new(Mutex::new(client)))
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Spotify auth error: {}", e));
+            None
+        }
+    };
+
+    // Channel for async data loading results
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<MainContentState>(16);
+
+    // Channel for album art data
+    let (tx_art, mut rx_art) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(16);
+
+    // Main loop
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Poll playback state at interval
+        if let Some(ref client) = client {
+            if now - app.last_poll_ms >= app.poll_interval_ms {
+                app.poll_playback(client, &tx_art).await;
+                app.last_poll_ms = now;
+            }
+        }
+
+        // Check for async data loading results
+        if let Ok(state) = rx.try_recv() {
+            app.content_state = state;
+        }
+
+        // Check for album art data results
+        while let Ok((track_uri, art_data)) = rx_art.try_recv() {
+            // Only update if this is still the current track
+            if app.player_state.current_track_uri.as_ref() == Some(&track_uri) {
+                app.player_state.current_album_art_data = Some(art_data);
+            }
+        }
+
+        terminal.draw(|frame| {
+            let area = frame.area();
+
+            // Check minimum terminal size
+            if area.width < 50 || area.height < 20 {
+                let warning = Paragraph::new("Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::Yellow));
+                frame.render_widget(warning, area);
+                return;
+            }
+
+            // Status bar at top (if present)
+            let top_area = if app.status_message.is_some() {
+                let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
+                    .areas(area);
+                let status = Paragraph::new(app.status_message.as_ref().unwrap().as_str())
+                    .style(Style::default().fg(Color::Black).bg(Color::Blue));
+                frame.render_widget(status, top);
+                rest
+            } else {
+                area
+            };
+
+            // Sidebar: fixed width for logo + nav
+            let sidebar_width = 20u16;
+
+            // Split into sidebar and main content
+            let [sidebar, main] = Layout::horizontal([
+                Constraint::Length(sidebar_width),
+                Constraint::Min(0),
+            ])
+            .areas(top_area);
+
+            // Player bar: 5 rows at bottom (includes album art)
+            let player_bar_height = 5u16;
+            let [main_content, player_bar] = Layout::vertical([
+                Constraint::Min(0),
+                Constraint::Length(player_bar_height),
+            ])
+            .areas(main);
+
+            // Render all components with focus highlighting
+            let sidebar_focused = app.focus == FocusTarget::Sidebar;
+            let main_focused = app.focus == FocusTarget::MainContent;
+            let player_focused = app.focus == FocusTarget::PlayerBar;
+
+            // Update search prompt in content state if actively typing
+            if app.is_searching {
+                let prompt = if app.search_query.is_empty() {
+                    "Type search query...".to_string()
+                } else {
+                    format!("Search: {}", app.search_query)
+                };
+                // Update state for search input display
+                match &app.content_state {
+                    MainContentState::Loading(msg) if msg != &prompt && !msg.starts_with("Searching") => {
+                        app.content_state = MainContentState::Loading(prompt);
+                    }
+                    MainContentState::LoadingInProgress(msg) if msg != &prompt && !msg.starts_with("Searching") => {
+                        app.content_state = MainContentState::Loading(prompt);
+                    }
+                    _ if app.content_state == MainContentState::Home => {
+                        app.content_state = MainContentState::Loading(prompt);
+                    }
+                    _ => {}
+                }
+            }
+
+            ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused);
+            ui::render_main_view(
+                frame,
+                main_content,
+                app.selected_nav,
+                app.is_authenticated,
+                main_focused,
+                &app.content_state,
+                app.selected_index,
+                app.scroll_offset,
+                app.is_searching,
+                &app.search_query,
+            );
+
+            let track_name = app.player_state.current_track_name.as_deref().unwrap_or("Not Playing");
+            let artist_name = app.player_state.current_artist_name.as_deref().unwrap_or("");
+
+            ui::render_player_bar(
+                frame,
+                player_bar,
+                track_name,
+                artist_name,
+                app.player_state.is_playing,
+                app.player_state.progress_ms,
+                app.player_state.duration_ms,
+                app.player_state.volume,
+                app.player_state.current_album_art_url.as_deref(),
+                app.player_state.current_album_art_data.as_deref(),
+                player_focused,
+            );
+
+            // Overlays (rendered last so they appear on top)
+            if app.show_queue {
+                ui::render_queue_overlay(frame, area, &app.player_state);
+            }
+            if let Some(ref help_lines) = app.help_lines {
+                ui::render_help_overlay(frame, area, help_lines);
+            }
+
+            // Store frame area for mouse handling
+            app.area = Some(area);
+
+            // Show cursor only when searching
+            if app.is_searching {
+                let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+            } else {
+                let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Hide);
+            }
+        })?;
+
+        // Handle async data loading based on current state
+        // Only spawn tasks when in Loading state, not LoadingInProgress (prevents duplicate spawns)
+        // We need to determine what to load first, then spawn, to avoid borrow checker issues
+        let load_action = match &app.content_state {
+            MainContentState::Loading(msg) if msg.contains("liked songs") => {
+                Some(LoadAction::LikedSongs)
+            }
+            MainContentState::Loading(msg) if msg.contains("playlists") && !msg.contains(':') => {
+                Some(LoadAction::Playlists)
+            }
+            MainContentState::Loading(msg) if msg.starts_with("Loading ") && msg.contains(':') => {
+                let parts: Vec<&str> = msg.trim_start_matches("Loading ").trim_end_matches("...").split(':').collect();
+                if parts.len() >= 2 {
+                    Some(LoadAction::PlaylistTracks(parts[0].trim().to_string(), parts[1].trim().to_string()))
+                } else {
+                    None
+                }
+            }
+            MainContentState::Loading(msg) if msg.starts_with("Searching") => {
+                let query = msg.trim_start_matches("Searching '").trim_end_matches("'...").to_string();
+                Some(LoadAction::Search(query))
+            }
+            _ => None,
+        };
+
+        if let Some(action) = load_action {
+            if let Some(ref client) = client {
+                match action {
+                    LoadAction::LikedSongs => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.current_user_saved_tracks(50).await {
+                                Ok(tracks) => {
+                                    let items: Vec<TrackListItem> = tracks.into_iter().filter_map(|t| {
+                                        t.track.id.map(|id| TrackListItem {
+                                            name: t.track.name,
+                                            artist: t.track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+                                            uri: format!("spotify:track:{}", id.id()),
+                                        })
+                                    }).collect();
+                                    let _ = tx_clone.send(MainContentState::LikedSongs(items)).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone.send(MainContentState::Error(format!("Failed to load liked songs: {}", e))).await;
+                                }
+                            }
+                        });
+                        app.content_state = MainContentState::LoadingInProgress("Loading liked songs...".to_string());
+                    }
+                    LoadAction::Playlists => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.current_users_playlists(50).await {
+                                Ok(playlists) => {
+                                    let items: Vec<PlaylistListItem> = playlists.into_iter().map(|p| PlaylistListItem {
+                                        name: p.name,
+                                        id: p.id.id().to_string(),
+                                        track_count: p.tracks.total,
+                                    }).collect();
+                                    let _ = tx_clone.send(MainContentState::Playlists(items)).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone.send(MainContentState::Error(format!("Failed to load playlists: {}", e))).await;
+                                }
+                            }
+                        });
+                        app.content_state = MainContentState::LoadingInProgress("Loading playlists...".to_string());
+                    }
+                    LoadAction::PlaylistTracks(name, id) => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        let name_for_state = name.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.playlist_get_items(&id).await {
+                                Ok(items) => {
+                                    let tracks: Vec<TrackListItem> = items.into_iter().filter_map(|pi| {
+                                        pi.track.and_then(|t| {
+                                            if let rspotify::model::PlayableItem::Track(track) = t {
+                                                track.id.map(|id| TrackListItem {
+                                                    name: track.name,
+                                                    artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+                                                    uri: format!("spotify:track:{}", id.id()),
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    }).collect();
+                                    let _ = tx_clone.send(MainContentState::PlaylistTracks(name, tracks)).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone.send(MainContentState::Error(format!("Failed to load playlist: {}", e))).await;
+                                }
+                            }
+                        });
+                        app.content_state = MainContentState::LoadingInProgress(format!("Loading {}...", name_for_state));
+                    }
+                    LoadAction::Search(query) => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        let query_for_state = query.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.search(&query, 50).await {
+                                Ok(tracks) => {
+                                    let items: Vec<TrackListItem> = tracks.into_iter().filter_map(|t| {
+                                        t.id.map(|id| TrackListItem {
+                                            name: t.name,
+                                            artist: t.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+                                            uri: format!("spotify:track:{}", id.id()),
+                                        })
+                                    }).collect();
+                                    let _ = tx_clone.send(MainContentState::SearchResults(query, items)).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone.send(MainContentState::Error(format!("Search failed: {}", e))).await;
+                                }
+                            }
+                        });
+                        app.content_state = MainContentState::LoadingInProgress(format!("Searching '{}'...", query_for_state));
+                    }
+                }
+            }
+        }
+
+        // Handle input
+        if crossterm::event::poll(std::time::Duration::from_millis(50))? {
+            match crossterm::event::read()? {
+                crossterm::event::Event::Key(key) => {
+                    // Global keys work regardless of focus
+                    if key.code == crossterm::event::KeyCode::Char('q') {
+                        break;
+                    }
+
+                    // Close overlays
+                    if app.show_queue && key.code != crossterm::event::KeyCode::Char('q') {
+                        app.show_queue = false;
+                        continue;
+                    }
+
+                    match key.code {
+                        // Focus navigation
+                        crossterm::event::KeyCode::Tab => {
+                            if key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                                app.focus_previous();
+                            } else {
+                                app.focus_next();
+                            }
+                        }
+
+                        // Enter key - action based on current focus
+                        crossterm::event::KeyCode::Enter => {
+                            match app.focus {
+                                FocusTarget::Sidebar => {
+                                    // Select current nav item - show content
+                                    match app.selected_nav {
+                                        ui::NavItem::LikedSongs => {
+                                            app.content_state = MainContentState::Loading("Loading liked songs...".to_string());
+                                            app.selected_index = 0;
+                                            app.scroll_offset = 0;
+                                        }
+                                        ui::NavItem::Playlists => {
+                                            app.content_state = MainContentState::Loading("Loading playlists...".to_string());
+                                            app.selected_index = 0;
+                                            app.scroll_offset = 0;
+                                        }
+                                        ui::NavItem::Home => {
+                                            app.content_state = MainContentState::Home;
+                                        }
+                                        ui::NavItem::Search => {
+                                            app.content_state = MainContentState::Loading("Type to search...".to_string());
+                                        }
+                                        ui::NavItem::Library => {
+                                            app.content_state = MainContentState::Loading("Loading library...".to_string());
+                                        }
+                                    }
+                                }
+                                FocusTarget::MainContent => {
+                                    // Act on current content - play selected track
+                                    match &app.content_state {
+                                        MainContentState::LikedSongs(tracks) |
+                                        MainContentState::PlaylistTracks(_, tracks) |
+                                        MainContentState::SearchResults(_, tracks) => {
+                                            if !tracks.is_empty() && app.selected_index < tracks.len() {
+                                                if let Some(ref client) = client {
+                                                    let c = client.lock().await;
+                                                    let track = &tracks[app.selected_index];
+                                                    match c.start_playback(vec![track.uri.clone()], None).await {
+                                                        Ok(_) => {
+                                                            app.status_message = Some(format!("Playing: {}", track.name));
+                                                        }
+                                                        Err(e) => {
+                                                            app.status_message = Some(format!("Playback error: {}", e));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        MainContentState::Playlists(playlists) => {
+                                            // Enter on playlist - show its tracks
+                                            if !playlists.is_empty() && app.selected_index < playlists.len() {
+                                                let playlist = &playlists[app.selected_index];
+                                                app.content_state = MainContentState::Loading(
+                                                    format!("Loading {}: {}...", playlist.name, playlist.id)
+                                                );
+                                                app.selected_index = 0;
+                                                app.scroll_offset = 0;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                FocusTarget::PlayerBar => {
+                                    // Toggle play/pause from player bar
+                                    if let Some(ref client) = client {
+                                        let c = client.lock().await;
+                                        if app.player_state.is_playing {
+                                            let _ = c.playback_pause().await;
+                                        } else {
+                                            let _ = c.playback_resume().await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Sidebar navigation (when sidebar focused)
+                        crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
+                            if app.focus == FocusTarget::Sidebar {
+                                let current_idx = app.selected_nav as usize;
+                                let next_idx = (current_idx + 1) % ui::NavItem::all().len();
+                                app.selected_nav = ui::NavItem::all()[next_idx];
+                            } else if app.focus == FocusTarget::MainContent {
+                                // Scroll list down based on current content
+                                let len = match &app.content_state {
+                                    MainContentState::LikedSongs(t) => t.len(),
+                                    MainContentState::Playlists(p) => p.len(),
+                                    MainContentState::PlaylistTracks(_, t) => t.len(),
+                                    MainContentState::SearchResults(_, t) => t.len(),
+                                    _ => 0,
+                                };
+                                if len > 0 {
+                                    app.selected_index = (app.selected_index + 1).min(len - 1);
+                                    // Auto-scroll if selection moves out of view
+                                    if app.selected_index >= app.scroll_offset + 10 {
+                                        app.scroll_offset = app.selected_index - 9;
+                                    }
+                                }
+                            } else if app.focus == FocusTarget::PlayerBar {
+                                // Volume down when player focused
+                                if let Some(ref client) = client {
+                                    let new_vol = app.player_state.volume.saturating_sub(5);
+                                    let c = client.lock().await;
+                                    let _ = c.set_volume(new_vol).await;
+                                }
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('k') | crossterm::event::KeyCode::Up => {
+                            if app.focus == FocusTarget::Sidebar {
+                                let current_idx = app.selected_nav as usize;
+                                let next_idx = if current_idx == 0 {
+                                    ui::NavItem::all().len() - 1
+                                } else {
+                                    current_idx - 1
+                                };
+                                app.selected_nav = ui::NavItem::all()[next_idx];
+                            } else if app.focus == FocusTarget::MainContent {
+                                // Scroll list up based on current content
+                                let len = match &app.content_state {
+                                    MainContentState::LikedSongs(t) => t.len(),
+                                    MainContentState::Playlists(p) => p.len(),
+                                    MainContentState::PlaylistTracks(_, t) => t.len(),
+                                    MainContentState::SearchResults(_, t) => t.len(),
+                                    _ => 0,
+                                };
+                                if len > 0 && app.selected_index > 0 {
+                                    app.selected_index -= 1;
+                                    // Auto-scroll if selection moves out of view
+                                    if app.selected_index < app.scroll_offset {
+                                        app.scroll_offset = app.selected_index;
+                                    }
+                                }
+                            } else if app.focus == FocusTarget::PlayerBar {
+                                // Volume up when player focused
+                                if let Some(ref client) = client {
+                                    let new_vol = (app.player_state.volume + 5).min(100);
+                                    let c = client.lock().await;
+                                    let _ = c.set_volume(new_vol).await;
+                                }
+                            }
+                        }
+
+                        // Playback controls (work from any focus)
+                        crossterm::event::KeyCode::Char(' ') => {
+                            if app.focus == FocusTarget::PlayerBar {
+                                // Space only toggles when player bar is focused
+                                if let Some(ref client) = client {
+                                    let c = client.lock().await;
+                                    if app.player_state.is_playing {
+                                        let _ = c.playback_pause().await;
+                                    } else {
+                                        let _ = c.playback_resume().await;
+                                    }
+                                }
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('n') => {
+                            if let Some(ref client) = client {
+                                let c = client.lock().await;
+                                let _ = c.playback_next().await;
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('p') => {
+                            if let Some(ref client) = client {
+                                let c = client.lock().await;
+                                let _ = c.playback_previous().await;
+                            }
+                        }
+                        crossterm::event::KeyCode::Left => {
+                            // Seek backward 10 seconds
+                            if let Some(ref client) = client {
+                                let new_pos = app.player_state.progress_ms.saturating_sub(10000);
+                                let c = client.lock().await;
+                                let _ = c.seek(new_pos, None).await;
+                            }
+                        }
+                        crossterm::event::KeyCode::Right => {
+                            // Seek forward 10 seconds
+                            if let Some(ref client) = client {
+                                let new_pos = app.player_state.progress_ms.saturating_add(10000)
+                                    .min(app.player_state.duration_ms);
+                                let c = client.lock().await;
+                                let _ = c.seek(new_pos, None).await;
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('+') => {
+                            if let Some(ref client) = client {
+                                let new_vol = (app.player_state.volume + 5).min(100);
+                                let c = client.lock().await;
+                                let _ = c.set_volume(new_vol).await;
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('-') => {
+                            if let Some(ref client) = client {
+                                let new_vol = app.player_state.volume.saturating_sub(5);
+                                let c = client.lock().await;
+                                let _ = c.set_volume(new_vol).await;
+                            }
+                        }
+
+                        // Queue toggle
+                        crossterm::event::KeyCode::Char('Q') => {
+                            if let Some(ref client) = client {
+                                let c = client.lock().await;
+                                let _ = c.get_queue().await;
+                            }
+                            app.show_queue = !app.show_queue;
+                        }
+                        crossterm::event::KeyCode::Char('a') => {
+                            // Add current track to queue
+                            if let Some(ref client) = client {
+                                if let Some(track) = &app.player_state.current_track_uri {
+                                    let c = client.lock().await;
+                                    match c.add_to_queue(track).await {
+                                        Ok(_) => {
+                                            app.status_message = Some("Added to queue".to_string());
+                                        }
+                                        Err(e) => {
+                                            app.status_message = Some(format!("Queue error: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Settings
+                        crossterm::event::KeyCode::Char('c') => {
+                            match setup::run_setup() {
+                                Ok(_) => {
+                                    app.status_message = Some("Config updated - restart app to apply".to_string());
+                                }
+                                Err(_) => {
+                                    app.status_message = Some("Setup cancelled".to_string());
+                                }
+                            }
+                        }
+
+                        // Search - '/' key starts search input
+                        crossterm::event::KeyCode::Char('/') => {
+                            app.is_searching = true;
+                            app.search_query.clear();
+                            app.focus = FocusTarget::MainContent;
+                            app.content_state = MainContentState::Loading("Type search query...".to_string());
+                        }
+
+                        // Search input handling
+                        _ if app.is_searching => {
+                            match key.code {
+                                crossterm::event::KeyCode::Enter => {
+                                    // Execute search
+                                    if !app.search_query.is_empty() {
+                                        app.content_state = MainContentState::Loading(
+                                            format!("Searching '{}'...", app.search_query)
+                                        );
+                                        app.selected_index = 0;
+                                        app.scroll_offset = 0;
+                                    }
+                                    app.is_searching = false;
+                                }
+                                crossterm::event::KeyCode::Esc => {
+                                    app.is_searching = false;
+                                    app.content_state = MainContentState::Home;
+                                }
+                                crossterm::event::KeyCode::Backspace => {
+                                    app.search_query.pop();
+                                    app.content_state = MainContentState::Loading(
+                                        if app.search_query.is_empty() {
+                                            "Type search query...".to_string()
+                                        } else {
+                                            format!("Search: {}", app.search_query)
+                                        }
+                                    );
+                                }
+                                crossterm::event::KeyCode::Char(c) => {
+                                    app.search_query.push(c);
+                                    app.content_state = MainContentState::Loading(
+                                        format!("Search: {}", app.search_query)
+                                    );
+                                }
+                                _ => {}
+                            }
+                            continue; // Skip other key handling while searching
+                        }
+
+                        // Help
+                        crossterm::event::KeyCode::Char('?') => {
+                            if app.help_lines.is_some() {
+                                app.help_lines = None;
+                            } else {
+                                app.help_lines = Some(vec![
+                                    "=== Navigation ===".into(),
+                                    "Tab/Shift+Tab: Focus sections".into(),
+                                    "j/k or ↑/↓: Navigate".into(),
+                                    "Enter: Select/Play".into(),
+                                    "".into(),
+                                    "=== Search ===".into(),
+                                    "/: Start search".into(),
+                                    "Esc: Cancel search".into(),
+                                    "".into(),
+                                    "=== Playback ===".into(),
+                                    "Space: Play/Pause".into(),
+                                    "n: Next track".into(),
+                                    "p: Previous track".into(),
+                                    "←/→: Seek ±10s".into(),
+                                    "".into(),
+                                    "=== Queue ===".into(),
+                                    "Q: Toggle queue view".into(),
+                                    "a: Add current to queue".into(),
+                                    "".into(),
+                                    "=== Volume ===".into(),
+                                    "+/-: Volume up/down".into(),
+                                    "".into(),
+                                    "=== System ===".into(),
+                                    "c: Reconfigure".into(),
+                                    "q: Quit".into(),
+                                    "Esc: Close overlays".into(),
+                                ]);
+                            }
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            app.show_queue = false;
+                            app.help_lines = None;
+                        }
+                        _ => {}
+                    }
+                }
+                crossterm::event::Event::Mouse(mouse) => {
+                    if let crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) = mouse.kind {
+                        // Click on top area to focus sidebar, middle for main, bottom for player
+                        if let Some(area) = app.area {
+                            let ratio = mouse.row as f32 / area.height as f32;
+                            if ratio < 0.1 {
+                                app.focus = FocusTarget::Sidebar;
+                            } else if ratio < 0.8 {
+                                app.focus = FocusTarget::MainContent;
+                            } else {
+                                app.focus = FocusTarget::PlayerBar;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
+}
