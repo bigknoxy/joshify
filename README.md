@@ -64,6 +64,8 @@ cargo uninstall joshify
 
 ## Quick Start
 
+### Interactive Mode (default)
+
 1. **Run Joshify**
    ```bash
    joshify
@@ -89,6 +91,38 @@ cargo uninstall joshify
    - `a` - Add current track to queue
    - `?` - Show help
    - `q` - Quit
+
+### Non-Interactive Mode (headless/automated)
+
+For scripted deployments or headless environments, provide credentials via environment variables or CLI flags:
+
+**Environment variables:**
+```bash
+export SPOTIFY_CLIENT_ID=your_client_id
+export SPOTIFY_CLIENT_SECRET=your_client_secret
+export SPOTIFY_ACCESS_TOKEN=your_access_token
+export SPOTIFY_REFRESH_TOKEN=your_refresh_token  # optional
+joshify
+```
+
+**CLI flags:**
+```bash
+joshify --client-id xxx --client-secret yyy --access-token zzz
+```
+
+**Mixed (CLI overrides env vars):**
+```bash
+export SPOTIFY_CLIENT_ID=xxx
+export SPOTIFY_CLIENT_SECRET=yyy
+joshify --access-token zzz  # use fresh token
+```
+
+**Token expiration:**
+```bash
+export SPOTIFY_TOKEN_EXPIRES_AT=1743552000  # Unix timestamp
+```
+
+If no expiration is provided, tokens are assumed valid for 1 hour.
 
 ## Features
 

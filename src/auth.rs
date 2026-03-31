@@ -23,7 +23,25 @@ impl Default for OAuthConfig {
         Self {
             client_id: std::env::var("SPOTIFY_CLIENT_ID").unwrap_or_default(),
             client_secret: std::env::var("SPOTIFY_CLIENT_SECRET").unwrap_or_default(),
-            redirect_uri: "http://127.0.0.1:8888/callback".to_string(),
+            redirect_uri: std::env::var("SPOTIFY_REDIRECT_URI")
+                .unwrap_or_else(|_| "http://127.0.0.1:8888/callback".to_string()),
+        }
+    }
+}
+
+impl OAuthConfig {
+    /// Create config from CLI args (args take precedence over env vars and config file)
+    pub fn from_args(args: &crate::CliArgs) -> Self {
+        Self {
+            client_id: args.client_id.clone()
+                .or_else(|| std::env::var("SPOTIFY_CLIENT_ID").ok())
+                .unwrap_or_default(),
+            client_secret: args.client_secret.clone()
+                .or_else(|| std::env::var("SPOTIFY_CLIENT_SECRET").ok())
+                .unwrap_or_default(),
+            redirect_uri: args.redirect_uri.clone()
+                .or_else(|| std::env::var("SPOTIFY_REDIRECT_URI").ok())
+                .unwrap_or_else(|| "http://127.0.0.1:8888/callback".to_string()),
         }
     }
 }
@@ -34,6 +52,24 @@ pub struct Credentials {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: u64,
+}
+
+impl Credentials {
+    /// Load credentials from environment variables
+    pub fn from_env() -> Option<Self> {
+        let access_token = std::env::var("SPOTIFY_ACCESS_TOKEN").ok()?;
+        let refresh_token = std::env::var("SPOTIFY_REFRESH_TOKEN").ok();
+        let expires_at = std::env::var("SPOTIFY_TOKEN_EXPIRES_AT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        Some(Self {
+            access_token,
+            refresh_token,
+            expires_at,
+        })
+    }
 }
 
 impl Credentials {
@@ -56,8 +92,14 @@ pub fn get_config_dir() -> Result<PathBuf> {
     Ok(config_dir)
 }
 
-/// Load cached credentials from disk
+/// Load cached credentials from disk or environment
 pub fn load_credentials() -> Result<Option<Credentials>> {
+    // First check environment variables (highest priority)
+    if let Some(creds) = Credentials::from_env() {
+        return Ok(Some(creds));
+    }
+
+    // Then check disk cache
     let config_dir = get_config_dir()?;
     let creds_path = config_dir.join("credentials.json");
 

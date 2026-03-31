@@ -13,7 +13,7 @@ use crate::auth::{OAuthConfig, load_credentials};
 
 /// Spotify API client
 pub struct SpotifyClient {
-    oauth: AuthCodeSpotify,
+    pub(crate) oauth: AuthCodeSpotify,
 }
 
 impl SpotifyClient {

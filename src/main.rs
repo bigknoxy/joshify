@@ -6,6 +6,7 @@ mod setup;
 mod album_art;
 
 use anyhow::Result;
+use crate::auth::OAuthConfig;
 use ratatui::{
     prelude::*,
     widgets::Paragraph,
@@ -15,6 +16,113 @@ use rspotify::prelude::Id;
 use std::io;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// CLI arguments for non-interactive mode
+#[derive(Debug, Clone, Default)]
+struct CliArgs {
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    redirect_uri: Option<String>,
+    help: bool,
+}
+
+impl CliArgs {
+    fn parse() -> Self {
+        let mut args = CliArgs::default();
+        let mut i = 1;
+        let cli_args: Vec<String> = std::env::args().collect();
+
+        while i < cli_args.len() {
+            match cli_args[i].as_str() {
+                "--client-id" => {
+                    if i + 1 < cli_args.len() {
+                        args.client_id = Some(cli_args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "--client-secret" => {
+                    if i + 1 < cli_args.len() {
+                        args.client_secret = Some(cli_args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "--access-token" => {
+                    if i + 1 < cli_args.len() {
+                        args.access_token = Some(cli_args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "--refresh-token" => {
+                    if i + 1 < cli_args.len() {
+                        args.refresh_token = Some(cli_args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "--redirect-uri" => {
+                    if i + 1 < cli_args.len() {
+                        args.redirect_uri = Some(cli_args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "--help" | "-h" => {
+                    args.help = true;
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        args
+    }
+
+    fn print_help() {
+        println!("Joshify - Terminal Spotify Client");
+        println!();
+        println!("USAGE:");
+        println!("    joshify [OPTIONS]");
+        println!();
+        println!("OPTIONS:");
+        println!("    --client-id <ID>       Spotify Client ID (or SPOTIFY_CLIENT_ID)");
+        println!("    --client-secret <SEC>  Spotify Client Secret (or SPOTIFY_CLIENT_SECRET)");
+        println!("    --access-token <TOK>   Spotify Access Token (or SPOTIFY_ACCESS_TOKEN)");
+        println!("    --refresh-token <TOK>  Spotify Refresh Token (or SPOTIFY_REFRESH_TOKEN)");
+        println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
+        println!("    --help, -h             Show this help message");
+        println!();
+        println!("ENVIRONMENT VARIABLES:");
+        println!("    SPOTIFY_CLIENT_ID      Spotify Client ID");
+        println!("    SPOTIFY_CLIENT_SECRET  Spotify Client Secret");
+        println!("    SPOTIFY_ACCESS_TOKEN   Spotify Access Token");
+        println!("    SPOTIFY_REFRESH_TOKEN  Spotify Refresh Token");
+        println!();
+        println!("EXAMPLES:");
+        println!("    # Interactive mode (default)");
+        println!("    joshify");
+        println!();
+        println!("    # Non-interactive with environment variables");
+        println!("    export SPOTIFY_CLIENT_ID=xxx");
+        println!("    export SPOTIFY_CLIENT_SECRET=yyy");
+        println!("    export SPOTIFY_ACCESS_TOKEN=zzz");
+        println!("    joshify");
+        println!();
+        println!("    # Non-interactive with CLI flags");
+        println!("    joshify --client-id xxx --access-token zzz");
+    }
+}
 
 /// Content state for main view
 #[derive(Clone, PartialEq)]
@@ -213,12 +321,21 @@ impl App {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI arguments FIRST (before any terminal initialization)
+    let args = CliArgs::parse();
+
+    // Handle --help flag (before any terminal initialization)
+    if args.help {
+        CliArgs::print_help();
+        return Ok(());
+    }
+
     // Initialize terminal
     ratatui::init();
 
     // Setup Ctrl-C handler for clean exit
     let result = tokio::select! {
-        res = run() => res,
+        res = run_with_args(args) => res,
         _ = tokio::signal::ctrl_c() => {
             // Clean exit on Ctrl-C
             let _ = crossterm::execute!(
@@ -241,9 +358,22 @@ async fn main() -> Result<()> {
     result
 }
 
-async fn run() -> Result<()> {
+async fn run_with_args(args: CliArgs) -> Result<()> {
+
+    // Load config from CLI args (args take precedence over env vars and config file)
+    let config = OAuthConfig::from_args(&args);
+
+    // Check if we have credentials from env vars or CLI args
+    let has_tokens = !config.client_id.is_empty() && !config.client_secret.is_empty()
+        && (std::env::var("SPOTIFY_ACCESS_TOKEN").is_ok()
+            || std::env::var("SPOTIFY_REFRESH_TOKEN").is_ok()
+            || args.access_token.is_some()
+            || args.refresh_token.is_some());
+
+    // Initialize terminal
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
+    ratatui::init();
 
     // Enable mouse capture and cursor visibility
     crossterm::execute!(
@@ -257,24 +387,30 @@ async fn run() -> Result<()> {
 
     let mut app = App::new();
 
-    // Ensure we have credentials configured (runs interactive setup if needed)
-    let config = setup::ensure_configured()?;
+    // If we have tokens from env/CLI, skip interactive setup
+    if has_tokens {
+        app.is_authenticated = true;
+        app.status_message = Some("Connected to Spotify (non-interactive) - Press ? for help".to_string());
+    } else {
+        // Ensure we have credentials configured (runs interactive setup if needed)
+        let config = setup::ensure_configured()?;
 
-    // Run OAuth browser flow to get access tokens
-    match setup::run_oauth_flow(&config).await {
-        Ok(true) => {
-            // Already authenticated with valid credentials
-            app.is_authenticated = true;
-            app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
-        }
-        Ok(false) => {
-            // Fresh authentication completed
-            app.is_authenticated = true;
-            app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
-        }
-        Err(e) => {
-            app.status_message = Some(format!("OAuth error: {}", e));
-            // Continue anyway - may have cached credentials
+        // Run OAuth browser flow to get access tokens
+        match setup::run_oauth_flow(&config).await {
+            Ok(true) => {
+                // Already authenticated with valid credentials
+                app.is_authenticated = true;
+                app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
+            }
+            Ok(false) => {
+                // Fresh authentication completed
+                app.is_authenticated = true;
+                app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
+            }
+            Err(e) => {
+                app.status_message = Some(format!("OAuth error: {}", e));
+                // Continue anyway - may have cached credentials
+            }
         }
     }
 
@@ -293,6 +429,37 @@ async fn run() -> Result<()> {
             None
         }
     };
+
+    // If using non-interactive tokens, apply them to the client
+    if has_tokens {
+        if let Some(ref client) = client {
+            let client_guard = client.lock().await;
+            if let Ok(mut token_guard) = client_guard.oauth.token.lock().await {
+                let access_token = args.access_token
+                    .or_else(|| std::env::var("SPOTIFY_ACCESS_TOKEN").ok())
+                    .unwrap_or_default();
+                let refresh_token = args.refresh_token
+                    .or_else(|| std::env::var("SPOTIFY_REFRESH_TOKEN").ok());
+
+                // Calculate expires_at (assume token is fresh if not specified)
+                let expires_at = std::env::var("SPOTIFY_TOKEN_EXPIRES_AT")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or_else(|| {
+                        chrono::Utc::now().timestamp() + 3600 // 1 hour from now
+                    });
+
+                *token_guard = Some(rspotify::Token {
+                    access_token,
+                    refresh_token,
+                    expires_at: Some(chrono::DateTime::from_timestamp(expires_at, 0)
+                        .unwrap_or(chrono::DateTime::UNIX_EPOCH)),
+                    expires_in: chrono::TimeDelta::seconds(3600),
+                    scopes: std::collections::HashSet::new(),
+                });
+            };
+        };
+    }
 
     // Channel for async data loading results
     let (tx, mut rx) = tokio::sync::mpsc::channel::<MainContentState>(16);
