@@ -12,20 +12,24 @@ A beautiful terminal Spotify client built with Rust and ratatui.
     ╲_____╱
 ```
 
-## One-Line Installer
+## Installation
+
+### One-Line Installer (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joshify/joshify/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
 ```
 
-## Manual Installation
-
-### From Source (requires Rust)
+### Via npm
 
 ```bash
-git clone https://github.com/joshify/joshify.git
-cd joshify
-cargo install --path .
+npm install -g joshify
+```
+
+### Via bun
+
+```bash
+bun add -g joshify
 ```
 
 ### Via Cargo
@@ -34,10 +38,28 @@ cargo install --path .
 cargo install joshify
 ```
 
-### Via Homebrew (macOS)
+### From Source (requires Rust)
 
 ```bash
-brew install joshify
+git clone https://github.com/bigknoxy/joshify.git
+cd joshify
+cargo install --path .
+```
+
+## Uninstall
+
+```bash
+# If installed via shell script
+curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/uninstall.sh | bash
+
+# If installed via npm
+npm uninstall -g joshify
+
+# If installed via bun
+bun remove -g joshify
+
+# If installed via cargo
+cargo uninstall joshify
 ```
 
 ## Quick Start

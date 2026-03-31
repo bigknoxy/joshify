@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Joshify One-Line Installer
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/joshify/joshify/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
 
 set -e
 
@@ -11,13 +11,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+REPO="https://github.com/bigknoxy/joshify.git"
+BIN_NAME="joshify"
+
 echo "⚡ Joshify Installer ⚡"
 echo "====================="
 echo ""
-
-# Detect OS
-OS="$(uname -s)"
-ARCH="$(uname -m)"
 
 # Check for Rust installation
 if ! command -v cargo &> /dev/null; then
@@ -34,10 +33,10 @@ echo "Installing Joshify..."
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
-git clone https://github.com/joshify/joshify.git
+git clone "$REPO"
 cd joshify
 
-cargo install --path . --locked
+cargo install --path .
 
 # Clean up
 cd - > /dev/null
@@ -46,5 +45,6 @@ rm -rf "$TEMP_DIR"
 echo ""
 echo -e "${GREEN}✓ Joshify installed successfully!${NC}"
 echo ""
-echo "Run 'joshify' to start the app."
+echo "Run '$BIN_NAME' to start the app."
+echo "Uninstall with: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/uninstall.sh | bash"
 echo ""

@@ -2,8 +2,23 @@
   "name": "joshify",
   "version": "0.1.0",
   "description": "A beautiful terminal Spotify client",
+  "bin": {
+    "joshify": "./bin/joshify.js"
+  },
   "scripts": {
+    "postinstall": "node scripts/install.js",
+    "preuninstall": "node scripts/uninstall.js",
     "release": "semantic-release"
+  },
+  "keywords": ["spotify", "tui", "terminal", "music", "cli"],
+  "author": "Josh",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigknoxy/joshify.git"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
