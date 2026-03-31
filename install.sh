@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Joshify One-Line Installer
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/master/install.sh | bash
 
 set -e
 

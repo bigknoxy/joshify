@@ -17,7 +17,7 @@ A beautiful terminal Spotify client built with Rust and ratatui.
 ### One-Line Installer (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/master/install.sh | bash
 ```
 
 ### Via npm
@@ -50,7 +50,7 @@ cargo install --path .
 
 ```bash
 # If installed via shell script
-curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/master/uninstall.sh | bash
 
 # If installed via npm
 npm uninstall -g joshify

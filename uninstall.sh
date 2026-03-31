@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Joshify Uninstaller
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/uninstall.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/master/uninstall.sh | bash
 
 set -e
 
