@@ -29,6 +29,7 @@ keyring = "2.0"
 mockall = "0.13"
 tokio-test = "0.4"
 tempfile = "3"
+serial_test = "3"
 
 [[bin]]
 name = "joshify"

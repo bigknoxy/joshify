@@ -4,6 +4,7 @@
 
 use std::env;
 use tempfile::TempDir;
+use serial_test::serial;
 
 // Re-implement the types we need for testing (mirroring src/auth.rs)
 
@@ -116,6 +117,7 @@ fn setup_temp_config() -> TempDir {
 }
 
 #[test]
+#[serial]
 fn test_credentials_from_env() {
     let _temp = setup_temp_config();
 
@@ -131,6 +133,7 @@ fn test_credentials_from_env() {
 }
 
 #[test]
+#[serial]
 fn test_credentials_from_env_partial() {
     let _temp = setup_temp_config();
 
@@ -147,6 +150,7 @@ fn test_credentials_from_env_partial() {
 }
 
 #[test]
+#[serial]
 fn test_credentials_expired() {
     // Set expires_at to 1 second after epoch (definitely expired)
     let creds = Credentials {
@@ -159,6 +163,7 @@ fn test_credentials_expired() {
 }
 
 #[test]
+#[serial]
 fn test_credentials_valid() {
     // Set expires_at to far future (not expired)
     let creds = Credentials {
@@ -171,6 +176,7 @@ fn test_credentials_valid() {
 }
 
 #[test]
+#[serial]
 fn test_oauth_config_default() {
     let _temp = setup_temp_config();
 
@@ -182,6 +188,7 @@ fn test_oauth_config_default() {
 }
 
 #[test]
+#[serial]
 fn test_oauth_config_from_env() {
     let _temp = setup_temp_config();
 
@@ -197,8 +204,9 @@ fn test_oauth_config_from_env() {
 }
 
 #[test]
+#[serial]
 fn test_save_load_credentials() {
-    let temp = setup_temp_config();
+    let _temp = setup_temp_config();
 
     let creds = Credentials {
         access_token: "test_access".to_string(),
@@ -230,8 +238,9 @@ fn test_save_load_credentials() {
 }
 
 #[test]
+#[serial]
 fn test_keyring_fallback_to_file() {
-    let temp = setup_temp_config();
+    let _temp = setup_temp_config();
 
     // Keyring will likely be unavailable in test environment
     // This test verifies the file fallback works

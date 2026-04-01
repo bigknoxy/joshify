@@ -4,9 +4,7 @@ A beautiful terminal Spotify client built with Rust and ratatui.
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/bigknoxy/joshify/ci.yml?branch=main&style=flat-square)](https://github.com/bigknoxy/joshify/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen?style=flat-square)](https://github.com/bigknoxy/joshify)
-[![Coverage](https://img.shields.io/badge/coverage-80%25-blue?style=flat-square)](https://github.com/bigknoxy/joshify)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Crates.io](https://img.shields.io/crates/v/joshify?style=flat-square)](https://crates.io/crates/joshify)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 
 ```
@@ -206,7 +204,7 @@ src/
 
 ## Testing
 
-Joshify has a comprehensive test suite with 64 tests across 9 categories:
+Joshify has a comprehensive test suite with 63 tests across 9 categories:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
