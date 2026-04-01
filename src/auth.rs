@@ -220,18 +220,6 @@ pub fn open_browser(url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Clear cached credentials (for logout)
-pub fn clear_credentials() -> Result<()> {
-    let config_dir = get_config_dir()?;
-    let creds_path = config_dir.join("credentials.json");
-
-    if creds_path.exists() {
-        std::fs::remove_file(creds_path)?;
-    }
-
-    Ok(())
-}
-
 /// Exchange authorization code for access token
 pub async fn exchange_code_for_token(config: &OAuthConfig, code: &str) -> Result<()> {
     use rspotify::{Credentials as RspotifyCredentials, OAuth, AuthCodeSpotify, clients::OAuthClient};

@@ -1,6 +1,6 @@
 //! Player state and playback controls
 
-use rspotify::model::{CurrentPlaybackContext, Device, RepeatState};
+use rspotify::model::CurrentPlaybackContext;
 use rspotify::prelude::Id;
 
 #[derive(Debug, Clone)]
@@ -9,15 +9,11 @@ pub struct PlayerState {
     pub progress_ms: u32,
     pub duration_ms: u32,
     pub volume: u32,
-    pub shuffle: bool,
-    pub repeat: RepeatState,
     pub current_track_name: Option<String>,
     pub current_artist_name: Option<String>,
     pub current_album_art_url: Option<String>,
     pub current_album_art_data: Option<Vec<u8>>, // Downloaded image bytes
     pub current_track_uri: Option<String>,
-    pub devices: Vec<Device>,
-    pub active_device_id: Option<String>,
 }
 
 impl Default for PlayerState {
@@ -27,15 +23,11 @@ impl Default for PlayerState {
             progress_ms: 0,
             duration_ms: 0,
             volume: 50,
-            shuffle: false,
-            repeat: RepeatState::Off,
             current_track_name: None,
             current_artist_name: None,
             current_album_art_url: None,
             current_album_art_data: None,
             current_track_uri: None,
-            devices: vec![],
-            active_device_id: None,
         }
     }
 }
@@ -69,25 +61,14 @@ impl PlayerState {
             progress_ms: ctx.progress.map(|d| d.num_milliseconds() as u32).unwrap_or(0),
             duration_ms,
             volume: ctx.device.volume_percent.unwrap_or(50),
-            shuffle: ctx.shuffle_state,
-            repeat: ctx.repeat_state,
             current_track_name: track_name,
             current_artist_name: artist_name,
             current_album_art_url: album_art_url,
             current_album_art_data: None, // Will be fetched asynchronously
             current_track_uri: track_uri,
-            devices: vec![], // TODO: populate from devices API
-            active_device_id: ctx.device.id.clone(),
         }
     }
 
-    pub fn progress_percent(&self) -> f32 {
-        if self.duration_ms == 0 {
-            0.0
-        } else {
-            self.progress_ms as f32 / self.duration_ms as f32
-        }
-    }
 }
 
 /// Format milliseconds as MM:SS

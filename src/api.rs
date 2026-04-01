@@ -4,7 +4,7 @@ use anyhow::{Result, Context};
 use rspotify::{
     AuthCodeSpotify,
     clients::{BaseClient, OAuthClient},
-    model::{CurrentPlaybackContext, PlaylistId, PlayableItem, TrackId, AdditionalType},
+    model::{CurrentPlaybackContext, AdditionalType},
     Credentials, OAuth,
 };
 use std::collections::HashSet;
@@ -62,11 +62,6 @@ impl SpotifyClient {
         Ok(client)
     }
 
-    /// Get auth URL
-    pub fn get_authorize_url(&self) -> String {
-        self.oauth.auth_url("")
-    }
-
     /// Get current playback state
     pub async fn current_playback(&self) -> Result<Option<CurrentPlaybackContext>> {
         match self.oauth.current_playback(None, None::<Vec<&AdditionalType>>).await {
@@ -83,24 +78,6 @@ impl SpotifyClient {
         }
     }
 
-
-    /// Get user's playlists - simplified, returns first page
-    pub async fn current_user_playlists(&self, limit: u32) -> Result<Vec<rspotify::model::SimplifiedPlaylist>> {
-        let result = self.oauth.current_user_playlists_manual(Some(limit), None).await
-            .context("Failed to get playlists")?;
-        Ok(result.items)
-    }
-
-    /// Get playlist tracks
-    pub async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<PlayableItem>> {
-        let id = PlaylistId::from_id(playlist_id)
-            .context("Invalid playlist ID")?;
-
-        let tracks = self.oauth.playlist_items_manual(id, None, None, None, None).await
-            .context("Failed to get playlist tracks")?;
-
-        Ok(tracks.items.into_iter().filter_map(|pt| pt.track).collect())
-    }
 
     // Playback controls
 
@@ -137,27 +114,6 @@ impl SpotifyClient {
         let vol = volume_percent.min(100) as u8;
         self.oauth.volume(vol, None).await
             .context("Failed to set volume")?;
-        Ok(())
-    }
-
-    /// Toggle shuffle
-    pub async fn set_shuffle(&self, shuffle: bool) -> Result<()> {
-        self.oauth.shuffle(shuffle, None).await
-            .context("Failed to toggle shuffle")?;
-        Ok(())
-    }
-
-    /// Set repeat mode
-    pub async fn set_repeat(&self, state: rspotify::model::RepeatState) -> Result<()> {
-        self.oauth.repeat(state, None).await
-            .context("Failed to set repeat mode")?;
-        Ok(())
-    }
-
-    /// Like tracks
-    pub async fn current_user_save_tracks(&self, track_ids: Vec<TrackId<'_>>) -> Result<()> {
-        self.oauth.current_user_saved_tracks_add(track_ids).await
-            .context("Failed to save tracks")?;
         Ok(())
     }
 
@@ -262,32 +218,5 @@ impl SpotifyClient {
         self.oauth.seek_track(position, device_id).await
             .context("Failed to seek")?;
         Ok(())
-    }
-
-    /// Toggle shuffle
-    pub async fn toggle_shuffle(&self) -> Result<bool> {
-        // We need to get current state first, then toggle
-        if let Ok(Some(ctx)) = self.current_playback().await {
-            let new_state = !ctx.shuffle_state;
-            self.set_shuffle(new_state).await?;
-            Ok(new_state)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Cycle repeat mode
-    pub async fn cycle_repeat(&self) -> Result<rspotify::model::RepeatState> {
-        if let Ok(Some(ctx)) = self.current_playback().await {
-            let new_state = match ctx.repeat_state {
-                rspotify::model::RepeatState::Off => rspotify::model::RepeatState::Track,
-                rspotify::model::RepeatState::Track => rspotify::model::RepeatState::Context,
-                rspotify::model::RepeatState::Context => rspotify::model::RepeatState::Off,
-            };
-            self.set_repeat(new_state).await?;
-            Ok(new_state)
-        } else {
-            Ok(rspotify::model::RepeatState::Off)
-        }
     }
 }
