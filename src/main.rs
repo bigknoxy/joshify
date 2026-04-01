@@ -1,12 +1,134 @@
 mod auth;
 mod api;
-mod player;
+mod state;
 mod ui;
 mod setup;
 mod album_art;
+mod keyring_store;
 
 use anyhow::Result;
 use crate::auth::OAuthConfig;
+use crate::state::{NavItem, FocusTarget, ContentState, LoadAction};
+use crate::state::player_state::PlayerState;
+use crate::state::app_state::{TrackListItem, PlaylistListItem};
+
+/// Application state
+struct App {
+    selected_nav: NavItem,
+    is_authenticated: bool,
+    player_state: PlayerState,
+    status_message: Option<String>,
+    last_poll_ms: u64,
+    poll_interval_ms: u64,
+    focus: FocusTarget,
+    show_queue: bool,
+    help_lines: Option<Vec<String>>,
+    area: Option<Rect>,
+    content_state: ContentState,
+    selected_index: usize,
+    scroll_offset: usize,
+    search_query: String,
+    is_searching: bool,
+    album_art_cache: album_art::AlbumArtCache,
+    last_fetched_art_uri: Option<String>,
+}
+
+impl App {
+    fn new() -> Self {
+        Self {
+            selected_nav: NavItem::Home,
+            is_authenticated: false,
+            player_state: PlayerState::default(),
+            status_message: None,
+            last_poll_ms: 0,
+            poll_interval_ms: 1000,
+            focus: FocusTarget::Sidebar,
+            show_queue: false,
+            help_lines: None,
+            area: None,
+            content_state: ContentState::Home,
+            selected_index: 0,
+            scroll_offset: 0,
+            search_query: String::new(),
+            is_searching: false,
+            album_art_cache: album_art::AlbumArtCache::new(),
+            last_fetched_art_uri: None,
+        }
+    }
+
+    fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            FocusTarget::Sidebar => FocusTarget::MainContent,
+            FocusTarget::MainContent => FocusTarget::PlayerBar,
+            FocusTarget::PlayerBar => FocusTarget::Sidebar,
+        };
+    }
+
+    fn focus_previous(&mut self) {
+        self.focus = match self.focus {
+            FocusTarget::Sidebar => FocusTarget::PlayerBar,
+            FocusTarget::MainContent => FocusTarget::Sidebar,
+            FocusTarget::PlayerBar => FocusTarget::MainContent,
+        };
+    }
+
+    async fn poll_playback(
+        &mut self,
+        client: &Arc<Mutex<api::SpotifyClient>>,
+        tx_art: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+    ) {
+        let client_guard = client.lock().await;
+        match client_guard.current_playback().await {
+            Ok(Some(ctx)) => {
+                let old_track_uri = self.player_state.current_track_uri.clone();
+                self.player_state = PlayerState::from_context(&ctx);
+
+                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
+                    self.status_message = None;
+                }
+
+                let new_track_uri = self.player_state.current_track_uri.clone();
+                let new_album_art_url = self.player_state.current_album_art_url.clone();
+
+                if new_track_uri != old_track_uri && new_track_uri.is_some() && new_album_art_url.is_some() {
+                    if let (Some(art_url), Some(art_uri)) = (new_album_art_url, new_track_uri) {
+                        let cache = self.album_art_cache.clone();
+                        let tx_art_clone = tx_art.clone();
+                        let art_uri_for_closure = art_uri.clone();
+
+                        tokio::spawn(async move {
+                            match cache.get_or_fetch(&art_url).await {
+                                Some(image_data) => {
+                                    println!("Fetched album art for {}", art_uri_for_closure);
+                                    let _ = tx_art_clone.send((art_uri_for_closure, image_data)).await;
+                                }
+                                None => {
+                                    eprintln!("Failed to fetch album art for {}", art_url);
+                                }
+                            }
+                        });
+
+                        self.last_fetched_art_uri = Some(art_uri);
+                    }
+                }
+            }
+            Ok(None) => {
+                self.player_state.is_playing = false;
+                self.player_state.current_track_name = Some("Nothing playing".to_string());
+                self.player_state.current_artist_name = Some("".to_string());
+                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
+                    self.status_message = None;
+                }
+            }
+            Err(e) => {
+                let err_msg = format!("Playback error: {}", e);
+                if self.status_message.as_ref() != Some(&err_msg) {
+                    self.status_message = Some(err_msg);
+                }
+            }
+        }
+    }
+}
 use ratatui::{
     prelude::*,
     widgets::Paragraph,
@@ -124,199 +246,6 @@ impl CliArgs {
     }
 }
 
-/// Content state for main view
-#[derive(Clone, PartialEq)]
-pub struct TrackListItem {
-    pub name: String,
-    pub artist: String,
-    pub uri: String,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct PlaylistListItem {
-    pub name: String,
-    pub id: String,
-    pub track_count: u32,
-}
-
-/// Main content state
-#[derive(PartialEq)]
-pub enum MainContentState {
-    Home,
-    Loading(String),
-    LoadingInProgress(String), // Tracks that we've spawned a task for this state
-    LikedSongs(Vec<TrackListItem>),
-    Playlists(Vec<PlaylistListItem>),
-    PlaylistTracks(String, Vec<TrackListItem>), // playlist name, tracks
-    SearchResults(String, Vec<TrackListItem>),  // query, results
-    Error(String),
-}
-
-/// Focus target for Tab navigation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FocusTarget {
-    Sidebar,
-    MainContent,
-    PlayerBar,
-}
-
-/// Async load action to determine what data to fetch
-enum LoadAction {
-    LikedSongs,
-    Playlists,
-    PlaylistTracks(String, String), // name, id
-    Search(String),
-}
-
-/// Application state
-struct App {
-    /// Current navigation selection
-    selected_nav: ui::NavItem,
-    /// Whether we're authenticated
-    is_authenticated: bool,
-    /// Current playback state
-    player_state: player::PlayerState,
-    /// Status message
-    status_message: Option<String>,
-    /// Last poll time for playback
-    last_poll_ms: u64,
-    /// Poll interval in ms
-    poll_interval_ms: u64,
-    /// Current focus target for Tab navigation
-    focus: FocusTarget,
-    /// Show queue overlay
-    show_queue: bool,
-    /// Help message lines
-    help_lines: Option<Vec<String>>,
-    /// Last frame area (for mouse handling)
-    area: Option<Rect>,
-    /// Main content state
-    content_state: MainContentState,
-    /// Current selection index in content list
-    selected_index: usize,
-    /// Scroll offset for long lists
-    scroll_offset: usize,
-    /// Search input buffer
-    search_query: String,
-    /// Whether we're in search input mode
-    is_searching: bool,
-    /// Album art cache
-    album_art_cache: album_art::AlbumArtCache,
-    /// Last fetched album art URI to detect changes
-    last_fetched_art_uri: Option<String>,
-}
-
-impl App {
-    fn new() -> Self {
-        Self {
-            selected_nav: ui::NavItem::Home,
-            is_authenticated: false,
-            player_state: player::PlayerState::default(),
-            status_message: None,
-            last_poll_ms: 0,
-            poll_interval_ms: 1000, // Poll every second
-            focus: FocusTarget::Sidebar,
-            show_queue: false,
-            help_lines: None,
-            area: None,
-            content_state: MainContentState::Home,
-            selected_index: 0,
-            scroll_offset: 0,
-            search_query: String::new(),
-            is_searching: false,
-            album_art_cache: album_art::AlbumArtCache::new(),
-            last_fetched_art_uri: None,
-        }
-    }
-
-    /// Cycle focus to next target
-    fn focus_next(&mut self) {
-        self.focus = match self.focus {
-            FocusTarget::Sidebar => FocusTarget::MainContent,
-            FocusTarget::MainContent => FocusTarget::PlayerBar,
-            FocusTarget::PlayerBar => FocusTarget::Sidebar,
-        };
-    }
-
-    /// Cycle focus to previous target
-    fn focus_previous(&mut self) {
-        self.focus = match self.focus {
-            FocusTarget::Sidebar => FocusTarget::PlayerBar,
-            FocusTarget::MainContent => FocusTarget::Sidebar,
-            FocusTarget::PlayerBar => FocusTarget::MainContent,
-        };
-    }
-
-    /// Poll Spotify API for current playback state
-    async fn poll_playback(
-        &mut self,
-        client: &Arc<Mutex<api::SpotifyClient>>,
-        tx_art: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
-    ) {
-        let client_guard = client.lock().await;
-        match client_guard.current_playback().await {
-            Ok(Some(ctx)) => {
-                // Update player state from context
-                let old_track_uri = self.player_state.current_track_uri.clone();
-                self.player_state = player::PlayerState::from_context(&ctx);
-
-                // Clear any previous error message on success
-                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
-                    self.status_message = None;
-                }
-
-                // Fetch album art when track changes
-                let new_track_uri = self.player_state.current_track_uri.clone();
-                let new_album_art_url = self.player_state.current_album_art_url.clone();
-
-                if new_track_uri != old_track_uri && new_track_uri.is_some() && new_album_art_url.is_some() {
-                    // Track changed and we have album art URL - fetch it
-                    let art_url = new_album_art_url.unwrap();
-                    let art_uri = new_track_uri.unwrap();
-
-                    // Clone cache for async task
-                    let cache = self.album_art_cache.clone();
-                    let tx_art_clone = tx_art.clone();
-                    let art_uri_for_closure = art_uri.clone();
-
-                    // Spawn async task to fetch album art
-                    tokio::spawn(async move {
-                        match cache.get_or_fetch(&art_url).await {
-                            Some(image_data) => {
-                                println!("Fetched album art for {}", art_uri_for_closure);
-                                // Send data back to main loop
-                                let _ = tx_art_clone.send((art_uri_for_closure, image_data)).await;
-                            }
-                            None => {
-                                eprintln!("Failed to fetch album art for {}", art_url);
-                            }
-                        }
-                    });
-
-                    // Store URI so we know when track changes again
-                    self.last_fetched_art_uri = Some(art_uri);
-                }
-            }
-            Ok(None) => {
-                // No active playback - this is normal, not an error
-                self.player_state.is_playing = false;
-                self.player_state.current_track_name = Some("Nothing playing".to_string());
-                self.player_state.current_artist_name = Some("".to_string());
-                // Clear playback error messages
-                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
-                    self.status_message = None;
-                }
-            }
-            Err(e) => {
-                // Only show error if it's not already displayed
-                let err_msg = format!("Playback error: {}", e);
-                if self.status_message.as_ref() != Some(&err_msg) {
-                    self.status_message = Some(err_msg);
-                }
-            }
-        }
-    }
-}
 
 
 #[tokio::main]
@@ -462,7 +391,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     }
 
     // Channel for async data loading results
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<MainContentState>(16);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ContentState>(16);
 
     // Channel for album art data
     let (tx_art, mut rx_art) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(16);
@@ -471,7 +400,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     loop {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before epoch")
             .as_millis() as u64;
 
         // Poll playback state at interval
@@ -508,10 +437,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             }
 
             // Status bar at top (if present)
-            let top_area = if app.status_message.is_some() {
+            let top_area = if let Some(ref msg) = app.status_message {
                 let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
                     .areas(area);
-                let status = Paragraph::new(app.status_message.as_ref().unwrap().as_str())
+                let status = Paragraph::new(msg.as_str())
                     .style(Style::default().fg(Color::Black).bg(Color::Blue));
                 frame.render_widget(status, top);
                 rest
@@ -544,21 +473,21 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
             // Update search prompt in content state if actively typing
             if app.is_searching {
-                let prompt = if app.search_query.is_empty() {
+                let query = if app.search_query.is_empty() {
                     "Type search query...".to_string()
                 } else {
                     format!("Search: {}", app.search_query)
                 };
                 // Update state for search input display
                 match &app.content_state {
-                    MainContentState::Loading(msg) if msg != &prompt && !msg.starts_with("Searching") => {
-                        app.content_state = MainContentState::Loading(prompt);
+                    ContentState::Loading(LoadAction::Search { query: existing }) if existing != &query => {
+                        app.content_state = ContentState::Loading(LoadAction::Search { query });
                     }
-                    MainContentState::LoadingInProgress(msg) if msg != &prompt && !msg.starts_with("Searching") => {
-                        app.content_state = MainContentState::Loading(prompt);
+                    ContentState::LoadingInProgress(LoadAction::Search { query: existing }) if existing != &query => {
+                        app.content_state = ContentState::Loading(LoadAction::Search { query });
                     }
-                    _ if app.content_state == MainContentState::Home => {
-                        app.content_state = MainContentState::Loading(prompt);
+                    ContentState::Home => {
+                        app.content_state = ContentState::Loading(LoadAction::Search { query });
                     }
                     _ => {}
                 }
@@ -616,26 +545,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
         // Handle async data loading based on current state
         // Only spawn tasks when in Loading state, not LoadingInProgress (prevents duplicate spawns)
-        // We need to determine what to load first, then spawn, to avoid borrow checker issues
         let load_action = match &app.content_state {
-            MainContentState::Loading(msg) if msg.contains("liked songs") => {
-                Some(LoadAction::LikedSongs)
-            }
-            MainContentState::Loading(msg) if msg.contains("playlists") && !msg.contains(':') => {
-                Some(LoadAction::Playlists)
-            }
-            MainContentState::Loading(msg) if msg.starts_with("Loading ") && msg.contains(':') => {
-                let parts: Vec<&str> = msg.trim_start_matches("Loading ").trim_end_matches("...").split(':').collect();
-                if parts.len() >= 2 {
-                    Some(LoadAction::PlaylistTracks(parts[0].trim().to_string(), parts[1].trim().to_string()))
-                } else {
-                    None
-                }
-            }
-            MainContentState::Loading(msg) if msg.starts_with("Searching") => {
-                let query = msg.trim_start_matches("Searching '").trim_end_matches("'...").to_string();
-                Some(LoadAction::Search(query))
-            }
+            ContentState::Loading(action) => Some(action.clone()),
             _ => None,
         };
 
@@ -650,20 +561,28 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             match guard.current_user_saved_tracks(50).await {
                                 Ok(tracks) => {
                                     let items: Vec<TrackListItem> = tracks.into_iter().filter_map(|t| {
-                                        t.track.id.map(|id| TrackListItem {
-                                            name: t.track.name,
-                                            artist: t.track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
-                                            uri: format!("spotify:track:{}", id.id()),
+                                        t.track.id.map(|id| {
+                                            let artist = t.track.artists.first()
+                                                .map(|a| a.name.clone())
+                                                .unwrap_or_else(|| {
+                                                    eprintln!("Warning: track '{}' has no artists", t.track.name);
+                                                    String::new()
+                                                });
+                                            TrackListItem {
+                                                name: t.track.name,
+                                                artist,
+                                                uri: format!("spotify:track:{}", id.id()),
+                                            }
                                         })
                                     }).collect();
-                                    let _ = tx_clone.send(MainContentState::LikedSongs(items)).await;
+                                    let _ = tx_clone.send(ContentState::LikedSongs(items)).await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(MainContentState::Error(format!("Failed to load liked songs: {}", e))).await;
+                                    let _ = tx_clone.send(ContentState::Error(format!("Failed to load liked songs: {}", e))).await;
                                 }
                             }
                         });
-                        app.content_state = MainContentState::LoadingInProgress("Loading liked songs...".to_string());
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::LikedSongs);
                     }
                     LoadAction::Playlists => {
                         let c = client.clone();
@@ -677,68 +596,85 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         id: p.id.id().to_string(),
                                         track_count: p.tracks.total,
                                     }).collect();
-                                    let _ = tx_clone.send(MainContentState::Playlists(items)).await;
+                                    let _ = tx_clone.send(ContentState::Playlists(items)).await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(MainContentState::Error(format!("Failed to load playlists: {}", e))).await;
+                                    let _ = tx_clone.send(ContentState::Error(format!("Failed to load playlists: {}", e))).await;
                                 }
                             }
                         });
-                        app.content_state = MainContentState::LoadingInProgress("Loading playlists...".to_string());
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::Playlists);
                     }
-                    LoadAction::PlaylistTracks(name, id) => {
+                    LoadAction::PlaylistTracks { name, id } => {
                         let c = client.clone();
                         let tx_clone = tx.clone();
-                        let name_for_state = name.clone();
+                        let name_clone = name.clone();
+                        let id_clone = id.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
-                            match guard.playlist_get_items(&id).await {
+                            match guard.playlist_get_items(&id_clone).await {
                                 Ok(items) => {
                                     let tracks: Vec<TrackListItem> = items.into_iter().filter_map(|pi| {
                                         pi.track.and_then(|t| {
                                             if let rspotify::model::PlayableItem::Track(track) = t {
-                                                track.id.map(|id| TrackListItem {
-                                                    name: track.name,
-                                                    artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
-                                                    uri: format!("spotify:track:{}", id.id()),
+                                                track.id.map(|id| {
+                                                    let artist = track.artists.first()
+                                                        .map(|a| a.name.clone())
+                                                        .unwrap_or_else(|| {
+                                                            eprintln!("Warning: track '{}' has no artists", track.name);
+                                                            String::new()
+                                                        });
+                                                    TrackListItem {
+                                                        name: track.name,
+                                                        artist,
+                                                        uri: format!("spotify:track:{}", id.id()),
+                                                    }
                                                 })
                                             } else {
                                                 None
                                             }
                                         })
                                     }).collect();
-                                    let _ = tx_clone.send(MainContentState::PlaylistTracks(name, tracks)).await;
+                                    let _ = tx_clone.send(ContentState::PlaylistTracks(name_clone, tracks)).await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(MainContentState::Error(format!("Failed to load playlist: {}", e))).await;
+                                    let _ = tx_clone.send(ContentState::Error(format!("Failed to load playlist: {}", e))).await;
                                 }
                             }
                         });
-                        app.content_state = MainContentState::LoadingInProgress(format!("Loading {}...", name_for_state));
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::PlaylistTracks { name, id });
                     }
-                    LoadAction::Search(query) => {
+                    LoadAction::Search { query } => {
                         let c = client.clone();
                         let tx_clone = tx.clone();
-                        let query_for_state = query.clone();
+                        let query_clone = query.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
-                            match guard.search(&query, 50).await {
+                            match guard.search(&query_clone, 50).await {
                                 Ok(tracks) => {
                                     let items: Vec<TrackListItem> = tracks.into_iter().filter_map(|t| {
-                                        t.id.map(|id| TrackListItem {
-                                            name: t.name,
-                                            artist: t.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
-                                            uri: format!("spotify:track:{}", id.id()),
+                                        t.id.map(|id| {
+                                            let artist = t.artists.first()
+                                                .map(|a| a.name.clone())
+                                                .unwrap_or_else(|| {
+                                                    eprintln!("Warning: track '{}' has no artists", t.name);
+                                                    String::new()
+                                                });
+                                            TrackListItem {
+                                                name: t.name,
+                                                artist,
+                                                uri: format!("spotify:track:{}", id.id()),
+                                            }
                                         })
                                     }).collect();
-                                    let _ = tx_clone.send(MainContentState::SearchResults(query, items)).await;
+                                    let _ = tx_clone.send(ContentState::SearchResults(query_clone, items)).await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(MainContentState::Error(format!("Search failed: {}", e))).await;
+                                    let _ = tx_clone.send(ContentState::Error(format!("Search failed: {}", e))).await;
                                 }
                             }
                         });
-                        app.content_state = MainContentState::LoadingInProgress(format!("Searching '{}'...", query_for_state));
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::Search { query });
                     }
                 }
             }
@@ -776,32 +712,32 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     // Select current nav item - show content
                                     match app.selected_nav {
                                         ui::NavItem::LikedSongs => {
-                                            app.content_state = MainContentState::Loading("Loading liked songs...".to_string());
+                                            app.content_state = ContentState::Loading(LoadAction::LikedSongs);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
                                         }
                                         ui::NavItem::Playlists => {
-                                            app.content_state = MainContentState::Loading("Loading playlists...".to_string());
+                                            app.content_state = ContentState::Loading(LoadAction::Playlists);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
                                         }
                                         ui::NavItem::Home => {
-                                            app.content_state = MainContentState::Home;
+                                            app.content_state = ContentState::Home;
                                         }
                                         ui::NavItem::Search => {
-                                            app.content_state = MainContentState::Loading("Type to search...".to_string());
+                                            app.content_state = ContentState::Loading(LoadAction::Search { query: "Type to search...".to_string() });
                                         }
                                         ui::NavItem::Library => {
-                                            app.content_state = MainContentState::Loading("Loading library...".to_string());
+                                            app.content_state = ContentState::Loading(LoadAction::Search { query: "Loading library...".to_string() });
                                         }
                                     }
                                 }
                                 FocusTarget::MainContent => {
                                     // Act on current content - play selected track
                                     match &app.content_state {
-                                        MainContentState::LikedSongs(tracks) |
-                                        MainContentState::PlaylistTracks(_, tracks) |
-                                        MainContentState::SearchResults(_, tracks) => {
+                                        ContentState::LikedSongs(tracks) |
+                                        ContentState::PlaylistTracks(_, tracks) |
+                                        ContentState::SearchResults(_, tracks) => {
                                             if !tracks.is_empty() && app.selected_index < tracks.len() {
                                                 if let Some(ref client) = client {
                                                     let c = client.lock().await;
@@ -817,12 +753,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 }
                                             }
                                         }
-                                        MainContentState::Playlists(playlists) => {
+                                        ContentState::Playlists(playlists) => {
                                             // Enter on playlist - show its tracks
                                             if !playlists.is_empty() && app.selected_index < playlists.len() {
                                                 let playlist = &playlists[app.selected_index];
-                                                app.content_state = MainContentState::Loading(
-                                                    format!("Loading {}: {}...", playlist.name, playlist.id)
+                                                app.content_state = ContentState::Loading(
+                                                    LoadAction::PlaylistTracks { name: playlist.name.clone(), id: playlist.id.clone() }
                                                 );
                                                 app.selected_index = 0;
                                                 app.scroll_offset = 0;
@@ -854,10 +790,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list down based on current content
                                 let len = match &app.content_state {
-                                    MainContentState::LikedSongs(t) => t.len(),
-                                    MainContentState::Playlists(p) => p.len(),
-                                    MainContentState::PlaylistTracks(_, t) => t.len(),
-                                    MainContentState::SearchResults(_, t) => t.len(),
+                                    ContentState::LikedSongs(t) => t.len(),
+                                    ContentState::Playlists(p) => p.len(),
+                                    ContentState::PlaylistTracks(_, t) => t.len(),
+                                    ContentState::SearchResults(_, t) => t.len(),
                                     _ => 0,
                                 };
                                 if len > 0 {
@@ -888,10 +824,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list up based on current content
                                 let len = match &app.content_state {
-                                    MainContentState::LikedSongs(t) => t.len(),
-                                    MainContentState::Playlists(p) => p.len(),
-                                    MainContentState::PlaylistTracks(_, t) => t.len(),
-                                    MainContentState::SearchResults(_, t) => t.len(),
+                                    ContentState::LikedSongs(t) => t.len(),
+                                    ContentState::Playlists(p) => p.len(),
+                                    ContentState::PlaylistTracks(_, t) => t.len(),
+                                    ContentState::SearchResults(_, t) => t.len(),
                                     _ => 0,
                                 };
                                 if len > 0 && app.selected_index > 0 {
@@ -1011,7 +947,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             app.is_searching = true;
                             app.search_query.clear();
                             app.focus = FocusTarget::MainContent;
-                            app.content_state = MainContentState::Loading("Type search query...".to_string());
+                            app.content_state = ContentState::Loading(LoadAction::Search { query: "Type search query...".to_string() });
                         }
 
                         // Search input handling
@@ -1020,8 +956,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 crossterm::event::KeyCode::Enter => {
                                     // Execute search
                                     if !app.search_query.is_empty() {
-                                        app.content_state = MainContentState::Loading(
-                                            format!("Searching '{}'...", app.search_query)
+                                        app.content_state = ContentState::Loading(
+                                            LoadAction::Search { query: app.search_query.clone() }
                                         );
                                         app.selected_index = 0;
                                         app.scroll_offset = 0;
@@ -1030,22 +966,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                                 crossterm::event::KeyCode::Esc => {
                                     app.is_searching = false;
-                                    app.content_state = MainContentState::Home;
+                                    app.content_state = ContentState::Home;
                                 }
                                 crossterm::event::KeyCode::Backspace => {
                                     app.search_query.pop();
-                                    app.content_state = MainContentState::Loading(
-                                        if app.search_query.is_empty() {
-                                            "Type search query...".to_string()
-                                        } else {
-                                            format!("Search: {}", app.search_query)
+                                    app.content_state = ContentState::Loading(
+                                        LoadAction::Search {
+                                            query: if app.search_query.is_empty() {
+                                                "Type search query...".to_string()
+                                            } else {
+                                                format!("Search: {}", app.search_query)
+                                            }
                                         }
                                     );
                                 }
                                 crossterm::event::KeyCode::Char(c) => {
                                     app.search_query.push(c);
-                                    app.content_state = MainContentState::Loading(
-                                        format!("Search: {}", app.search_query)
+                                    app.content_state = ContentState::Loading(
+                                        LoadAction::Search { query: format!("Search: {}", app.search_query) }
                                     );
                                 }
                                 _ => {}

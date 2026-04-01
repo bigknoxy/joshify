@@ -7,14 +7,16 @@
 //! - iTerm2 inline images
 //! - ASCII/Unicode fallback (chafa-style)
 
-use std::collections::HashMap;
+use lru::LruCache;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::num::NonZeroUsize;
 
 /// Album art cache (cloneable via Arc)
+/// Uses LRU cache with 50 entry limit to bound memory usage
 #[derive(Clone)]
 pub struct AlbumArtCache {
-    cache: Arc<tokio::sync::Mutex<HashMap<String, Vec<u8>>>>,
+    cache: Arc<tokio::sync::Mutex<LruCache<String, Vec<u8>>>>,
     cache_dir: Option<PathBuf>,
 }
 
@@ -30,7 +32,7 @@ impl AlbumArtCache {
         }
 
         Self {
-            cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(NonZeroUsize::new(50).unwrap()))),
             cache_dir,
         }
     }
@@ -39,7 +41,7 @@ impl AlbumArtCache {
     pub async fn get_or_fetch(&self, url: &str) -> Option<Vec<u8>> {
         // Check memory cache first
         {
-            let cache_guard = self.cache.lock().await;
+            let mut cache_guard = self.cache.lock().await;
             if let Some(data) = cache_guard.get(url) {
                 return Some(data.clone());
             }
@@ -53,7 +55,7 @@ impl AlbumArtCache {
             if cache_path.exists() {
                 if let Ok(data) = std::fs::read(&cache_path) {
                     let mut cache_guard = self.cache.lock().await;
-                    cache_guard.insert(url.to_string(), data.clone());
+                    cache_guard.put(url.to_string(), data.clone());
                     return Some(data);
                 }
             }
@@ -74,7 +76,7 @@ impl AlbumArtCache {
                         }
 
                         let mut cache_guard = self.cache.lock().await;
-                        cache_guard.insert(url.to_string(), data.clone());
+                        cache_guard.put(url.to_string(), data.clone());
                         Some(data)
                     }
                     Err(e) => {

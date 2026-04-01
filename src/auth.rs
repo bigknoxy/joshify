@@ -92,11 +92,20 @@ pub fn get_config_dir() -> Result<PathBuf> {
     Ok(config_dir)
 }
 
-/// Load cached credentials from disk or environment
+/// Load cached credentials from disk, keyring, or environment
 pub fn load_credentials() -> Result<Option<Credentials>> {
     // First check environment variables (highest priority)
     if let Some(creds) = Credentials::from_env() {
         return Ok(Some(creds));
+    }
+
+    // Try OS keyring first (more secure)
+    if let Ok(Some(creds)) = crate::keyring_store::get_credentials_keyring() {
+        return Ok(Some(Credentials {
+            access_token: creds.access_token,
+            refresh_token: creds.refresh_token,
+            expires_at: creds.expires_at,
+        }));
     }
 
     // Then check disk cache
@@ -114,8 +123,27 @@ pub fn load_credentials() -> Result<Option<Credentials>> {
     Ok(Some(creds))
 }
 
-/// Save credentials to disk
+/// Save credentials to disk or OS keyring
 pub fn save_credentials(creds: &Credentials) -> Result<()> {
+    // Try OS keyring first (more secure)
+    if crate::keyring_store::is_keyring_available() {
+        let secure_creds = crate::keyring_store::SecureCredentials {
+            access_token: creds.access_token.clone(),
+            refresh_token: creds.refresh_token.clone(),
+            expires_at: creds.expires_at,
+        };
+        match crate::keyring_store::set_credentials_keyring(&secure_creds) {
+            Ok(()) => {
+                println!("Credentials saved to OS keyring");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Keyring save failed: {}, falling back to file", e);
+            }
+        }
+    }
+
+    // Fall back to disk cache
     let config_dir = get_config_dir()?;
     std::fs::create_dir_all(&config_dir)
         .context("Failed to create config directory")?;
@@ -320,7 +348,7 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
                                 .status(StatusCode::OK)
                                 .header("Content-Type", "text/html")
                                 .body(body)
-                                .unwrap();
+                                .expect("static response builder should never fail");
 
                             // Send the code to the main task
                             let _ = tx.send(code.to_string()).await;
@@ -333,7 +361,7 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
                     let resp = Response::builder()
                         .status(StatusCode::NOT_FOUND)
                         .body(body)
-                        .unwrap();
+                        .expect("static response builder should never fail");
                     Ok::<_, hyper::Error>(resp)
                 }
             });
