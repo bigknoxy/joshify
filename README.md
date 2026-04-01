@@ -25,12 +25,14 @@ curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | 
 ```bash
 npm install -g joshify
 ```
+*Coming soon - not yet published*
 
 ### Via bun
 
 ```bash
 bun add -g joshify
 ```
+*Coming soon - not yet published*
 
 ### Via Cargo
 
