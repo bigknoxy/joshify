@@ -2,6 +2,13 @@
 
 A beautiful terminal Spotify client built with Rust and ratatui.
 
+[![Build Status](https://img.shields.io/github/actions/workflow/status/bigknoxy/joshify/ci.yml?branch=main&style=flat-square)](https://github.com/bigknoxy/joshify/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen?style=flat-square)](https://github.com/bigknoxy/joshify)
+[![Coverage](https://img.shields.io/badge/coverage-80%25-blue?style=flat-square)](https://github.com/bigknoxy/joshify)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/joshify?style=flat-square)](https://crates.io/crates/joshify)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+
 ```
      ⚡ JOSHIFY ⚡
     ╱▔▔▔▔▔▔▔▔▔╲
@@ -20,20 +27,6 @@ A beautiful terminal Spotify client built with Rust and ratatui.
 curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
 ```
 
-### Via npm
-
-```bash
-npm install -g joshify
-```
-*Coming soon - not yet published*
-
-### Via bun
-
-```bash
-bun add -g joshify
-```
-*Coming soon - not yet published*
-
 ### Via Cargo
 
 ```bash
@@ -48,17 +41,18 @@ cd joshify
 cargo install --path .
 ```
 
-## Uninstall
+### Via npm/bun
+
+```bash
+npm install -g joshify  # Coming soon
+bun add -g joshify      # Coming soon
+```
+
+### Uninstall
 
 ```bash
 # If installed via shell script
 curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/uninstall.sh | bash
-
-# If installed via npm
-npm uninstall -g joshify
-
-# If installed via bun
-bun remove -g joshify
 
 # If installed via cargo
 cargo uninstall joshify
@@ -134,6 +128,7 @@ If no expiration is provided, tokens are assumed valid for 1 hour.
 - **Queue Management** - View and add tracks to queue
 - **Keyboard First** - All actions accessible via keyboard shortcuts
 - **Minimal Resource Usage** - Runs entirely in your terminal
+- **Comprehensive Test Suite** - 64 tests covering all core functionality
 
 ## System Requirements
 
@@ -144,7 +139,7 @@ If no expiration is provided, tokens are assumed valid for 1 hour.
 
 ## Configuration
 
-Joshify stores credentials in `~/.config/joshify/credentials.json`.
+Joshify stores credentials in `~/.config/joshify/credentials.json`. Credentials are automatically saved to your OS keyring when available (GNOME Keyring, macOS Keychain, Windows Credential Manager).
 
 To re-authenticate or change accounts, press `c` in the app.
 
@@ -157,8 +152,45 @@ cargo run
 # Build release
 cargo build --release
 
-# Run tests
+# Run all tests
 cargo test
+
+# Run specific test category
+cargo test --test player
+cargo test --test auth
+cargo test --test api
+
+# Generate coverage report (requires cargo-tarpaulin)
+cargo install cargo-tarpaulin
+cargo tarpaulin --out Lcov
+```
+
+## Architecture
+
+Joshify uses a modular architecture with separated concerns:
+
+```
+src/
+├── main.rs          # Application entry point, event loop
+├── auth.rs          # OAuth authentication
+├── album_art.rs     # LRU-cached album art fetching
+├── keyring_store.rs # OS keyring integration
+├── api/             # Spotify API client
+│   ├── client.rs    # Client creation & auth
+│   ├── playback.rs  # Playback controls
+│   ├── library.rs   # Library & search
+│   └── rate_limit.rs# Rate limit handling
+├── state/           # Application state
+│   ├── app_state.rs # Main state coordinator
+│   ├── player_state.rs # Playback state
+│   ├── load_coordinator.rs # Async task coordination
+│   ├── library_state.rs   # Library cache
+│   └── queue_state.rs     # Queue management
+└── ui/              # Terminal rendering
+    ├── sidebar.rs   # Navigation sidebar
+    ├── main_view.rs # Main content area
+    ├── player_bar.rs# Now playing bar
+    └── overlays.rs  # Search, help, queue
 ```
 
 ## Tech Stack
@@ -168,6 +200,24 @@ cargo test
 - **rspotify** - Spotify API client
 - **tokio** - Async runtime
 - **crossterm** - Terminal manipulation
+- **lru** - LRU cache for album art (50 entry limit)
+- **keyring** - OS keyring integration
+- **serde** - Serialization for credentials
+
+## Testing
+
+Joshify has a comprehensive test suite with 64 tests across 9 categories:
+
+| Category | Tests | Description |
+|----------|-------|-------------|
+| Player | 9 | Duration formatting, PlayerState, track detection |
+| Auth | 8 | Credentials loading, OAuth config, persistence |
+| Album Art | 6 | LRU cache, eviction, disk persistence |
+| API | 11 | Rate limiting, exponential backoff |
+| State | 7 | Navigation, focus, search, scrolling |
+| UI | 8 | Component rendering tests |
+| Concurrency | 5 | Async coordination, stale result rejection |
+| Error Injection | 8 | Timeout, malformed data, failure handling |
 
 ## License
 
@@ -176,6 +226,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Contributing
 
 Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+### Reporting Issues
+
+- Bug reports: Include steps to reproduce, expected vs actual behavior
+- Feature requests: Describe the use case and desired behavior
+- Security issues: Please email directly before opening a public issue
 
 ---
 
