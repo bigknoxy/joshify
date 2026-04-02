@@ -6,7 +6,7 @@
 //! 3. Exchange code for tokens
 //! 4. Cache tokens in ~/.config/spotify-tui/credentials.json
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -33,13 +33,19 @@ impl OAuthConfig {
     /// Create config from CLI args (args take precedence over env vars and config file)
     pub fn from_args(args: &crate::CliArgs) -> Self {
         Self {
-            client_id: args.client_id.clone()
+            client_id: args
+                .client_id
+                .clone()
                 .or_else(|| std::env::var("SPOTIFY_CLIENT_ID").ok())
                 .unwrap_or_default(),
-            client_secret: args.client_secret.clone()
+            client_secret: args
+                .client_secret
+                .clone()
                 .or_else(|| std::env::var("SPOTIFY_CLIENT_SECRET").ok())
                 .unwrap_or_default(),
-            redirect_uri: args.redirect_uri.clone()
+            redirect_uri: args
+                .redirect_uri
+                .clone()
                 .or_else(|| std::env::var("SPOTIFY_REDIRECT_URI").ok())
                 .unwrap_or_else(|| "http://127.0.0.1:8888/callback".to_string()),
         }
@@ -84,9 +90,7 @@ impl Credentials {
 pub fn get_config_dir() -> Result<PathBuf> {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .map(|dir| PathBuf::from(dir).join("joshify"))
-        .or_else(|_| {
-            std::env::var("HOME").map(|dir| PathBuf::from(dir).join(".config/joshify"))
-        })
+        .or_else(|_| std::env::var("HOME").map(|dir| PathBuf::from(dir).join(".config/joshify")))
         .context("Failed to determine config directory")?;
 
     Ok(config_dir)
@@ -116,10 +120,9 @@ pub fn load_credentials() -> Result<Option<Credentials>> {
         return Ok(None);
     }
 
-    let content = std::fs::read_to_string(creds_path)
-        .context("Failed to read credentials file")?;
-    let creds: Credentials = serde_json::from_str(&content)
-        .context("Failed to parse credentials JSON")?;
+    let content = std::fs::read_to_string(creds_path).context("Failed to read credentials file")?;
+    let creds: Credentials =
+        serde_json::from_str(&content).context("Failed to parse credentials JSON")?;
     Ok(Some(creds))
 }
 
@@ -145,14 +148,11 @@ pub fn save_credentials(creds: &Credentials) -> Result<()> {
 
     // Fall back to disk cache
     let config_dir = get_config_dir()?;
-    std::fs::create_dir_all(&config_dir)
-        .context("Failed to create config directory")?;
+    std::fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
     let creds_path = config_dir.join("credentials.json");
-    let content = serde_json::to_string_pretty(creds)
-        .context("Failed to serialize credentials")?;
-    std::fs::write(creds_path, content)
-        .context("Failed to write credentials file")?;
+    let content = serde_json::to_string_pretty(creds).context("Failed to serialize credentials")?;
+    std::fs::write(creds_path, content).context("Failed to write credentials file")?;
 
     Ok(())
 }
@@ -202,7 +202,8 @@ pub fn get_oauth_url(config: &OAuthConfig) -> Result<String> {
         "user-read-private",
         "user-top-read",
         "user-read-recently-played",
-    ].join(" ");
+    ]
+    .join(" ");
 
     let mut url = url::Url::parse("https://accounts.spotify.com/authorize")?;
     url.query_pairs_mut()
@@ -250,7 +251,9 @@ pub fn open_browser(url: &str) -> Result<()> {
 
 /// Exchange authorization code for access token
 pub async fn exchange_code_for_token(config: &OAuthConfig, code: &str) -> Result<()> {
-    use rspotify::{Credentials as RspotifyCredentials, OAuth, AuthCodeSpotify, clients::OAuthClient};
+    use rspotify::{
+        clients::OAuthClient, AuthCodeSpotify, Credentials as RspotifyCredentials, OAuth,
+    };
     use std::collections::HashSet;
 
     let creds = RspotifyCredentials::new(&config.client_id, &config.client_secret);
@@ -271,7 +274,9 @@ pub async fn exchange_code_for_token(config: &OAuthConfig, code: &str) -> Result
     let oauth = AuthCodeSpotify::new(creds, oauth_config);
 
     // Exchange the code for a token
-    oauth.request_token(code).await
+    oauth
+        .request_token(code)
+        .await
         .context("Failed to exchange authorization code for token")?;
 
     // Get the token from the oauth client
@@ -280,7 +285,10 @@ pub async fn exchange_code_for_token(config: &OAuthConfig, code: &str) -> Result
             let credentials = Credentials {
                 access_token: token.access_token.clone(),
                 refresh_token: token.refresh_token.clone(),
-                expires_at: token.expires_at.map(|dt: chrono::DateTime<_>| dt.timestamp() as u64).unwrap_or(0),
+                expires_at: token
+                    .expires_at
+                    .map(|dt: chrono::DateTime<_>| dt.timestamp() as u64)
+                    .unwrap_or(0),
             };
             save_credentials(&credentials)?;
         }
@@ -291,11 +299,11 @@ pub async fn exchange_code_for_token(config: &OAuthConfig, code: &str) -> Result
 
 /// Run a local HTTP server to receive the OAuth callback
 pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
+    use bytes::Bytes;
+    use http_body_util::Full;
     use hyper::server::conn::http1;
     use hyper::service::service_fn;
     use hyper::{Request, Response, StatusCode};
-    use http_body_util::Full;
-    use bytes::Bytes;
     use std::net::SocketAddr;
     use tokio::sync::mpsc;
 
@@ -312,8 +320,10 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
         .unwrap_or(8888);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr).await
-        .context(format!("Failed to bind to port {}. Make sure the redirect URI port is available.", port))?;
+    let listener = tokio::net::TcpListener::bind(addr).await.context(format!(
+        "Failed to bind to port {}. Make sure the redirect URI port is available.",
+        port
+    ))?;
 
     println!("Listening on http://{}", addr);
     println!("Waiting for Spotify callback...");
@@ -323,7 +333,9 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
     // Spawn the server
     let handle = tokio::spawn(async move {
         loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
             let stream = hyper_util::rt::TokioIo::new(stream);
             let tx = tx.clone();
 
@@ -336,7 +348,8 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
 
                     if path == "/callback" || path.ends_with("/callback") {
                         // Parse the code from query string
-                        if let Some(code) = query.split('&')
+                        if let Some(code) = query
+                            .split('&')
                             .find(|p| p.starts_with("code="))
                             .map(|p| &p[5..])
                         {
@@ -366,7 +379,10 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
                 }
             });
 
-            if let Err(e) = http1::Builder::new().serve_connection(stream, service).await {
+            if let Err(e) = http1::Builder::new()
+                .serve_connection(stream, service)
+                .await
+            {
                 eprintln!("Error serving connection: {:?}", e);
             }
         }

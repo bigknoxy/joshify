@@ -1,16 +1,16 @@
-mod auth;
+mod album_art;
 mod api;
+mod auth;
+mod keyring_store;
+mod setup;
 mod state;
 mod ui;
-mod setup;
-mod album_art;
-mod keyring_store;
 
-use anyhow::Result;
 use crate::auth::OAuthConfig;
-use crate::state::{NavItem, FocusTarget, ContentState, LoadAction};
+use crate::state::app_state::{PlaylistListItem, TrackListItem};
 use crate::state::player_state::PlayerState;
-use crate::state::app_state::{TrackListItem, PlaylistListItem};
+use crate::state::{ContentState, FocusTarget, LoadAction, NavItem};
+use anyhow::Result;
 
 /// Application state
 struct App {
@@ -83,14 +83,21 @@ impl App {
                 let old_track_uri = self.player_state.current_track_uri.clone();
                 self.player_state = PlayerState::from_context(&ctx);
 
-                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
+                if self
+                    .status_message
+                    .as_ref()
+                    .map_or(false, |m| m.starts_with("Playback error"))
+                {
                     self.status_message = None;
                 }
 
                 let new_track_uri = self.player_state.current_track_uri.clone();
                 let new_album_art_url = self.player_state.current_album_art_url.clone();
 
-                if new_track_uri != old_track_uri && new_track_uri.is_some() && new_album_art_url.is_some() {
+                if new_track_uri != old_track_uri
+                    && new_track_uri.is_some()
+                    && new_album_art_url.is_some()
+                {
                     if let (Some(art_url), Some(art_uri)) = (new_album_art_url, new_track_uri) {
                         let cache = self.album_art_cache.clone();
                         let tx_art_clone = tx_art.clone();
@@ -100,7 +107,8 @@ impl App {
                             match cache.get_or_fetch(&art_url).await {
                                 Some(image_data) => {
                                     println!("Fetched album art for {}", art_uri_for_closure);
-                                    let _ = tx_art_clone.send((art_uri_for_closure, image_data)).await;
+                                    let _ =
+                                        tx_art_clone.send((art_uri_for_closure, image_data)).await;
                                 }
                                 None => {
                                     eprintln!("Failed to fetch album art for {}", art_url);
@@ -116,7 +124,11 @@ impl App {
                 self.player_state.is_playing = false;
                 self.player_state.current_track_name = Some("Nothing playing".to_string());
                 self.player_state.current_artist_name = Some("".to_string());
-                if self.status_message.as_ref().map_or(false, |m| m.starts_with("Playback error")) {
+                if self
+                    .status_message
+                    .as_ref()
+                    .map_or(false, |m| m.starts_with("Playback error"))
+                {
                     self.status_message = None;
                 }
             }
@@ -129,11 +141,8 @@ impl App {
         }
     }
 }
-use ratatui::{
-    prelude::*,
-    widgets::Paragraph,
-};
 use ratatui::backend::CrosstermBackend;
+use ratatui::{prelude::*, widgets::Paragraph};
 use rspotify::prelude::Id;
 use std::io;
 use std::sync::Arc;
@@ -246,8 +255,6 @@ impl CliArgs {
     }
 }
 
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse CLI arguments FIRST (before any terminal initialization)
@@ -278,22 +285,19 @@ async fn main() -> Result<()> {
     };
 
     // Restore terminal on exit - disable mouse capture first
-    let _ = crossterm::execute!(
-        io::stdout(),
-        crossterm::event::DisableMouseCapture
-    );
+    let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
     ratatui::restore();
 
     result
 }
 
 async fn run_with_args(args: CliArgs) -> Result<()> {
-
     // Load config from CLI args (args take precedence over env vars and config file)
     let config = OAuthConfig::from_args(&args);
 
     // Check if we have credentials from env vars or CLI args
-    let has_tokens = !config.client_id.is_empty() && !config.client_secret.is_empty()
+    let has_tokens = !config.client_id.is_empty()
+        && !config.client_secret.is_empty()
         && (std::env::var("SPOTIFY_ACCESS_TOKEN").is_ok()
             || std::env::var("SPOTIFY_REFRESH_TOKEN").is_ok()
             || args.access_token.is_some()
@@ -305,21 +309,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     ratatui::init();
 
     // Enable mouse capture and cursor visibility
-    crossterm::execute!(
-        io::stdout(),
-        crossterm::event::EnableMouseCapture
-    )?;
-    crossterm::execute!(
-        io::stdout(),
-        crossterm::cursor::Show
-    )?;
+    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
+    crossterm::execute!(io::stdout(), crossterm::cursor::Show)?;
 
     let mut app = App::new();
 
     // If we have tokens from env/CLI, skip interactive setup
     if has_tokens {
         app.is_authenticated = true;
-        app.status_message = Some("Connected to Spotify (non-interactive) - Press ? for help".to_string());
+        app.status_message =
+            Some("Connected to Spotify (non-interactive) - Press ? for help".to_string());
     } else {
         // Ensure we have credentials configured (runs interactive setup if needed)
         let config = setup::ensure_configured()?;
@@ -364,10 +363,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if let Some(ref client) = client {
             let client_guard = client.lock().await;
             if let Ok(mut token_guard) = client_guard.oauth.token.lock().await {
-                let access_token = args.access_token
+                let access_token = args
+                    .access_token
                     .or_else(|| std::env::var("SPOTIFY_ACCESS_TOKEN").ok())
                     .unwrap_or_default();
-                let refresh_token = args.refresh_token
+                let refresh_token = args
+                    .refresh_token
                     .or_else(|| std::env::var("SPOTIFY_REFRESH_TOKEN").ok());
 
                 // Calculate expires_at (assume token is fresh if not specified)
@@ -381,8 +382,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 *token_guard = Some(rspotify::Token {
                     access_token,
                     refresh_token,
-                    expires_at: Some(chrono::DateTime::from_timestamp(expires_at, 0)
-                        .unwrap_or(chrono::DateTime::UNIX_EPOCH)),
+                    expires_at: Some(
+                        chrono::DateTime::from_timestamp(expires_at, 0)
+                            .unwrap_or(chrono::DateTime::UNIX_EPOCH),
+                    ),
                     expires_in: chrono::TimeDelta::seconds(3600),
                     scopes: std::collections::HashSet::new(),
                 });
@@ -429,17 +432,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
             // Check minimum terminal size
             if area.width < 50 || area.height < 20 {
-                let warning = Paragraph::new("Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::Yellow));
+                let warning = Paragraph::new(
+                    "Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.",
+                )
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Yellow));
                 frame.render_widget(warning, area);
                 return;
             }
 
             // Status bar at top (if present)
             let top_area = if let Some(ref msg) = app.status_message {
-                let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
-                    .areas(area);
+                let [top, rest] =
+                    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
                 let status = Paragraph::new(msg.as_str())
                     .style(Style::default().fg(Color::Black).bg(Color::Blue));
                 frame.render_widget(status, top);
@@ -452,19 +457,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             let sidebar_width = 20u16;
 
             // Split into sidebar and main content
-            let [sidebar, main] = Layout::horizontal([
-                Constraint::Length(sidebar_width),
-                Constraint::Min(0),
-            ])
-            .areas(top_area);
+            let [sidebar, main] =
+                Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)])
+                    .areas(top_area);
 
             // Player bar: 5 rows at bottom (includes album art)
             let player_bar_height = 5u16;
-            let [main_content, player_bar] = Layout::vertical([
-                Constraint::Min(0),
-                Constraint::Length(player_bar_height),
-            ])
-            .areas(main);
+            let [main_content, player_bar] =
+                Layout::vertical([Constraint::Min(0), Constraint::Length(player_bar_height)])
+                    .areas(main);
 
             // Render all components with focus highlighting
             let sidebar_focused = app.focus == FocusTarget::Sidebar;
@@ -480,10 +481,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 };
                 // Update state for search input display
                 match &app.content_state {
-                    ContentState::Loading(LoadAction::Search { query: existing }) if existing != &query => {
+                    ContentState::Loading(LoadAction::Search { query: existing })
+                        if existing != &query =>
+                    {
                         app.content_state = ContentState::Loading(LoadAction::Search { query });
                     }
-                    ContentState::LoadingInProgress(LoadAction::Search { query: existing }) if existing != &query => {
+                    ContentState::LoadingInProgress(LoadAction::Search { query: existing })
+                        if existing != &query =>
+                    {
                         app.content_state = ContentState::Loading(LoadAction::Search { query });
                     }
                     ContentState::Home => {
@@ -507,8 +512,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 &app.search_query,
             );
 
-            let track_name = app.player_state.current_track_name.as_deref().unwrap_or("Not Playing");
-            let artist_name = app.player_state.current_artist_name.as_deref().unwrap_or("");
+            let track_name = app
+                .player_state
+                .current_track_name
+                .as_deref()
+                .unwrap_or("Not Playing");
+            let artist_name = app
+                .player_state
+                .current_artist_name
+                .as_deref()
+                .unwrap_or("");
 
             ui::render_player_bar(
                 frame,
@@ -560,25 +573,39 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             let guard = c.lock().await;
                             match guard.current_user_saved_tracks(50).await {
                                 Ok(tracks) => {
-                                    let items: Vec<TrackListItem> = tracks.into_iter().filter_map(|t| {
-                                        t.track.id.map(|id| {
-                                            let artist = t.track.artists.first()
-                                                .map(|a| a.name.clone())
-                                                .unwrap_or_else(|| {
-                                                    eprintln!("Warning: track '{}' has no artists", t.track.name);
-                                                    String::new()
-                                                });
-                                            TrackListItem {
-                                                name: t.track.name,
-                                                artist,
-                                                uri: format!("spotify:track:{}", id.id()),
-                                            }
+                                    let items: Vec<TrackListItem> = tracks
+                                        .into_iter()
+                                        .filter_map(|t| {
+                                            t.track.id.map(|id| {
+                                                let artist = t
+                                                    .track
+                                                    .artists
+                                                    .first()
+                                                    .map(|a| a.name.clone())
+                                                    .unwrap_or_else(|| {
+                                                        eprintln!(
+                                                            "Warning: track '{}' has no artists",
+                                                            t.track.name
+                                                        );
+                                                        String::new()
+                                                    });
+                                                TrackListItem {
+                                                    name: t.track.name,
+                                                    artist,
+                                                    uri: format!("spotify:track:{}", id.id()),
+                                                }
+                                            })
                                         })
-                                    }).collect();
+                                        .collect();
                                     let _ = tx_clone.send(ContentState::LikedSongs(items)).await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(ContentState::Error(format!("Failed to load liked songs: {}", e))).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load liked songs: {}",
+                                            e
+                                        )))
+                                        .await;
                                 }
                             }
                         });
@@ -591,15 +618,23 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             let guard = c.lock().await;
                             match guard.current_users_playlists(50).await {
                                 Ok(playlists) => {
-                                    let items: Vec<PlaylistListItem> = playlists.into_iter().map(|p| PlaylistListItem {
-                                        name: p.name,
-                                        id: p.id.id().to_string(),
-                                        track_count: p.tracks.total,
-                                    }).collect();
+                                    let items: Vec<PlaylistListItem> = playlists
+                                        .into_iter()
+                                        .map(|p| PlaylistListItem {
+                                            name: p.name,
+                                            id: p.id.id().to_string(),
+                                            track_count: p.tracks.total,
+                                        })
+                                        .collect();
                                     let _ = tx_clone.send(ContentState::Playlists(items)).await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(ContentState::Error(format!("Failed to load playlists: {}", e))).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load playlists: {}",
+                                            e
+                                        )))
+                                        .await;
                                 }
                             }
                         });
@@ -635,14 +670,25 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             }
                                         })
                                     }).collect();
-                                    let _ = tx_clone.send(ContentState::PlaylistTracks(name_clone, tracks)).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::PlaylistTracks(name_clone, tracks))
+                                        .await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(ContentState::Error(format!("Failed to load playlist: {}", e))).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load playlist: {}",
+                                            e
+                                        )))
+                                        .await;
                                 }
                             }
                         });
-                        app.content_state = ContentState::LoadingInProgress(LoadAction::PlaylistTracks { name, id });
+                        app.content_state =
+                            ContentState::LoadingInProgress(LoadAction::PlaylistTracks {
+                                name,
+                                id,
+                            });
                     }
                     LoadAction::Search { query } => {
                         let c = client.clone();
@@ -652,29 +698,42 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             let guard = c.lock().await;
                             match guard.search(&query_clone, 50).await {
                                 Ok(tracks) => {
-                                    let items: Vec<TrackListItem> = tracks.into_iter().filter_map(|t| {
-                                        t.id.map(|id| {
-                                            let artist = t.artists.first()
-                                                .map(|a| a.name.clone())
-                                                .unwrap_or_else(|| {
-                                                    eprintln!("Warning: track '{}' has no artists", t.name);
-                                                    String::new()
-                                                });
-                                            TrackListItem {
-                                                name: t.name,
-                                                artist,
-                                                uri: format!("spotify:track:{}", id.id()),
-                                            }
+                                    let items: Vec<TrackListItem> = tracks
+                                        .into_iter()
+                                        .filter_map(|t| {
+                                            t.id.map(|id| {
+                                                let artist = t
+                                                    .artists
+                                                    .first()
+                                                    .map(|a| a.name.clone())
+                                                    .unwrap_or_else(|| {
+                                                        eprintln!(
+                                                            "Warning: track '{}' has no artists",
+                                                            t.name
+                                                        );
+                                                        String::new()
+                                                    });
+                                                TrackListItem {
+                                                    name: t.name,
+                                                    artist,
+                                                    uri: format!("spotify:track:{}", id.id()),
+                                                }
+                                            })
                                         })
-                                    }).collect();
-                                    let _ = tx_clone.send(ContentState::SearchResults(query_clone, items)).await;
+                                        .collect();
+                                    let _ = tx_clone
+                                        .send(ContentState::SearchResults(query_clone, items))
+                                        .await;
                                 }
                                 Err(e) => {
-                                    let _ = tx_clone.send(ContentState::Error(format!("Search failed: {}", e))).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!("Search failed: {}", e)))
+                                        .await;
                                 }
                             }
                         });
-                        app.content_state = ContentState::LoadingInProgress(LoadAction::Search { query });
+                        app.content_state =
+                            ContentState::LoadingInProgress(LoadAction::Search { query });
                     }
                 }
             }
@@ -698,7 +757,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     match key.code {
                         // Focus navigation
                         crossterm::event::KeyCode::Tab => {
-                            if key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::SHIFT)
+                            {
                                 app.focus_previous();
                             } else {
                                 app.focus_next();
@@ -712,12 +774,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     // Select current nav item - show content
                                     match app.selected_nav {
                                         ui::NavItem::LikedSongs => {
-                                            app.content_state = ContentState::Loading(LoadAction::LikedSongs);
+                                            app.content_state =
+                                                ContentState::Loading(LoadAction::LikedSongs);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
                                         }
                                         ui::NavItem::Playlists => {
-                                            app.content_state = ContentState::Loading(LoadAction::Playlists);
+                                            app.content_state =
+                                                ContentState::Loading(LoadAction::Playlists);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
                                         }
@@ -725,29 +789,49 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             app.content_state = ContentState::Home;
                                         }
                                         ui::NavItem::Search => {
-                                            app.content_state = ContentState::Loading(LoadAction::Search { query: "Type to search...".to_string() });
+                                            app.content_state =
+                                                ContentState::Loading(LoadAction::Search {
+                                                    query: "Type to search...".to_string(),
+                                                });
                                         }
                                         ui::NavItem::Library => {
-                                            app.content_state = ContentState::Loading(LoadAction::Search { query: "Loading library...".to_string() });
+                                            app.content_state =
+                                                ContentState::Loading(LoadAction::Search {
+                                                    query: "Loading library...".to_string(),
+                                                });
                                         }
                                     }
                                 }
                                 FocusTarget::MainContent => {
                                     // Act on current content - play selected track
                                     match &app.content_state {
-                                        ContentState::LikedSongs(tracks) |
-                                        ContentState::PlaylistTracks(_, tracks) |
-                                        ContentState::SearchResults(_, tracks) => {
-                                            if !tracks.is_empty() && app.selected_index < tracks.len() {
+                                        ContentState::LikedSongs(tracks)
+                                        | ContentState::PlaylistTracks(_, tracks)
+                                        | ContentState::SearchResults(_, tracks) => {
+                                            if !tracks.is_empty()
+                                                && app.selected_index < tracks.len()
+                                            {
                                                 if let Some(ref client) = client {
                                                     let c = client.lock().await;
                                                     let track = &tracks[app.selected_index];
-                                                    match c.start_playback(vec![track.uri.clone()], None).await {
+                                                    match c
+                                                        .start_playback(
+                                                            vec![track.uri.clone()],
+                                                            None,
+                                                        )
+                                                        .await
+                                                    {
                                                         Ok(_) => {
-                                                            app.status_message = Some(format!("Playing: {}", track.name));
+                                                            app.status_message = Some(format!(
+                                                                "Playing: {}",
+                                                                track.name
+                                                            ));
                                                         }
                                                         Err(e) => {
-                                                            app.status_message = Some(format!("Playback error: {}", e));
+                                                            app.status_message = Some(format!(
+                                                                "Playback error: {}",
+                                                                e
+                                                            ));
                                                         }
                                                     }
                                                 }
@@ -755,10 +839,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         }
                                         ContentState::Playlists(playlists) => {
                                             // Enter on playlist - show its tracks
-                                            if !playlists.is_empty() && app.selected_index < playlists.len() {
+                                            if !playlists.is_empty()
+                                                && app.selected_index < playlists.len()
+                                            {
                                                 let playlist = &playlists[app.selected_index];
                                                 app.content_state = ContentState::Loading(
-                                                    LoadAction::PlaylistTracks { name: playlist.name.clone(), id: playlist.id.clone() }
+                                                    LoadAction::PlaylistTracks {
+                                                        name: playlist.name.clone(),
+                                                        id: playlist.id.clone(),
+                                                    },
                                                 );
                                                 app.selected_index = 0;
                                                 app.scroll_offset = 0;
@@ -884,7 +973,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Right => {
                             // Seek forward 10 seconds
                             if let Some(ref client) = client {
-                                let new_pos = app.player_state.progress_ms.saturating_add(10000)
+                                let new_pos = app
+                                    .player_state
+                                    .progress_ms
+                                    .saturating_add(10000)
                                     .min(app.player_state.duration_ms);
                                 let c = client.lock().await;
                                 let _ = c.seek(new_pos, None).await;
@@ -923,7 +1015,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             app.status_message = Some("Added to queue".to_string());
                                         }
                                         Err(e) => {
-                                            app.status_message = Some(format!("Queue error: {}", e));
+                                            app.status_message =
+                                                Some(format!("Queue error: {}", e));
                                         }
                                     }
                                 }
@@ -931,23 +1024,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
 
                         // Settings
-                        crossterm::event::KeyCode::Char('c') => {
-                            match setup::run_setup() {
-                                Ok(_) => {
-                                    app.status_message = Some("Config updated - restart app to apply".to_string());
-                                }
-                                Err(_) => {
-                                    app.status_message = Some("Setup cancelled".to_string());
-                                }
+                        crossterm::event::KeyCode::Char('c') => match setup::run_setup() {
+                            Ok(_) => {
+                                app.status_message =
+                                    Some("Config updated - restart app to apply".to_string());
                             }
-                        }
+                            Err(_) => {
+                                app.status_message = Some("Setup cancelled".to_string());
+                            }
+                        },
 
                         // Search - '/' key starts search input
                         crossterm::event::KeyCode::Char('/') => {
                             app.is_searching = true;
                             app.search_query.clear();
                             app.focus = FocusTarget::MainContent;
-                            app.content_state = ContentState::Loading(LoadAction::Search { query: "Type search query...".to_string() });
+                            app.content_state = ContentState::Loading(LoadAction::Search {
+                                query: "Type search query...".to_string(),
+                            });
                         }
 
                         // Search input handling
@@ -956,9 +1050,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 crossterm::event::KeyCode::Enter => {
                                     // Execute search
                                     if !app.search_query.is_empty() {
-                                        app.content_state = ContentState::Loading(
-                                            LoadAction::Search { query: app.search_query.clone() }
-                                        );
+                                        app.content_state =
+                                            ContentState::Loading(LoadAction::Search {
+                                                query: app.search_query.clone(),
+                                            });
                                         app.selected_index = 0;
                                         app.scroll_offset = 0;
                                     }
@@ -970,21 +1065,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                                 crossterm::event::KeyCode::Backspace => {
                                     app.search_query.pop();
-                                    app.content_state = ContentState::Loading(
-                                        LoadAction::Search {
-                                            query: if app.search_query.is_empty() {
-                                                "Type search query...".to_string()
-                                            } else {
-                                                format!("Search: {}", app.search_query)
-                                            }
-                                        }
-                                    );
+                                    app.content_state = ContentState::Loading(LoadAction::Search {
+                                        query: if app.search_query.is_empty() {
+                                            "Type search query...".to_string()
+                                        } else {
+                                            format!("Search: {}", app.search_query)
+                                        },
+                                    });
                                 }
                                 crossterm::event::KeyCode::Char(c) => {
                                     app.search_query.push(c);
-                                    app.content_state = ContentState::Loading(
-                                        LoadAction::Search { query: format!("Search: {}", app.search_query) }
-                                    );
+                                    app.content_state = ContentState::Loading(LoadAction::Search {
+                                        query: format!("Search: {}", app.search_query),
+                                    });
                                 }
                                 _ => {}
                             }
@@ -1034,7 +1127,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     }
                 }
                 crossterm::event::Event::Mouse(mouse) => {
-                    if let crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) = mouse.kind {
+                    if let crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ) = mouse.kind
+                    {
                         // Click on top area to focus sidebar, middle for main, bottom for player
                         if let Some(area) = app.area {
                             let ratio = mouse.row as f32 / area.height as f32;

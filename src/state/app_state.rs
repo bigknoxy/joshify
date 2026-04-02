@@ -2,10 +2,10 @@
 //!
 //! This module consolidates the UI-related state that was previously in main.rs
 
-use ratatui::layout::Rect;
-use super::player_state::PlayerState;
 use super::load_coordinator::{LoadAction, LoadCoordinator, LoadResult};
+use super::player_state::PlayerState;
 use crate::album_art::AlbumArtCache;
+use ratatui::layout::Rect;
 
 /// Navigation items for the sidebar
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,7 +19,13 @@ pub enum NavItem {
 
 impl NavItem {
     pub fn all() -> &'static [NavItem] {
-        &[NavItem::Home, NavItem::Search, NavItem::Library, NavItem::Playlists, NavItem::LikedSongs]
+        &[
+            NavItem::Home,
+            NavItem::Search,
+            NavItem::Library,
+            NavItem::Playlists,
+            NavItem::LikedSongs,
+        ]
     }
 
     pub fn label(&self) -> &'static str {
@@ -167,9 +173,13 @@ impl AppState {
     pub fn search_backspace(&mut self) {
         self.search_query.pop();
         self.content_state = ContentState::Loading(if self.search_query.is_empty() {
-            LoadAction::Search { query: "Type search query...".to_string() }
+            LoadAction::Search {
+                query: "Type search query...".to_string(),
+            }
         } else {
-            LoadAction::Search { query: format!("Search: {}", self.search_query) }
+            LoadAction::Search {
+                query: format!("Search: {}", self.search_query),
+            }
         });
     }
 
@@ -256,9 +266,13 @@ impl AppState {
     where
         F: FnOnce(&mut Self, T),
     {
-        if !self.load_coordinator.is_stale(&result.action, result.sequence) {
+        if !self
+            .load_coordinator
+            .is_stale(&result.action, result.sequence)
+        {
             apply(self, result.data);
-            self.load_coordinator.mark_completed(&result.action, result.sequence);
+            self.load_coordinator
+                .mark_completed(&result.action, result.sequence);
         }
     }
 }

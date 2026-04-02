@@ -6,7 +6,7 @@
 #[path = "../src/api/rate_limit.rs"]
 mod rate_limit;
 
-use rate_limit::{backoff_delay, MAX_RETRIES, with_rate_limit_retry};
+use rate_limit::{backoff_delay, with_rate_limit_retry, MAX_RETRIES};
 use tokio::time::Duration;
 
 #[test]
@@ -46,9 +46,7 @@ fn test_max_retries_constant() {
 async fn test_with_rate_limit_retry_success() {
     // Operation that succeeds immediately
     let result = with_rate_limit_retry(|| {
-        std::boxed::Box::pin(async {
-            Ok::<_, anyhow::Error>("success".to_string())
-        })
+        std::boxed::Box::pin(async { Ok::<_, anyhow::Error>("success".to_string()) })
     })
     .await;
 
@@ -60,9 +58,7 @@ async fn test_with_rate_limit_retry_success() {
 async fn test_with_rate_limit_retry_non_rate_limit_error() {
     // Operation that fails with non-rate-limit error should fail immediately
     let result = with_rate_limit_retry(|| {
-        std::boxed::Box::pin(async {
-            Err::<String, _>(anyhow::anyhow!("Network error"))
-        })
+        std::boxed::Box::pin(async { Err::<String, _>(anyhow::anyhow!("Network error")) })
     })
     .await;
 
@@ -101,9 +97,7 @@ async fn test_with_rate_limit_retry_recovers() {
 async fn test_with_rate_limit_retry_exhausted() {
     // Operation that always fails with rate limit should exhaust retries
     let result = with_rate_limit_retry(|| {
-        std::boxed::Box::pin(async {
-            Err::<String, _>(anyhow::anyhow!("429 Too Many Requests"))
-        })
+        std::boxed::Box::pin(async { Err::<String, _>(anyhow::anyhow!("429 Too Many Requests")) })
     })
     .await;
 

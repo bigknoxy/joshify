@@ -1,11 +1,11 @@
 //! Main content view rendering
 
+use crate::state::app_state::{ContentState, PlaylistListItem, TrackListItem};
+use crate::state::load_coordinator::LoadAction;
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, List},
+    widgets::{Block, Borders, List, Paragraph},
 };
-use crate::state::app_state::{TrackListItem, PlaylistListItem, ContentState};
-use crate::state::load_coordinator::LoadAction;
 
 // MainContentState is an alias for ContentState - they are the same type
 type MainContentState = ContentState;
@@ -38,26 +38,39 @@ fn render_search_input(frame: &mut ratatui::Frame, area: Rect, query: &str, bord
     let cursor_pos = query.len() as u16;
     let input_line = Line::styled(
         format!("{}█", query),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     );
 
     let content = vec![
         Line::from(""),
-        Line::styled("Search Spotify", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            "Search Spotify",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Line::from(""),
         input_line,
         Line::from(""),
-        Line::styled("Enter to search | Esc to cancel", Style::default().fg(Color::Gray)),
+        Line::styled(
+            "Enter to search | Esc to cancel",
+            Style::default().fg(Color::Gray),
+        ),
     ];
 
-    let widget = Paragraph::new(content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Search ")
-                .border_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD))
-                .style(Style::default().bg(Color::Black))
-        );
+    let widget = Paragraph::new(content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Search ")
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black)),
+    );
 
     frame.render_widget(widget, search_area);
 
@@ -76,13 +89,12 @@ fn render_track_list(
     border_color: Color,
 ) {
     if tracks.is_empty() {
-        let widget = Paragraph::new("No tracks found")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color))
-            );
+        let widget = Paragraph::new("No tracks found").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        );
         frame.render_widget(widget, area);
         return;
     }
@@ -97,14 +109,17 @@ fn render_track_list(
     );
 
     // Render header
-    let header = Paragraph::new(format!("{} tracks | Enter to play | ↑/↓ to navigate", tracks.len()))
-        .style(Style::default().fg(Color::Gray))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color))
-        );
+    let header = Paragraph::new(format!(
+        "{} tracks | Enter to play | ↑/↓ to navigate",
+        tracks.len()
+    ))
+    .style(Style::default().fg(Color::Gray))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color)),
+    );
     frame.render_widget(header, area);
 
     // Build visible lines
@@ -116,22 +131,23 @@ fn render_track_list(
             let track = &tracks[i];
             let is_selected = i == selected_index;
             let (prefix, style) = if is_selected {
-                ("▶ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                (
+                    "▶ ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
                 ("  ", Style::default().fg(Color::White))
             };
             Line::styled(
                 format!("{}{} - {}", prefix, track.name, track.artist),
-                style
+                style,
             )
         })
         .collect();
 
-    let list = List::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::NONE)
-        );
+    let list = List::new(lines).block(Block::default().borders(Borders::NONE));
 
     frame.render_widget(list, list_area);
 }
@@ -147,13 +163,12 @@ fn render_playlist_list(
     border_color: Color,
 ) {
     if playlists.is_empty() {
-        let widget = Paragraph::new("No playlists found")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color))
-            );
+        let widget = Paragraph::new("No playlists found").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        );
         frame.render_widget(widget, area);
         return;
     }
@@ -168,14 +183,17 @@ fn render_playlist_list(
     );
 
     // Render header
-    let header = Paragraph::new(format!("{} playlists | Enter to view | ↑/↓ to navigate", playlists.len()))
-        .style(Style::default().fg(Color::Gray))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color))
-        );
+    let header = Paragraph::new(format!(
+        "{} playlists | Enter to view | ↑/↓ to navigate",
+        playlists.len()
+    ))
+    .style(Style::default().fg(Color::Gray))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color)),
+    );
     frame.render_widget(header, area);
 
     // Build visible lines
@@ -187,22 +205,26 @@ fn render_playlist_list(
             let playlist = &playlists[i];
             let is_selected = i == selected_index;
             let (prefix, style) = if is_selected {
-                ("▶ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                (
+                    "▶ ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
                 ("  ", Style::default().fg(Color::White))
             };
             Line::styled(
-                format!("{}{} ({} tracks)", prefix, playlist.name, playlist.track_count),
-                style
+                format!(
+                    "{}{} ({} tracks)",
+                    prefix, playlist.name, playlist.track_count
+                ),
+                style,
             )
         })
         .collect();
 
-    let list = List::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::NONE)
-        );
+    let list = List::new(lines).block(Block::default().borders(Borders::NONE));
 
     frame.render_widget(list, list_area);
 }
@@ -220,13 +242,12 @@ fn render_track_list_compact(
     } else {
         format!("{} ({} tracks)", title, tracks.len())
     };
-    let widget = Paragraph::new(content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color))
-        );
+    let widget = Paragraph::new(content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color)),
+    );
     frame.render_widget(widget, area);
 }
 
@@ -243,13 +264,12 @@ fn render_playlist_list_compact(
     } else {
         format!("{} ({} playlists)", title, playlists.len())
     };
-    let widget = Paragraph::new(content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color))
-        );
+    let widget = Paragraph::new(content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color)),
+    );
     frame.render_widget(widget, area);
 }
 
@@ -267,7 +287,11 @@ pub fn render_main_view(
     search_query: &str,
 ) {
     let border_color = if focused { Color::Yellow } else { Color::White };
-    let title = if focused { " Main (Enter to play) " } else { " Main " };
+    let title = if focused {
+        " Main (Enter to play) "
+    } else {
+        " Main "
+    };
 
     // Show search input overlay when actively searching
     if is_searching {
@@ -279,30 +303,47 @@ pub fn render_main_view(
     if area.width < 50 || area.height < 15 {
         let content = match content_state {
             ContentState::Home => {
-                if _is_authenticated { "Home" } else { "Not connected" }
+                if _is_authenticated {
+                    "Home"
+                } else {
+                    "Not connected"
+                }
             }
-            ContentState::Loading(action) | ContentState::LoadingInProgress(action) => &load_action_display_owned(action),
+            ContentState::Loading(action) | ContentState::LoadingInProgress(action) => {
+                &load_action_display_owned(action)
+            }
             ContentState::LikedSongs(tracks) => {
                 return render_track_list_compact(frame, area, tracks, "Liked Songs", border_color);
             }
             ContentState::Playlists(playlists) => {
-                return render_playlist_list_compact(frame, area, playlists, "Playlists", border_color);
+                return render_playlist_list_compact(
+                    frame,
+                    area,
+                    playlists,
+                    "Playlists",
+                    border_color,
+                );
             }
             ContentState::PlaylistTracks(name, tracks) => {
                 return render_track_list_compact(frame, area, tracks, name, border_color);
             }
             ContentState::SearchResults(query, tracks) => {
-                return render_track_list_compact(frame, area, tracks, &format!("Results: {}", query), border_color);
+                return render_track_list_compact(
+                    frame,
+                    area,
+                    tracks,
+                    &format!("Results: {}", query),
+                    border_color,
+                );
             }
             ContentState::Error(msg) => msg.as_str(),
         };
-        let widget = Paragraph::new(content.to_string())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color))
-            );
+        let widget = Paragraph::new(content.to_string()).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        );
         frame.render_widget(widget, area);
         return;
     }
@@ -315,24 +356,22 @@ pub fn render_main_view(
             } else {
                 "Not connected to Spotify\n\nPress 'c' to configure"
             };
-            let widget = Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(title)
-                        .border_style(Style::default().fg(border_color))
-                );
+            let widget = Paragraph::new(content).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(border_color)),
+            );
             frame.render_widget(widget, area);
         }
         ContentState::Loading(action) | ContentState::LoadingInProgress(action) => {
             let display_msg = format!("{} ⏳", load_action_display_owned(action));
-            let widget = Paragraph::new(display_msg.as_str())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(title)
-                        .border_style(Style::default().fg(border_color))
-                );
+            let widget = Paragraph::new(display_msg.as_str()).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(border_color)),
+            );
             frame.render_widget(widget, area);
         }
         ContentState::Error(msg) => {
@@ -342,17 +381,33 @@ pub fn render_main_view(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(title)
-                        .border_style(Style::default().fg(border_color))
+                        .border_style(Style::default().fg(border_color)),
                 );
             frame.render_widget(widget, area);
         }
-        ContentState::LikedSongs(tracks) |
-        ContentState::PlaylistTracks(_, tracks) |
-        ContentState::SearchResults(_, tracks) => {
-            render_track_list(frame, area, tracks, selected_index, scroll_offset, title, border_color);
+        ContentState::LikedSongs(tracks)
+        | ContentState::PlaylistTracks(_, tracks)
+        | ContentState::SearchResults(_, tracks) => {
+            render_track_list(
+                frame,
+                area,
+                tracks,
+                selected_index,
+                scroll_offset,
+                title,
+                border_color,
+            );
         }
         ContentState::Playlists(playlists) => {
-            render_playlist_list(frame, area, playlists, selected_index, scroll_offset, title, border_color);
+            render_playlist_list(
+                frame,
+                area,
+                playlists,
+                selected_index,
+                scroll_offset,
+                title,
+                border_color,
+            );
         }
     }
 }

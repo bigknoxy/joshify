@@ -24,11 +24,8 @@ pub fn render_player_bar(
 
     // Split player bar into album art (left) and info (right)
     let album_art_width = 7u16; // Space for album art
-    let [album_area, info_area] = Layout::horizontal([
-        Constraint::Length(album_art_width),
-        Constraint::Min(0),
-    ])
-    .areas(area);
+    let [album_area, info_area] =
+        Layout::horizontal([Constraint::Length(album_art_width), Constraint::Min(0)]).areas(area);
 
     // Render album art - use actual image data when available, ASCII fallback otherwise
     let album_art_widget: Paragraph = if album_art_data.is_some() {
@@ -43,9 +40,13 @@ pub fn render_player_bar(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                    .border_style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
                     .title("Album")
-                    .title_style(Style::default().fg(Color::Green))
+                    .title_style(Style::default().fg(Color::Green)),
             )
             .alignment(Alignment::Center)
     } else if album_art_url.is_some() {
@@ -62,7 +63,7 @@ pub fn render_player_bar(
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Yellow))
                     .title("Loading...")
-                    .title_style(Style::default().fg(Color::Yellow))
+                    .title_style(Style::default().fg(Color::Yellow)),
             )
             .alignment(Alignment::Center)
     } else {
@@ -79,14 +80,15 @@ pub fn render_player_bar(
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::DarkGray))
                     .title("No Art")
-                    .title_style(Style::default().fg(Color::DarkGray))
+                    .title_style(Style::default().fg(Color::DarkGray)),
             )
             .alignment(Alignment::Center)
     };
     frame.render_widget(album_art_widget, album_area);
 
     // Track info
-    let progress_text = format!("{} / {}",
+    let progress_text = format!(
+        "{} / {}",
         crate::state::player_state::format_duration(progress_ms),
         crate::state::player_state::format_duration(duration_ms)
     );
@@ -102,9 +104,11 @@ pub fn render_player_bar(
     let max_len = info_area.width.saturating_sub(2) as usize;
     let name_text = if display_name.len() + artist_name.len() + 3 > max_len {
         let half = max_len / 2 - 2;
-        format!("{}... / {}...",
+        format!(
+            "{}... / {}...",
             &display_name.chars().take(half).collect::<String>(),
-            &artist_name.chars().take(half).collect::<String>())
+            &artist_name.chars().take(half).collect::<String>()
+        )
     } else {
         format!("{} - {}", display_name, artist_name)
     };
@@ -112,25 +116,41 @@ pub fn render_player_bar(
     let lines = vec![
         Line::styled(
             format!(" {}  {}", play_icon, name_text),
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Line::styled(
-            format!(" {}  |  Vol:{}  |  ←/→:Seek  |  ↑/↓:Vol", progress_text, volume_bars),
-            Style::default().fg(Color::Gray)
+            format!(
+                " {}  |  Vol:{}  |  ←/→:Seek  |  ↑/↓:Vol",
+                progress_text, volume_bars
+            ),
+            Style::default().fg(Color::Gray),
         ),
     ];
 
     let border_color = if focused { Color::Yellow } else { Color::Green };
-    let focus_hint = if focused { " Now Playing (Enter:Play/Pause) " } else { " Now Playing " };
+    let focus_hint = if focused {
+        " Now Playing (Enter:Play/Pause) "
+    } else {
+        " Now Playing "
+    };
 
-    let widget = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(focus_hint)
-                .border_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD))
-                .title_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD))
-        );
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(focus_hint)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .title_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
 
     frame.render_widget(widget, info_area);
 }

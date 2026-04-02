@@ -28,8 +28,18 @@ impl PlayerState {
                 let artist_name = track.artists.first().map(|a| a.name.clone());
                 let album_art_url = track.album.images.first().map(|img| img.url.clone());
                 let duration_ms = track.duration.num_milliseconds() as u32;
-                let track_uri = track.id.as_ref().map(|id| format!("spotify:track:{}", id.id())).unwrap_or_default();
-                (Some(track_name), artist_name, album_art_url, duration_ms, Some(track_uri))
+                let track_uri = track
+                    .id
+                    .as_ref()
+                    .map(|id| format!("spotify:track:{}", id.id()))
+                    .unwrap_or_default();
+                (
+                    Some(track_name),
+                    artist_name,
+                    album_art_url,
+                    duration_ms,
+                    Some(track_uri),
+                )
             }
             Some(rspotify::model::PlayableItem::Episode(episode)) => {
                 let name = episode.name.clone();
@@ -37,14 +47,23 @@ impl PlayerState {
                 let album_art_url = episode.show.images.first().map(|img| img.url.clone());
                 let duration_ms = episode.duration.num_milliseconds() as u32;
                 let track_uri = format!("spotify:episode:{}", episode.id.id());
-                (Some(name), artist_name, album_art_url, duration_ms, Some(track_uri))
+                (
+                    Some(name),
+                    artist_name,
+                    album_art_url,
+                    duration_ms,
+                    Some(track_uri),
+                )
             }
             None => (None, None, None, 0, None),
         };
 
         Self {
             is_playing: ctx.is_playing,
-            progress_ms: ctx.progress.map(|d| d.num_milliseconds() as u32).unwrap_or(0),
+            progress_ms: ctx
+                .progress
+                .map(|d| d.num_milliseconds() as u32)
+                .unwrap_or(0),
             duration_ms,
             volume: ctx.device.volume_percent.unwrap_or(50),
             current_track_name: track_name,

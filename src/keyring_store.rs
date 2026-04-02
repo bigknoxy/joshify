@@ -7,7 +7,7 @@
 //!
 //! Falls back to file-based storage if keyring is unavailable.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Service name for keyring entries
@@ -56,10 +56,10 @@ pub fn set_credentials_keyring(creds: &SecureCredentials) -> Result<()> {
     let keyring = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .context("Failed to create keyring entry")?;
 
-    let json = serde_json::to_string(creds)
-        .context("Failed to serialize credentials")?;
+    let json = serde_json::to_string(creds).context("Failed to serialize credentials")?;
 
-    keyring.set_password(&json)
+    keyring
+        .set_password(&json)
         .context("Failed to save credentials to keyring")?;
 
     Ok(())
@@ -90,12 +90,13 @@ pub fn load_credentials_secure() -> Result<Option<SecureCredentials>> {
     }
 
     // Fall back to file-based storage
-    crate::auth::load_credentials()
-        .map(|opt| opt.map(|c| SecureCredentials {
+    crate::auth::load_credentials().map(|opt| {
+        opt.map(|c| SecureCredentials {
             access_token: c.access_token,
             refresh_token: c.refresh_token,
             expires_at: c.expires_at,
-        }))
+        })
+    })
 }
 
 /// Save credentials - tries keyring first, falls back to file

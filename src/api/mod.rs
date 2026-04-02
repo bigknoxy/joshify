@@ -7,8 +7,8 @@
 //! - `rate_limit` - Rate limit handling with exponential backoff
 
 mod client;
-mod playback;
 mod library;
+mod playback;
 pub mod rate_limit;
 
 pub use client::SpotifyClient;

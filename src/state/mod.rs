@@ -7,11 +7,11 @@
 //! - `library_state` - Liked songs, playlists
 
 pub mod app_state;
-pub mod player_state;
-pub mod queue_state;
 pub mod library_state;
 pub mod load_coordinator;
+pub mod player_state;
+pub mod queue_state;
 
 // Re-export specific items for public use
-pub use app_state::{ContentState, NavItem, FocusTarget};
+pub use app_state::{ContentState, FocusTarget, NavItem};
 pub use load_coordinator::LoadAction;

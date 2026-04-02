@@ -1,13 +1,10 @@
 //! Spotify client creation and authentication
 
 use anyhow::Result;
-use rspotify::{
-    AuthCodeSpotify,
-    Credentials, OAuth,
-};
+use rspotify::{AuthCodeSpotify, Credentials, OAuth};
 use std::collections::HashSet;
 
-use crate::auth::{OAuthConfig, load_credentials};
+use crate::auth::{load_credentials, OAuthConfig};
 
 /// Spotify API client
 pub struct SpotifyClient {
@@ -44,8 +41,10 @@ impl SpotifyClient {
                     let token = rspotify::Token {
                         access_token: creds.access_token,
                         refresh_token: creds.refresh_token,
-                        expires_at: Some(chrono::DateTime::from_timestamp(creds.expires_at as i64, 0)
-                            .unwrap_or(chrono::DateTime::UNIX_EPOCH)),
+                        expires_at: Some(
+                            chrono::DateTime::from_timestamp(creds.expires_at as i64, 0)
+                                .unwrap_or(chrono::DateTime::UNIX_EPOCH),
+                        ),
                         expires_in: chrono::TimeDelta::seconds(3600),
                         scopes: HashSet::new(),
                     };

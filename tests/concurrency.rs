@@ -108,7 +108,10 @@ async fn test_task_cancellation() {
 
     // Channel should not receive result
     let result = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
-    assert!(result.is_err() || result.unwrap().is_none(), "Cancelled task should not send result");
+    assert!(
+        result.is_err() || result.unwrap().is_none(),
+        "Cancelled task should not send result"
+    );
 }
 
 #[tokio::test]
@@ -127,7 +130,10 @@ async fn test_stale_result_rejected() {
     assert!(is_stale(seq2, seq1), "Old sequence should be stale");
 
     // New task completes - should be accepted
-    assert!(!is_stale(seq2, seq2), "Current sequence should not be stale");
+    assert!(
+        !is_stale(seq2, seq2),
+        "Current sequence should not be stale"
+    );
 }
 
 #[tokio::test]

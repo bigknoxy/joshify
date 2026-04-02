@@ -10,8 +10,9 @@ async fn test_album_art_timeout() {
     // Simulate a fetch that times out
     let fetch_result = tokio::time::timeout(
         Duration::from_millis(100),
-        tokio::time::sleep(Duration::from_millis(500))
-    ).await;
+        tokio::time::sleep(Duration::from_millis(500)),
+    )
+    .await;
 
     // Should timeout, not panic
     assert!(fetch_result.is_err(), "Should timeout");
@@ -88,7 +89,8 @@ fn test_token_expiry_mid_session() {
     let expires_at_past = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs() - 1000;
+        .as_secs()
+        - 1000;
 
     let is_expired = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -101,7 +103,8 @@ fn test_token_expiry_mid_session() {
     let expires_at_future = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs() + 3600;
+        .as_secs()
+        + 3600;
 
     let is_expired = SystemTime::now()
         .duration_since(UNIX_EPOCH)
