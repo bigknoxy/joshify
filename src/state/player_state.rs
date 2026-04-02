@@ -55,7 +55,7 @@ impl PlayerState {
                     Some(track_uri),
                 )
             }
-            None => (None, None, None, 0, None),
+            Some(rspotify::model::PlayableItem::Unknown(_)) | None => (None, None, None, 0, None),
         };
 
         Self {

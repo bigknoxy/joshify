@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use rspotify::{
-    clients::OAuthClient,
-    model::{AdditionalType, CurrentPlaybackContext},
+    clients::{BaseClient, OAuthClient},
+    model::CurrentPlaybackContext,
 };
 
 use super::SpotifyClient;
@@ -11,22 +11,95 @@ use super::SpotifyClient;
 impl SpotifyClient {
     /// Get current playback state
     pub async fn current_playback(&self) -> Result<Option<CurrentPlaybackContext>> {
-        match self
-            .oauth
-            .current_playback(None, None::<Vec<&AdditionalType>>)
-            .await
-        {
-            Ok(ctx) => Ok(ctx),
+        // Make raw API call to get JSON response
+        use std::collections::HashMap;
+        let params: HashMap<&str, &str> = HashMap::new();
+        let result: Result<String, rspotify::ClientError> = self.oauth.api_get("me/player", &params).await;
+        
+        match result {
+            Ok(json_str) => {
+                // Check for empty response (no active playback)
+                if json_str.is_empty() || json_str == "null" {
+                    return Ok(None);
+                }
+                
+                // Try to parse as CurrentPlaybackContext
+                match serde_json::from_str::<CurrentPlaybackContext>(&json_str) {
+                    Ok(ctx) => Ok(Some(ctx)),
+                    Err(e) => {
+                        // Deserialization failed - analyze what Spotify returned
+                        let err_str = e.to_string();
+                        
+                        // Check for device object with is_active: false
+                        // This means "devices exist but nothing playing"
+                        if json_str.contains("is_active") && json_str.contains("false") {
+                            return Ok(None);
+                        }
+                        
+                        // Check for PlayableItem variant mismatch (ads, unknown types)
+                        if err_str.contains("PlayableItem") || err_str.contains("untagged") || err_str.contains("variant") {
+                            return Ok(None);
+                        }
+                        
+                        // Check if it's an empty or null response
+                        if json_str.is_empty() || json_str == "null" || json_str.contains("{}") {
+                            return Ok(None);
+                        }
+                        
+                        // Check for "data does not match any variant" - generic serde error
+                        if err_str.contains("data does not match") || err_str.contains("does not match any variant") {
+                            return Ok(None);
+                        }
+                        
+                        // Fallback: ANY deserialization error = no playback
+                        Ok(None)
+                    }
+                }
+            }
             Err(e) => {
-                // Check if it's a "no active device" error - this is normal, not an error
+                // API call failed
                 let err_str = e.to_string();
-                if err_str.contains("NO_ACTIVE_DEVICE") || err_str.contains("no active device") {
+                let err_debug = format!("{:?}", e);
+                
+                let err_lower = err_str.to_lowercase();
+                let err_debug_lower = err_debug.to_lowercase();
+                
+                // Match device-related errors
+                let is_device_error = 
+                    err_lower.contains("no active device") 
+                    || err_str.contains("NO_ACTIVE_DEVICE")
+                    || err_lower.contains("no device")
+                    || err_lower.contains("no player")
+                    || err_lower.contains("player")
+                    || err_lower.contains("device")
+                    || err_lower.contains("inactive")
+                    || err_str.contains("404")
+                    || err_str.contains("400")
+                    || err_debug_lower.contains("player")
+                    || err_debug_lower.contains("device");
+                
+                if is_device_error {
                     Ok(None)
                 } else {
                     Err(e).context("Failed to get current playback state")
                 }
             }
         }
+    }
+
+    /// Get available devices
+    pub async fn available_devices(&self) -> Result<Vec<rspotify::model::Device>> {
+        let result = self.oauth.device().await.context("Failed to get devices")?;
+        Ok(result)
+    }
+
+    /// Transfer playback to a device
+    pub async fn transfer_playback(&self, device_id: &str) -> Result<()> {
+        self.oauth
+            .transfer_playback(device_id, Some(true))
+            .await
+            .context("Failed to transfer playback")?;
+        Ok(())
     }
 
     /// Start or resume playback

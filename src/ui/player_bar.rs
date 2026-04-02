@@ -1,5 +1,6 @@
 //! Player bar rendering - Now playing with album art
 
+use crate::ui::image_renderer::AlbumArtWidget;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},
@@ -27,28 +28,11 @@ pub fn render_player_bar(
     let [album_area, info_area] =
         Layout::horizontal([Constraint::Length(album_art_width), Constraint::Min(0)]).areas(area);
 
-    // Render album art - use actual image data when available, ASCII fallback otherwise
-    let album_art_widget: Paragraph = if album_art_data.is_some() {
-        // Have image data - show enhanced ASCII art indicating real art is loaded
-        let art = vec![
-            Line::from("  ╭───╮  "),
-            Line::from("  │▓▓▓│  "),
-            Line::from("  │▓▓▓│  "),
-            Line::from("  ╰───╯  "),
-        ];
-        Paragraph::new(art)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .title("Album")
-                    .title_style(Style::default().fg(Color::Green)),
-            )
-            .alignment(Alignment::Center)
+    // Render album art using protocol-aware renderer
+    if album_art_data.is_some() {
+        // Have image data - render with detected protocol
+        let album_art = AlbumArtWidget::new(album_art_data);
+        frame.render_widget(album_art, album_area);
     } else if album_art_url.is_some() {
         // Have URL but no data yet - show loading indicator
         let art = vec![
@@ -57,7 +41,7 @@ pub fn render_player_bar(
             Line::from("  │...│  "),
             Line::from("  ╰───╯  "),
         ];
-        Paragraph::new(art)
+        let loading = Paragraph::new(art)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -65,7 +49,8 @@ pub fn render_player_bar(
                     .title("Loading...")
                     .title_style(Style::default().fg(Color::Yellow)),
             )
-            .alignment(Alignment::Center)
+            .alignment(Alignment::Center);
+        frame.render_widget(loading, album_area);
     } else {
         // No album art - show music note placeholder
         let art = vec![
@@ -74,7 +59,7 @@ pub fn render_player_bar(
             Line::from("       "),
             Line::from("       "),
         ];
-        Paragraph::new(art)
+        let placeholder = Paragraph::new(art)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -82,9 +67,9 @@ pub fn render_player_bar(
                     .title("No Art")
                     .title_style(Style::default().fg(Color::DarkGray)),
             )
-            .alignment(Alignment::Center)
-    };
-    frame.render_widget(album_art_widget, album_area);
+            .alignment(Alignment::Center);
+        frame.render_widget(placeholder, album_area);
+    }
 
     // Track info
     let progress_text = format!(

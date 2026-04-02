@@ -6,6 +6,7 @@
 //! - `player_bar` - Now playing bar with album art
 //! - `overlays` - Search input, help, queue overlays
 
+pub mod image_renderer;
 pub mod main_view;
 pub mod overlays;
 pub mod player_bar;

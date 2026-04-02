@@ -743,6 +743,45 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             match crossterm::event::read()? {
                 crossterm::event::Event::Key(key) => {
+                    // Search input has priority - intercept all keys when searching
+                    if app.is_searching {
+                        match key.code {
+                            crossterm::event::KeyCode::Enter => {
+                                if !app.search_query.is_empty() {
+                                    app.content_state =
+                                        ContentState::Loading(LoadAction::Search {
+                                            query: app.search_query.clone(),
+                                        });
+                                    app.selected_index = 0;
+                                    app.scroll_offset = 0;
+                                }
+                                app.is_searching = false;
+                            }
+                            crossterm::event::KeyCode::Esc => {
+                                app.is_searching = false;
+                                app.content_state = ContentState::Home;
+                            }
+                            crossterm::event::KeyCode::Backspace => {
+                                app.search_query.pop();
+                                app.content_state = ContentState::Loading(LoadAction::Search {
+                                    query: if app.search_query.is_empty() {
+                                        "Type search query...".to_string()
+                                    } else {
+                                        format!("Search: {}", app.search_query)
+                                    },
+                                });
+                            }
+                            crossterm::event::KeyCode::Char(c) => {
+                                app.search_query.push(c);
+                                app.content_state = ContentState::Loading(LoadAction::Search {
+                                    query: format!("Search: {}", app.search_query),
+                                });
+                            }
+                            _ => {}
+                        }
+                        continue; // Skip all other key handling while searching
+                    }
+
                     // Global keys work regardless of focus
                     if key.code == crossterm::event::KeyCode::Char('q') {
                         break;
@@ -765,6 +804,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else {
                                 app.focus_next();
                             }
+                        }
+                        crossterm::event::KeyCode::BackTab => {
+                            app.focus_previous();
                         }
 
                         // Enter key - action based on current focus
@@ -814,6 +856,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 if let Some(ref client) = client {
                                                     let c = client.lock().await;
                                                     let track = &tracks[app.selected_index];
+                                                    
+                                                    // Try to transfer to first available device
+                                                    if let Ok(devices) = c.available_devices().await {
+                                                        if let Some(device) = devices.first() {
+                                                            if let Some(ref device_id) = device.id {
+                                                                let _ = c.transfer_playback(device_id).await;
+                                                            }
+                                                        }
+                                                    }
+                                                    
                                                     match c
                                                         .start_playback(
                                                             vec![track.uri.clone()],
@@ -829,7 +881,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         }
                                                         Err(e) => {
                                                             app.status_message = Some(format!(
-                                                                "Playback error: {}",
+                                                                "Playback error: {} (Open Spotify on another device first)",
                                                                 e
                                                             ));
                                                         }

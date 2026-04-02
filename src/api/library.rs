@@ -37,14 +37,24 @@ impl SpotifyClient {
         &self,
         playlist_id: &str,
     ) -> Result<Vec<rspotify::model::PlaylistItem>> {
+        eprintln!("DEBUG: Loading playlist {}", playlist_id);
         let pid =
             rspotify::model::PlaylistId::from_id(playlist_id).context("Invalid playlist ID")?;
         let result = self
             .oauth
             .playlist_items_manual(pid, None, None, None, None)
-            .await
-            .context("Failed to get playlist items")?;
-        Ok(result.items)
+            .await;
+        
+        match result {
+            Ok(r) => {
+                eprintln!("DEBUG: Got {} playlist items", r.items.len());
+                Ok(r.items)
+            }
+            Err(e) => {
+                eprintln!("DEBUG: Playlist items error: {:?}", e);
+                Err(e).context("Failed to get playlist items")
+            }
+        }
     }
 
     /// Search Spotify
