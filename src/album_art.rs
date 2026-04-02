@@ -8,9 +8,9 @@
 //! - ASCII/Unicode fallback (chafa-style)
 
 use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::num::NonZeroUsize;
 
 /// Album art cache (cloneable via Arc)
 /// Uses LRU cache with 50 entry limit to bound memory usage
@@ -32,7 +32,9 @@ impl AlbumArtCache {
         }
 
         Self {
-            cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(NonZeroUsize::new(50).unwrap()))),
+            cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(
+                NonZeroUsize::new(50).unwrap(),
+            ))),
             cache_dir,
         }
     }
