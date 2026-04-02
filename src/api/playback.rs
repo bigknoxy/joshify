@@ -89,8 +89,20 @@ impl SpotifyClient {
 
     /// Get available devices
     pub async fn available_devices(&self) -> Result<Vec<rspotify::model::Device>> {
-        let result = self.oauth.device().await.context("Failed to get devices")?;
-        Ok(result)
+        eprintln!("DEBUG: Fetching available devices...");
+        let devices = self.oauth.device().await?;
+        eprintln!("DEBUG: Found {} devices", devices.len());
+        for (i, device) in devices.iter().enumerate() {
+            eprintln!("DEBUG:   [{}] {} (type: {:?}, id: {}) - active: {}, restricted: {}", 
+                i, 
+                device.name, 
+                device._type,
+                device.id.as_ref().unwrap_or(&"none".to_string()),
+                device.is_active,
+                device.is_restricted
+            );
+        }
+        Ok(devices)
     }
 
     /// Transfer playback to a device

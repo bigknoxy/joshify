@@ -566,6 +566,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if let Some(action) = load_action {
             if let Some(ref client) = client {
                 match action {
+                    LoadAction::Devices => {
+                        // Already handled above, skip
+                    }
                     LoadAction::LikedSongs => {
                         let c = client.clone();
                         let tx_clone = tx.clone();
@@ -905,6 +908,33 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 app.scroll_offset = 0;
                                             }
                                         }
+                                        ContentState::DeviceSelector(devices) => {
+                                            // Enter on device - transfer playback
+                                            if !devices.is_empty()
+                                                && app.selected_index < devices.len()
+                                            {
+                                                let device = &devices[app.selected_index];
+                                                if let Some(ref device_id) = device.id {
+                                                    if let Some(ref client) = client {
+                                                        let c = client.lock().await;
+                                                        match c.transfer_playback(device_id).await {
+                                                            Ok(_) => {
+                                                                app.status_message = Some(format!(
+                                                                    "Switched to {}", device.name
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                app.status_message = Some(format!(
+                                                                    "Failed to switch: {}", e
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                app.content_state = ContentState::Home;
+                                                app.selected_index = 0;
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1049,6 +1079,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                         }
 
+                        // Device selector
+                        crossterm::event::KeyCode::Char('d') => {
+                            app.content_state = ContentState::Loading(LoadAction::Devices);
+                            app.selected_index = 0;
+                        }
                         // Queue toggle
                         crossterm::event::KeyCode::Char('Q') => {
                             if let Some(ref client) = client {
@@ -1165,6 +1200,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     "+/-: Volume up/down".into(),
                                     "".into(),
                                     "=== System ===".into(),
+                                    "d: Select device".into(),
                                     "c: Reconfigure".into(),
                                     "q: Quit".into(),
                                     "Esc: Close overlays".into(),

@@ -66,6 +66,7 @@ pub enum ContentState {
     PlaylistTracks(String, Vec<TrackListItem>),
     SearchResults(String, Vec<TrackListItem>),
     Error(String),
+    DeviceSelector(Vec<rspotify::model::Device>),
 }
 
 impl Default for ContentState {

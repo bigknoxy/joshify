@@ -27,7 +27,9 @@ impl PlayerState {
                 let track_name = track.name.clone();
                 let artist_name = track.artists.first().map(|a| a.name.clone());
                 let album_art_url = track.album.images.first().map(|img| img.url.clone());
-                let duration_ms = track.duration.num_milliseconds() as u32;
+                let duration_ms = track.duration.num_milliseconds();
+                eprintln!("DEBUG: Track '{}' duration: {} ms", track_name, duration_ms);
+                let duration_ms = duration_ms.max(0) as u32;
                 let track_uri = track
                     .id
                     .as_ref()
@@ -45,7 +47,7 @@ impl PlayerState {
                 let name = episode.name.clone();
                 let artist_name = Some(episode.show.publisher.clone());
                 let album_art_url = episode.show.images.first().map(|img| img.url.clone());
-                let duration_ms = episode.duration.num_milliseconds() as u32;
+                let duration_ms = episode.duration.num_milliseconds().max(0) as u32;
                 let track_uri = format!("spotify:episode:{}", episode.id.id());
                 (
                     Some(name),

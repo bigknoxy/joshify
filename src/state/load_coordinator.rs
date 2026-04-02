@@ -15,6 +15,7 @@ pub enum LoadAction {
     Playlists,
     PlaylistTracks { name: String, id: String },
     Search { query: String },
+    Devices,
 }
 
 /// Result from an async load operation

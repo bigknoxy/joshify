@@ -17,6 +17,7 @@ fn load_action_display_owned(action: &LoadAction) -> String {
         LoadAction::Playlists => "Loading playlists...".to_string(),
         LoadAction::PlaylistTracks { name, .. } => format!("Loading {}...", name),
         LoadAction::Search { query } => format!("Searching: {}", query),
+        LoadAction::Devices => "Loading devices...".to_string(),
     }
 }
 
@@ -303,29 +304,43 @@ pub fn render_main_view(
     if area.width < 50 || area.height < 15 {
         let content = match content_state {
             ContentState::Home => {
-                if _is_authenticated {
-                    "Home"
-                } else {
-                    "Not connected"
-                }
+                vec![Line::from("")]
             }
             ContentState::Loading(action) | ContentState::LoadingInProgress(action) => {
-                &load_action_display_owned(action)
+                vec![Line::from(load_action_display_owned(action))]
             }
             ContentState::LikedSongs(tracks) => {
-                return render_track_list_compact(frame, area, tracks, "Liked Songs", border_color);
+                return render_track_list(
+                    frame,
+                    area,
+                    tracks,
+                    selected_index,
+                    scroll_offset,
+                    " Liked Songs ",
+                    border_color,
+                );
             }
             ContentState::Playlists(playlists) => {
-                return render_playlist_list_compact(
+                return render_playlist_list(
                     frame,
                     area,
                     playlists,
-                    "Playlists",
+                    selected_index,
+                    scroll_offset,
+                    " Playlists ",
                     border_color,
                 );
             }
             ContentState::PlaylistTracks(name, tracks) => {
-                return render_track_list_compact(frame, area, tracks, name, border_color);
+                return render_track_list(
+                    frame,
+                    area,
+                    tracks,
+                    selected_index,
+                    scroll_offset,
+                    &format!(" {} ", name),
+                    border_color,
+                );
             }
             ContentState::SearchResults(query, tracks) => {
                 return render_track_list_compact(
@@ -336,9 +351,26 @@ pub fn render_main_view(
                     border_color,
                 );
             }
-            ContentState::Error(msg) => msg.as_str(),
+            ContentState::DeviceSelector(devices) => {
+                return crate::ui::device_selector::render_device_selector(
+                    frame,
+                    area,
+                    devices,
+                    selected_index,
+                );
+            }
+            ContentState::Error(msg) => {
+                let widget = Paragraph::new(msg.as_str()).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Error ")
+                        .border_style(Style::default().fg(Color::Red)),
+                );
+                frame.render_widget(widget, area);
+                return;
+            }
         };
-        let widget = Paragraph::new(content.to_string()).block(
+        let widget = Paragraph::new(content).block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
@@ -408,6 +440,9 @@ pub fn render_main_view(
                 title,
                 border_color,
             );
+        }
+        ContentState::DeviceSelector(devices) => {
+            crate::ui::render_device_selector(frame, area, devices, selected_index);
         }
     }
 }
