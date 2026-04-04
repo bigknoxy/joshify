@@ -55,8 +55,17 @@ pub struct PlaylistListItem {
     pub track_count: u32,
 }
 
+/// Represents a selectable playback device in the UI
+#[derive(Clone)]
+pub enum DeviceEntry {
+    /// Local playback on this machine
+    ThisDevice { active: bool },
+    /// Remote Spotify Connect device
+    Remote(rspotify::model::Device),
+}
+
 /// Content state for main view
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum ContentState {
     Home,
     Loading(LoadAction),
@@ -66,7 +75,7 @@ pub enum ContentState {
     PlaylistTracks(String, Vec<TrackListItem>),
     SearchResults(String, Vec<TrackListItem>),
     Error(String),
-    DeviceSelector(Vec<rspotify::model::Device>),
+    DeviceSelector(Vec<DeviceEntry>),
 }
 
 impl Default for ContentState {

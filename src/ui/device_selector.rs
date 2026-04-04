@@ -1,5 +1,6 @@
 //! Device selector UI rendering
 
+use crate::state::app_state::DeviceEntry;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, Paragraph},
@@ -28,7 +29,7 @@ fn device_icon(device_type: &rspotify::model::DeviceType) -> &'static str {
 pub fn render_device_selector(
     frame: &mut ratatui::Frame,
     area: Rect,
-    devices: &[rspotify::model::Device],
+    entries: &[DeviceEntry],
     selected_index: usize,
 ) {
     // Create centered overlay area
@@ -62,41 +63,67 @@ pub fn render_device_selector(
     );
 
     // Build device list
-    let device_items: Vec<ListItem> = devices
+    let device_items: Vec<ListItem> = entries
         .iter()
         .enumerate()
-        .map(|(i, device)| {
-            let icon = device_icon(&device._type);
-            let active_marker = if device.is_active { " ▶" } else { "   " };
-            let restricted_marker = if device.is_restricted {
-                " [restricted]"
-            } else {
-                ""
-            };
-            let volume = device
-                .volume_percent
-                .map(|v| format!(" {}%", v))
-                .unwrap_or_default();
+        .map(|(i, entry)| {
+            let (text, style) = match entry {
+                DeviceEntry::ThisDevice { active } => {
+                    let hostname = hostname::get()
+                        .ok()
+                        .and_then(|h| h.into_string().ok())
+                        .unwrap_or_else(|| "this device".to_string());
+                    let marker = if *active { " ▶" } else { "   " };
+                    let text = format!("{} 🔊 This Device ({})", marker, hostname);
+                    let style = if i == selected_index {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else if *active {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    (text, style)
+                }
+                DeviceEntry::Remote(device) => {
+                    let icon = device_icon(&device._type);
+                    let active_marker = if device.is_active { " ▶" } else { "   " };
+                    let restricted_marker = if device.is_restricted {
+                        " [restricted]"
+                    } else {
+                        ""
+                    };
+                    let volume = device
+                        .volume_percent
+                        .map(|v| format!(" {}%", v))
+                        .unwrap_or_default();
 
-            let style = if i == selected_index {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if device.is_active {
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            } else if device.is_restricted {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default().fg(Color::White)
-            };
+                    let style = if i == selected_index {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else if device.is_active {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else if device.is_restricted {
+                        Style::default().fg(Color::DarkGray)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
 
-            let text = format!(
-                "{} {} {}{}{}",
-                active_marker, icon, device.name, volume, restricted_marker
-            );
+                    let text = format!(
+                        "{} {} {}{}{}",
+                        active_marker, icon, device.name, volume, restricted_marker
+                    );
+                    (text, style)
+                }
+            };
             ListItem::new(text).style(style)
         })
         .collect();
@@ -118,17 +145,19 @@ pub fn render_device_selector(
         .alignment(Alignment::Center);
     frame.render_widget(footer, footer_area);
 
-    // Show "No devices" message if empty
-    if devices.is_empty() {
+    // Show "No devices" message if empty (excluding "This Device")
+    if entries.len() <= 1 {
         let msg_area = Rect::new(
             overlay_area.x + 1,
             overlay_area.y + 3,
             overlay_area.width - 2,
             3,
         );
-        let msg = Paragraph::new("No devices found.\n\nOpen Spotify on another device first.")
-            .style(Style::default().fg(Color::Yellow))
-            .alignment(Alignment::Center);
+        let msg = Paragraph::new(
+            "No remote devices found.\n\nOpen Spotify on another device to see it here.",
+        )
+        .style(Style::default().fg(Color::Yellow))
+        .alignment(Alignment::Center);
         frame.render_widget(msg, msg_area);
     }
 }

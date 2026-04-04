@@ -1,16 +1,31 @@
 mod album_art;
 mod api;
 mod auth;
+mod connect;
 mod keyring_store;
+mod player;
+mod session;
 mod setup;
 mod state;
 mod ui;
 
 use crate::auth::OAuthConfig;
+use crate::player::LocalPlayer;
+use crate::session::LocalSession;
 use crate::state::app_state::{PlaylistListItem, TrackListItem};
 use crate::state::player_state::PlayerState;
 use crate::state::{ContentState, FocusTarget, LoadAction, NavItem};
 use anyhow::Result;
+use librespot::core::authentication::Credentials;
+use std::sync::Arc;
+
+/// Playback mode - local or remote
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PlaybackMode {
+    #[default]
+    Local,
+    Remote,
+}
 
 /// Application state
 struct App {
@@ -31,6 +46,11 @@ struct App {
     is_searching: bool,
     album_art_cache: album_art::AlbumArtCache,
     last_fetched_art_uri: Option<String>,
+    // Local playback
+    playback_mode: PlaybackMode,
+    local_session: Option<Arc<LocalSession>>,
+    local_player: Option<Arc<LocalPlayer>>,
+    player_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>>,
 }
 
 impl App {
@@ -53,6 +73,10 @@ impl App {
             is_searching: false,
             album_art_cache: album_art::AlbumArtCache::new(),
             last_fetched_art_uri: None,
+            playback_mode: PlaybackMode::Local,
+            local_session: None,
+            local_player: None,
+            player_event_rx: None,
         }
     }
 
@@ -145,7 +169,6 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{prelude::*, widgets::Paragraph};
 use rspotify::prelude::Id;
 use std::io;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// CLI arguments for non-interactive mode
@@ -365,10 +388,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             if let Ok(mut token_guard) = client_guard.oauth.token.lock().await {
                 let access_token = args
                     .access_token
+                    .clone()
                     .or_else(|| std::env::var("SPOTIFY_ACCESS_TOKEN").ok())
                     .unwrap_or_default();
                 let refresh_token = args
                     .refresh_token
+                    .clone()
                     .or_else(|| std::env::var("SPOTIFY_REFRESH_TOKEN").ok());
 
                 // Calculate expires_at (assume token is fresh if not specified)
@@ -391,6 +416,79 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 });
             };
         };
+    }
+
+    // Extract access token from the rspotify client (works for OAuth flow too)
+    let mut client_access_token: Option<String> = None;
+    if let Some(ref client) = client {
+        let client_guard = client.lock().await;
+        let token_result = client_guard.oauth.token.lock().await;
+        if let Ok(token_guard) = token_result {
+            if let Some(ref token) = *token_guard {
+                client_access_token = Some(token.access_token.clone());
+            }
+        }
+    }
+
+    // Initialize local playback (librespot) - try all token sources
+    let access_token = args
+        .access_token
+        .clone()
+        .or_else(|| std::env::var("SPOTIFY_ACCESS_TOKEN").ok())
+        .or(client_access_token);
+
+    async fn init_local_player(
+        token: &str,
+    ) -> Option<(Arc<LocalSession>, Arc<LocalPlayer>, tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>)> {
+        match LocalSession::from_access_token(token).await {
+            Ok(local_session) => {
+                let session = Arc::new(local_session);
+                match LocalPlayer::new(&session.session) {
+                    Ok(mut player) => {
+                        let event_rx = player.take_event_channel()?;
+                        let player = Arc::new(player);
+                        Some((session, player, event_rx))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create local player: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create local session: {}", e);
+                None
+            }
+        }
+    }
+
+    if let Some(ref token) = access_token {
+        if let Some((session, player, event_rx)) = init_local_player(token).await {
+            app.local_session = Some(session);
+            app.local_player = Some(player);
+            app.player_event_rx = Some(event_rx);
+            app.playback_mode = PlaybackMode::Local;
+            app.status_message = Some(
+                "Connected to Spotify - Local playback active - Press ? for help".to_string(),
+            );
+            tracing::info!("Local playback initialized successfully");
+        } else {
+            app.playback_mode = PlaybackMode::Remote;
+        }
+    } else if let Ok(local_session) = LocalSession::from_cache().await {
+        let session = Arc::new(local_session);
+        if let Ok(mut player) = LocalPlayer::new(&session.session) {
+            let event_rx = player.take_event_channel();
+            let player = Arc::new(player);
+            app.local_session = Some(session);
+            app.local_player = Some(player);
+            app.player_event_rx = event_rx;
+            app.playback_mode = PlaybackMode::Local;
+            app.status_message = Some(
+                "Connected to Spotify - Local playback active - Press ? for help".to_string(),
+            );
+            tracing::info!("Local playback restored from cache");
+        }
     }
 
     // Channel for async data loading results
@@ -424,6 +522,62 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             // Only update if this is still the current track
             if app.player_state.current_track_uri.as_ref() == Some(&track_uri) {
                 app.player_state.current_album_art_data = Some(art_data);
+            }
+        }
+
+        // Process local player events (non-blocking)
+        if let Some(ref mut event_rx) = app.player_event_rx {
+            while let Ok(event) = event_rx.try_recv() {
+                if let Some(ref mut player) = app.local_player {
+                    // We need mutable access to player state, but player is Arc
+                    // Handle events directly here instead
+                    use librespot::playback::player::PlayerEvent;
+                    match event {
+                        PlayerEvent::Playing {
+                            track_id,
+                            position_ms,
+                            ..
+                        } => {
+                            app.player_state.is_playing = true;
+                            app.player_state.current_track_uri = Some(track_id.to_uri());
+                            app.player_state.progress_ms = position_ms;
+                        }
+                        PlayerEvent::Paused {
+                            track_id,
+                            position_ms,
+                            ..
+                        } => {
+                            app.player_state.is_playing = false;
+                            app.player_state.current_track_uri = Some(track_id.to_uri());
+                            app.player_state.progress_ms = position_ms;
+                        }
+                        PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
+                            app.player_state.is_playing = false;
+                        }
+                        PlayerEvent::TrackChanged { audio_item } => {
+                            app.player_state.current_track_name = Some(audio_item.name.clone());
+                            app.player_state.duration_ms = audio_item.duration_ms;
+                            app.player_state.current_track_uri = Some(audio_item.uri.clone());
+                        }
+                        PlayerEvent::VolumeChanged { volume } => {
+                            app.player_state.volume = (volume as u32 * 100 / 65535) as u32;
+                        }
+                        PlayerEvent::Seeked { position_ms, .. }
+                        | PlayerEvent::PositionChanged { position_ms, .. }
+                        | PlayerEvent::PositionCorrection { position_ms, .. } => {
+                            app.player_state.progress_ms = position_ms;
+                        }
+                        PlayerEvent::Loading {
+                            track_id,
+                            position_ms,
+                            ..
+                        } => {
+                            app.player_state.current_track_uri = Some(track_id.to_uri());
+                            app.player_state.progress_ms = position_ms;
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
 
@@ -567,7 +721,32 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             if let Some(ref client) = client {
                 match action {
                     LoadAction::Devices => {
-                        // Already handled above, skip
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        let has_local = app.playback_mode == PlaybackMode::Local;
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            let devices = match guard.available_devices().await {
+                                Ok(devs) => devs,
+                                Err(e) => {
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!("Failed to load devices: {}", e)))
+                                        .await;
+                                    return;
+                                }
+                            };
+                            let mut entries = Vec::new();
+                            if has_local {
+                                entries.push(crate::state::app_state::DeviceEntry::ThisDevice {
+                                    active: true,
+                                });
+                            }
+                            for device in devices {
+                                entries.push(crate::state::app_state::DeviceEntry::Remote(device));
+                            }
+                            let _ = tx_clone.send(ContentState::DeviceSelector(entries)).await;
+                        });
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::Devices);
                     }
                     LoadAction::LikedSongs => {
                         let c = client.clone();
@@ -856,37 +1035,61 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             if !tracks.is_empty()
                                                 && app.selected_index < tracks.len()
                                             {
-                                                if let Some(ref client) = client {
-                                                    let c = client.lock().await;
-                                                    let track = &tracks[app.selected_index];
-                                                    
-                                                    // Try to transfer to first available device
-                                                    if let Ok(devices) = c.available_devices().await {
-                                                        if let Some(device) = devices.first() {
-                                                            if let Some(ref device_id) = device.id {
-                                                                let _ = c.transfer_playback(device_id).await;
+                                                let track = &tracks[app.selected_index];
+                                                
+                                                if app.playback_mode == PlaybackMode::Local {
+                                                    // Play locally with librespot
+                                                    if let Some(ref player) = app.local_player {
+                                                        match player.load_uri(&track.uri, true, 0) {
+                                                            Ok(_) => {
+                                                                app.status_message = Some(format!(
+                                                                    "Playing locally: {}",
+                                                                    track.name
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                app.status_message = Some(format!(
+                                                                    "Local playback error: {}",
+                                                                    e
+                                                                ));
                                                             }
                                                         }
+                                                    } else {
+                                                        app.status_message = Some("Local player not initialized".to_string());
                                                     }
-                                                    
-                                                    match c
-                                                        .start_playback(
-                                                            vec![track.uri.clone()],
-                                                            None,
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => {
-                                                            app.status_message = Some(format!(
-                                                                "Playing: {}",
-                                                                track.name
-                                                            ));
+                                                } else {
+                                                    // Remote playback via Spotify API
+                                                    if let Some(ref client) = client {
+                                                        let c = client.lock().await;
+                                                        
+                                                        // Try to transfer to first available device
+                                                        if let Ok(devices) = c.available_devices().await {
+                                                            if let Some(device) = devices.first() {
+                                                                if let Some(ref device_id) = device.id {
+                                                                    let _ = c.transfer_playback(device_id).await;
+                                                                }
+                                                            }
                                                         }
-                                                        Err(e) => {
-                                                            app.status_message = Some(format!(
-                                                                "Playback error: {} (Open Spotify on another device first)",
-                                                                e
-                                                            ));
+                                                        
+                                                        match c
+                                                            .start_playback(
+                                                                vec![track.uri.clone()],
+                                                                None,
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(_) => {
+                                                                app.status_message = Some(format!(
+                                                                    "Playing: {}",
+                                                                    track.name
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                app.status_message = Some(format!(
+                                                                    "Playback error: {} (Open Spotify on another device first)",
+                                                                    e
+                                                                ));
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -908,25 +1111,35 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 app.scroll_offset = 0;
                                             }
                                         }
-                                        ContentState::DeviceSelector(devices) => {
-                                            // Enter on device - transfer playback
-                                            if !devices.is_empty()
-                                                && app.selected_index < devices.len()
+                                        ContentState::DeviceSelector(entries) => {
+                                            // Enter on device - switch playback target
+                                            if !entries.is_empty()
+                                                && app.selected_index < entries.len()
                                             {
-                                                let device = &devices[app.selected_index];
-                                                if let Some(ref device_id) = device.id {
-                                                    if let Some(ref client) = client {
-                                                        let c = client.lock().await;
-                                                        match c.transfer_playback(device_id).await {
-                                                            Ok(_) => {
-                                                                app.status_message = Some(format!(
-                                                                    "Switched to {}", device.name
-                                                                ));
-                                                            }
-                                                            Err(e) => {
-                                                                app.status_message = Some(format!(
-                                                                    "Failed to switch: {}", e
-                                                                ));
+                                                match &entries[app.selected_index] {
+                                                    crate::state::app_state::DeviceEntry::ThisDevice { .. } => {
+                                                        // Switch to local playback
+                                                        app.playback_mode = PlaybackMode::Local;
+                                                        app.status_message = Some("Switched to local playback".to_string());
+                                                    }
+                                                    crate::state::app_state::DeviceEntry::Remote(device) => {
+                                                        // Switch to remote device
+                                                        if let Some(ref device_id) = device.id {
+                                                            if let Some(ref client) = client {
+                                                                let c = client.lock().await;
+                                                                match c.transfer_playback(device_id).await {
+                                                                    Ok(_) => {
+                                                                        app.playback_mode = PlaybackMode::Remote;
+                                                                        app.status_message = Some(format!(
+                                                                            "Switched to {}", device.name
+                                                                        ));
+                                                                    }
+                                                                    Err(e) => {
+                                                                        app.status_message = Some(format!(
+                                                                            "Failed to switch: {}", e
+                                                                        ));
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -940,7 +1153,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                                 FocusTarget::PlayerBar => {
                                     // Toggle play/pause from player bar
-                                    if let Some(ref client) = client {
+                                    if app.playback_mode == PlaybackMode::Local {
+                                        if let Some(ref player) = app.local_player {
+                                            if app.player_state.is_playing {
+                                                player.pause();
+                                            } else {
+                                                player.play();
+                                            }
+                                        }
+                                    } else if let Some(ref client) = client {
                                         let c = client.lock().await;
                                         if app.player_state.is_playing {
                                             let _ = c.playback_pause().await;
@@ -976,7 +1197,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume down when player focused
-                                if let Some(ref client) = client {
+                                if app.playback_mode == PlaybackMode::Local {
+                                    if let Some(ref player) = app.local_player {
+                                        let new_vol = (app.player_state.volume.saturating_sub(5) as u16 * 65535 / 100).min(65535);
+                                        player.set_volume(new_vol);
+                                    }
+                                } else if let Some(ref client) = client {
                                     let new_vol = app.player_state.volume.saturating_sub(5);
                                     let c = client.lock().await;
                                     let _ = c.set_volume(new_vol).await;
@@ -1010,7 +1236,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume up when player focused
-                                if let Some(ref client) = client {
+                                if app.playback_mode == PlaybackMode::Local {
+                                    if let Some(ref player) = app.local_player {
+                                        let new_vol = ((app.player_state.volume + 5) as u16 * 65535 / 100).min(65535);
+                                        player.set_volume(new_vol);
+                                    }
+                                } else if let Some(ref client) = client {
                                     let new_vol = (app.player_state.volume + 5).min(100);
                                     let c = client.lock().await;
                                     let _ = c.set_volume(new_vol).await;
@@ -1022,7 +1253,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char(' ') => {
                             if app.focus == FocusTarget::PlayerBar {
                                 // Space only toggles when player bar is focused
-                                if let Some(ref client) = client {
+                                if app.playback_mode == PlaybackMode::Local {
+                                    if let Some(ref player) = app.local_player {
+                                        if app.player_state.is_playing {
+                                            player.pause();
+                                        } else {
+                                            player.play();
+                                        }
+                                    }
+                                } else if let Some(ref client) = client {
                                     let c = client.lock().await;
                                     if app.player_state.is_playing {
                                         let _ = c.playback_pause().await;
@@ -1033,12 +1272,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                         }
                         crossterm::event::KeyCode::Char('n') => {
-                            if let Some(ref client) = client {
+                            if app.playback_mode == PlaybackMode::Local {
+                                // Local: stop current, next track would need queue management
+                                if let Some(ref player) = app.local_player {
+                                    player.stop();
+                                }
+                            } else if let Some(ref client) = client {
                                 let c = client.lock().await;
                                 let _ = c.playback_next().await;
                             }
                         }
                         crossterm::event::KeyCode::Char('p') => {
+                            // Remote only for now (local would need queue)
                             if let Some(ref client) = client {
                                 let c = client.lock().await;
                                 let _ = c.playback_previous().await;
@@ -1046,7 +1291,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                         crossterm::event::KeyCode::Left => {
                             // Seek backward 10 seconds
-                            if let Some(ref client) = client {
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    let new_pos = app.player_state.progress_ms.saturating_sub(10000);
+                                    player.seek(new_pos);
+                                }
+                            } else if let Some(ref client) = client {
                                 let new_pos = app.player_state.progress_ms.saturating_sub(10000);
                                 let c = client.lock().await;
                                 let _ = c.seek(new_pos, None).await;
@@ -1054,7 +1304,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                         crossterm::event::KeyCode::Right => {
                             // Seek forward 10 seconds
-                            if let Some(ref client) = client {
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    let new_pos = app
+                                        .player_state
+                                        .progress_ms
+                                        .saturating_add(10000)
+                                        .min(app.player_state.duration_ms);
+                                    player.seek(new_pos);
+                                }
+                            } else if let Some(ref client) = client {
                                 let new_pos = app
                                     .player_state
                                     .progress_ms
@@ -1065,14 +1324,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                         }
                         crossterm::event::KeyCode::Char('+') => {
-                            if let Some(ref client) = client {
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    let new_vol = ((app.player_state.volume + 5) as u16 * 65535 / 100).min(65535);
+                                    player.set_volume(new_vol);
+                                }
+                            } else if let Some(ref client) = client {
                                 let new_vol = (app.player_state.volume + 5).min(100);
                                 let c = client.lock().await;
                                 let _ = c.set_volume(new_vol).await;
                             }
                         }
                         crossterm::event::KeyCode::Char('-') => {
-                            if let Some(ref client) = client {
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    let new_vol = (app.player_state.volume.saturating_sub(5) as u16 * 65535 / 100).min(65535);
+                                    player.set_volume(new_vol);
+                                }
+                            } else if let Some(ref client) = client {
                                 let new_vol = app.player_state.volume.saturating_sub(5);
                                 let c = client.lock().await;
                                 let _ = c.set_volume(new_vol).await;

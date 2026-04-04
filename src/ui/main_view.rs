@@ -351,11 +351,11 @@ pub fn render_main_view(
                     border_color,
                 );
             }
-            ContentState::DeviceSelector(devices) => {
+            ContentState::DeviceSelector(entries) => {
                 return crate::ui::device_selector::render_device_selector(
                     frame,
                     area,
-                    devices,
+                    entries,
                     selected_index,
                 );
             }
@@ -441,8 +441,8 @@ pub fn render_main_view(
                 border_color,
             );
         }
-        ContentState::DeviceSelector(devices) => {
-            crate::ui::render_device_selector(frame, area, devices, selected_index);
+        ContentState::DeviceSelector(entries) => {
+            crate::ui::render_device_selector(frame, area, entries, selected_index);
         }
     }
 }
