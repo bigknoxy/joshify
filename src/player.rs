@@ -9,7 +9,7 @@ use librespot::{
     playback::{
         audio_backend,
         config::{AudioFormat, PlayerConfig},
-        mixer::{self, MixerConfig},
+        mixer::{self, Mixer, MixerConfig},
         player::{Player, PlayerEvent},
     },
 };
@@ -31,6 +31,7 @@ pub struct PlaybackState {
 /// Local audio player backed by librespot
 pub struct LocalPlayer {
     player: Arc<Player>,
+    mixer: Arc<dyn Mixer>,
     event_rx: Option<UnboundedReceiver<PlayerEvent>>,
     pub state: PlaybackState,
 }
@@ -59,9 +60,20 @@ impl LocalPlayer {
 
         Ok(Self {
             player,
+            mixer,
             event_rx: Some(event_rx),
             state: PlaybackState::default(),
         })
+    }
+
+    /// Get the underlying librespot player for Spotify Connect
+    pub fn player(&self) -> Arc<Player> {
+        self.player.clone()
+    }
+
+    /// Get the mixer for Spotify Connect
+    pub fn mixer(&self) -> Arc<dyn Mixer> {
+        self.mixer.clone()
     }
 
     /// Load and optionally play a track by Spotify URI string
@@ -242,5 +254,105 @@ mod tests {
     fn parse_uri_empty_string() {
         let result = LocalPlayer::parse_uri("");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_uri_show_uri_format() {
+        let uri = LocalPlayer::parse_uri("spotify:show:4rOoJ6Egrf8K2IrywzwOMk").unwrap();
+        match uri {
+            SpotifyUri::Show { id } => {
+                assert_eq!(id.to_base62(), "4rOoJ6Egrf8K2IrywzwOMk");
+            }
+            _ => panic!("Expected Show variant"),
+        }
+    }
+
+    #[test]
+    fn parse_uri_artist_uri_format() {
+        let uri = LocalPlayer::parse_uri("spotify:artist:0TnOYISbd1XYRBk9myaseg").unwrap();
+        match uri {
+            SpotifyUri::Artist { id } => {
+                assert_eq!(id.to_base62(), "0TnOYISbd1XYRBk9myaseg");
+            }
+            _ => panic!("Expected Artist variant"),
+        }
+    }
+
+    #[test]
+    fn parse_uri_album_uri_format() {
+        let uri = LocalPlayer::parse_uri("spotify:album:6DEjYFkNZh67HP7R9PSZvv").unwrap();
+        match uri {
+            SpotifyUri::Album { id } => {
+                assert_eq!(id.to_base62(), "6DEjYFkNZh67HP7R9PSZvv");
+            }
+            _ => panic!("Expected Album variant"),
+        }
+    }
+
+    #[test]
+    fn playback_state_is_playing_flag() {
+        let mut state = PlaybackState::default();
+        assert!(!state.is_playing);
+        state.is_playing = true;
+        assert!(state.is_playing);
+        state.is_playing = false;
+        assert!(!state.is_playing);
+    }
+
+    #[test]
+    fn playback_state_volume_range() {
+        let state = PlaybackState {
+            volume: 0,
+            ..Default::default()
+        };
+        assert_eq!(state.volume, 0);
+
+        let state = PlaybackState {
+            volume: 65535,
+            ..Default::default()
+        };
+        assert_eq!(state.volume, 65535);
+
+        let state = PlaybackState {
+            volume: 32767,
+            ..Default::default()
+        };
+        assert_eq!(state.volume, 32767);
+    }
+
+    #[test]
+    fn playback_state_progress_bounds() {
+        let state = PlaybackState {
+            progress_ms: 0,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        assert_eq!(state.progress_ms, 0);
+        assert!(state.progress_ms <= state.duration_ms);
+
+        let state = PlaybackState {
+            progress_ms: 180000,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        assert_eq!(state.progress_ms, state.duration_ms);
+    }
+
+    #[test]
+    fn playback_state_clone_is_safe() {
+        let state = PlaybackState {
+            is_playing: true,
+            current_track_uri: Some("spotify:track:abc".to_string()),
+            current_track_name: Some("Test".to_string()),
+            progress_ms: 50000,
+            duration_ms: 200000,
+            volume: 75,
+            ..Default::default()
+        };
+
+        let cloned = state.clone();
+        assert_eq!(state.is_playing, cloned.is_playing);
+        assert_eq!(state.current_track_uri, cloned.current_track_uri);
+        assert_eq!(state.progress_ms, cloned.progress_ms);
     }
 }

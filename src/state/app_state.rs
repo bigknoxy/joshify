@@ -76,6 +76,10 @@ pub enum ContentState {
     SearchResults(String, Vec<TrackListItem>),
     Error(String),
     DeviceSelector(Vec<DeviceEntry>),
+    /// Live search results (from debounce-triggered search)
+    SearchResultsLive(Vec<TrackListItem>),
+    /// Live search error
+    SearchErrorLive(String),
 }
 
 impl Default for ContentState {

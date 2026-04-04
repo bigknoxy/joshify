@@ -82,17 +82,17 @@ impl AlbumArtCache {
                         Some(data)
                     }
                     Err(e) => {
-                        eprintln!("Failed to read album art response: {}", e);
+                        tracing::warn!("Failed to read album art response: {}", e);
                         None
                     }
                 }
             }
             Ok(Err(e)) => {
-                eprintln!("Failed to fetch album art: {}", e);
+                tracing::warn!("Failed to fetch album art: {}", e);
                 None
             }
             Err(_) => {
-                eprintln!("Album art fetch timed out after 10s: {}", url);
+                tracing::warn!("Album art fetch timed out after 10s: {}", url);
                 None
             }
         }

@@ -41,7 +41,7 @@ where
     for attempt in 0..MAX_RETRIES {
         if attempt > 0 {
             let delay = backoff_delay(attempt);
-            println!(
+            tracing::warn!(
                 "Rate limited, retrying in {:?} (attempt {}/{})",
                 delay,
                 attempt + 1,

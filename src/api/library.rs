@@ -37,7 +37,7 @@ impl SpotifyClient {
         &self,
         playlist_id: &str,
     ) -> Result<Vec<rspotify::model::PlaylistItem>> {
-        eprintln!("DEBUG: Loading playlist {}", playlist_id);
+        tracing::debug!("Loading playlist {}", playlist_id);
         let pid =
             rspotify::model::PlaylistId::from_id(playlist_id).context("Invalid playlist ID")?;
         let result = self
@@ -47,11 +47,11 @@ impl SpotifyClient {
         
         match result {
             Ok(r) => {
-                eprintln!("DEBUG: Got {} playlist items", r.items.len());
+                tracing::debug!("Got {} playlist items", r.items.len());
                 Ok(r.items)
             }
             Err(e) => {
-                eprintln!("DEBUG: Playlist items error: {:?}", e);
+                tracing::warn!("Playlist items error: {:?}", e);
                 Err(e).context("Failed to get playlist items")
             }
         }

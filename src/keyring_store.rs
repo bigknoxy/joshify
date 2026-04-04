@@ -45,7 +45,7 @@ pub fn get_credentials_keyring() -> Result<Option<SecureCredentials>> {
         }
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => {
-            eprintln!("Keyring error: {}", e);
+            tracing::warn!("Keyring error: {}", e);
             Ok(None)
         }
     }
@@ -105,11 +105,11 @@ pub fn save_credentials_secure(creds: &SecureCredentials) -> Result<()> {
     if is_keyring_available() {
         match set_credentials_keyring(creds) {
             Ok(()) => {
-                println!("Credentials saved to OS keyring");
+                tracing::info!("Credentials saved to OS keyring");
                 return Ok(());
             }
             Err(e) => {
-                eprintln!("Keyring save failed: {}, falling back to file", e);
+                tracing::warn!("Keyring save failed: {}, falling back to file", e);
             }
         }
     }

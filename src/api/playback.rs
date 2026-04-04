@@ -89,11 +89,12 @@ impl SpotifyClient {
 
     /// Get available devices
     pub async fn available_devices(&self) -> Result<Vec<rspotify::model::Device>> {
-        eprintln!("DEBUG: Fetching available devices...");
+        tracing::debug!("Fetching available devices...");
         let devices = self.oauth.device().await?;
-        eprintln!("DEBUG: Found {} devices", devices.len());
+        tracing::debug!("Found {} devices", devices.len());
         for (i, device) in devices.iter().enumerate() {
-            eprintln!("DEBUG:   [{}] {} (type: {:?}, id: {}) - active: {}, restricted: {}", 
+            tracing::debug!(
+                "  [{}] {} (type: {:?}, id: {}) - active: {}, restricted: {}", 
                 i, 
                 device.name, 
                 device._type,

@@ -15,7 +15,9 @@ pub struct PlayerState {
     pub current_track_name: Option<String>,
     pub current_artist_name: Option<String>,
     pub current_album_art_url: Option<String>,
-    pub current_album_art_data: Option<Vec<u8>>, // Downloaded image bytes
+    pub current_album_art_data: Option<Vec<u8>>, // Raw image bytes
+    pub current_album_art_kitty: Option<Vec<u8>>, // Pre-processed Kitty escape sequence
+    pub current_album_art_ascii: Option<Vec<ratatui::text::Line<'static>>>, // Pre-rendered ASCII art
     pub current_track_uri: Option<String>,
 }
 
@@ -28,7 +30,7 @@ impl PlayerState {
                 let artist_name = track.artists.first().map(|a| a.name.clone());
                 let album_art_url = track.album.images.first().map(|img| img.url.clone());
                 let duration_ms = track.duration.num_milliseconds();
-                eprintln!("DEBUG: Track '{}' duration: {} ms", track_name, duration_ms);
+                tracing::debug!("Track '{}' duration: {} ms", track_name, duration_ms);
                 let duration_ms = duration_ms.max(0) as u32;
                 let track_uri = track
                     .id
@@ -72,6 +74,8 @@ impl PlayerState {
             current_artist_name: artist_name,
             current_album_art_url: album_art_url,
             current_album_art_data: None,
+            current_album_art_kitty: None,
+            current_album_art_ascii: None,
             current_track_uri: track_uri,
         }
     }
@@ -109,6 +113,14 @@ mod tests {
     }
 
     #[test]
+    fn test_format_duration_edge_cases() {
+        assert_eq!(format_duration(0), "00:00");
+        assert_eq!(format_duration(59999), "00:59");
+        assert_eq!(format_duration(3600000), "60:00");
+        assert_eq!(format_duration(7200000), "120:00");
+    }
+
+    #[test]
     fn test_track_changed() {
         let mut state = PlayerState::default();
         state.current_track_uri = Some("spotify:track:abc".to_string());
@@ -120,5 +132,375 @@ mod tests {
         state.current_track_uri = None;
         assert!(state.track_changed(Some("spotify:track:abc")));
         assert!(!state.track_changed(None));
+    }
+
+    #[test]
+    fn test_player_state_defaults() {
+        let state = PlayerState::default();
+        assert!(!state.is_playing);
+        assert_eq!(state.progress_ms, 0);
+        assert_eq!(state.duration_ms, 0);
+        assert_eq!(state.volume, 0);
+        assert!(state.current_track_name.is_none());
+        assert!(state.current_artist_name.is_none());
+        assert!(state.current_album_art_url.is_none());
+        assert!(state.current_album_art_data.is_none());
+        assert!(state.current_track_uri.is_none());
+    }
+
+    #[test]
+    fn test_progress_increments_when_playing() {
+        // Simulates the main loop progress increment logic
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 0,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+
+        // Simulate 3 poll intervals (each ~1 second)
+        let poll_interval = 1000u32;
+        for _ in 0..3 {
+            state.progress_ms = state
+                .progress_ms
+                .saturating_add(poll_interval)
+                .min(state.duration_ms);
+        }
+
+        assert_eq!(state.progress_ms, 3000);
+        assert!(state.is_playing);
+    }
+
+    #[test]
+    fn test_progress_pauses_when_not_playing() {
+        let mut state = PlayerState {
+            is_playing: false,
+            progress_ms: 45000,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+
+        // Simulate poll intervals - progress should NOT increment
+        let poll_interval = 1000u32;
+        let initial_progress = state.progress_ms;
+        for _ in 0..5 {
+            // Only increment if is_playing (this is the guard in main loop)
+            if state.is_playing {
+                state.progress_ms = state
+                    .progress_ms
+                    .saturating_add(poll_interval)
+                    .min(state.duration_ms);
+            }
+        }
+
+        assert_eq!(state.progress_ms, initial_progress);
+    }
+
+    #[test]
+    fn test_progress_clamps_to_duration() {
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 179000,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+
+        // Simulate many poll intervals - should clamp at duration
+        let poll_interval = 1000u32;
+        for _ in 0..100 {
+            state.progress_ms = state
+                .progress_ms
+                .saturating_add(poll_interval)
+                .min(state.duration_ms);
+        }
+
+        assert_eq!(state.progress_ms, 180000);
+        assert!(state.progress_ms <= state.duration_ms);
+    }
+
+    #[test]
+    fn test_progress_saturating_add_no_overflow() {
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: u32::MAX - 500,
+            duration_ms: u32::MAX,
+            ..Default::default()
+        };
+
+        // Should not panic or overflow
+        state.progress_ms = state
+            .progress_ms
+            .saturating_add(1000)
+            .min(state.duration_ms);
+
+        assert_eq!(state.progress_ms, u32::MAX);
+    }
+
+    #[test]
+    fn test_player_state_with_track() {
+        let state = PlayerState {
+            is_playing: true,
+            progress_ms: 60000,
+            duration_ms: 180000,
+            volume: 75,
+            current_track_name: Some("Test Track".to_string()),
+            current_artist_name: Some("Test Artist".to_string()),
+            current_album_art_url: Some("https://example.com/art.jpg".to_string()),
+            current_album_art_data: Some(vec![0x89, 0x50, 0x4E, 0x47]),
+            current_album_art_kitty: None,
+            current_album_art_ascii: None,
+            current_track_uri: Some("spotify:track:abc123".to_string()),
+        };
+
+        assert!(state.is_playing);
+        assert_eq!(state.progress_ms, 60000);
+        assert_eq!(state.duration_ms, 180000);
+        assert_eq!(state.volume, 75);
+        assert_eq!(state.current_track_name, Some("Test Track".to_string()));
+        assert_eq!(state.current_artist_name, Some("Test Artist".to_string()));
+        assert!(state.current_album_art_data.is_some());
+        assert_eq!(
+            state.current_track_uri,
+            Some("spotify:track:abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_player_state_no_track() {
+        let state = PlayerState {
+            is_playing: false,
+            progress_ms: 0,
+            duration_ms: 0,
+            volume: 50,
+            current_track_name: None,
+            current_artist_name: None,
+            current_album_art_url: None,
+            current_album_art_data: None,
+            current_album_art_kitty: None,
+            current_album_art_ascii: None,
+            current_track_uri: None,
+        };
+
+        assert!(!state.is_playing);
+        assert_eq!(state.progress_ms, 0);
+        assert_eq!(state.duration_ms, 0);
+        assert_eq!(state.volume, 50);
+        assert!(state.current_track_name.is_none());
+        assert!(state.current_artist_name.is_none());
+        assert!(state.current_track_uri.is_none());
+    }
+
+    #[test]
+    fn test_player_state_episode_context() {
+        let state = PlayerState {
+            is_playing: true,
+            progress_ms: 1800000,
+            duration_ms: 3600000,
+            volume: 50,
+            current_track_name: Some("Test Episode".to_string()),
+            current_artist_name: Some("Test Publisher".to_string()),
+            current_album_art_url: Some("https://example.com/episode.jpg".to_string()),
+            current_album_art_data: None,
+            current_album_art_kitty: None,
+            current_album_art_ascii: None,
+            current_track_uri: Some("spotify:episode:xyz789".to_string()),
+        };
+
+        assert!(state.is_playing);
+        assert_eq!(state.progress_ms, 1800000);
+        assert_eq!(state.duration_ms, 3600000);
+        assert_eq!(
+            state.current_track_uri,
+            Some("spotify:episode:xyz789".to_string())
+        );
+    }
+
+    #[test]
+    fn test_progress_increments_with_real_elapsed_time() {
+        // Simulates the main loop progress increment logic using real elapsed time
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 0,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        let mut last_tick_ms = 0u64;
+        let mut current_ms = 0u64;
+
+        // Simulate 3 seconds passing (each iteration = 1000ms)
+        for _ in 0..3 {
+            current_ms += 1000;
+            let elapsed = current_ms.saturating_sub(last_tick_ms);
+            if elapsed >= 1000 {
+                state.progress_ms = state
+                    .progress_ms
+                    .saturating_add(elapsed as u32)
+                    .min(state.duration_ms);
+                last_tick_ms = current_ms;
+            }
+        }
+
+        assert_eq!(state.progress_ms, 3000);
+        assert_eq!(last_tick_ms, 3000);
+    }
+
+    #[test]
+    fn test_progress_does_not_increment_when_paused() {
+        let mut state = PlayerState {
+            is_playing: false,
+            progress_ms: 45000,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        let mut last_tick_ms = 0u64;
+        let mut current_ms = 0u64;
+
+        // Simulate 10 seconds passing
+        for _ in 0..10 {
+            current_ms += 1000;
+            // Only increment if is_playing
+            if state.is_playing {
+                let elapsed = current_ms.saturating_sub(last_tick_ms);
+                if elapsed >= 1000 {
+                    state.progress_ms = state
+                        .progress_ms
+                        .saturating_add(elapsed as u32)
+                        .min(state.duration_ms);
+                    last_tick_ms = current_ms;
+                }
+            }
+        }
+
+        assert_eq!(state.progress_ms, 45000);
+        assert_eq!(last_tick_ms, 0);
+    }
+
+    #[test]
+    fn test_progress_clamps_at_duration() {
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 179000,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        let mut last_tick_ms = 0u64;
+        let mut current_ms = 0u64;
+
+        // Simulate 10 seconds passing
+        for _ in 0..10 {
+            current_ms += 1000;
+            let elapsed = current_ms.saturating_sub(last_tick_ms);
+            if elapsed >= 1000 {
+                state.progress_ms = state
+                    .progress_ms
+                    .saturating_add(elapsed as u32)
+                    .min(state.duration_ms);
+                last_tick_ms = current_ms;
+            }
+        }
+
+        assert_eq!(state.progress_ms, 180000);
+        assert!(state.progress_ms <= state.duration_ms);
+    }
+
+    #[test]
+    fn test_progress_handles_large_elapsed_time() {
+        // If the loop is delayed (e.g., 5 seconds between polls), progress should catch up
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 10000,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        let mut last_tick_ms = 0u64;
+        let current_ms = 5000u64; // 5 seconds elapsed
+
+        let elapsed = current_ms.saturating_sub(last_tick_ms);
+        if elapsed >= 1000 {
+            state.progress_ms = state
+                .progress_ms
+                .saturating_add(elapsed as u32)
+                .min(state.duration_ms);
+            last_tick_ms = current_ms;
+        }
+
+        assert_eq!(state.progress_ms, 15000);
+        assert_eq!(last_tick_ms, 5000);
+    }
+
+    #[test]
+    fn test_progress_resets_on_track_change() {
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 120000,
+            duration_ms: 180000,
+            current_track_uri: Some("spotify:track:old".to_string()),
+            ..Default::default()
+        };
+
+        // Simulate track change
+        state.current_track_uri = Some("spotify:track:new".to_string());
+        state.progress_ms = 0;
+        state.duration_ms = 200000;
+
+        assert_eq!(state.progress_ms, 0);
+        assert_eq!(state.duration_ms, 200000);
+        assert_eq!(
+            state.current_track_uri,
+            Some("spotify:track:new".to_string())
+        );
+    }
+
+    #[test]
+    fn test_progress_does_not_increment_before_threshold() {
+        // If less than 1000ms has elapsed, progress should NOT increment
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: 0,
+            duration_ms: 180000,
+            ..Default::default()
+        };
+        let mut last_tick_ms = 0u64;
+        let mut current_ms = 0u64;
+
+        // Simulate small increments (50ms each - like the event poll interval)
+        for _ in 0..20 {
+            current_ms += 50;
+            let elapsed = current_ms.saturating_sub(last_tick_ms);
+            if elapsed >= 1000 {
+                state.progress_ms = state
+                    .progress_ms
+                    .saturating_add(elapsed as u32)
+                    .min(state.duration_ms);
+                last_tick_ms = current_ms;
+            }
+        }
+
+        // After 20 * 50ms = 1000ms, should have incremented once
+        assert_eq!(state.progress_ms, 1000);
+        assert_eq!(last_tick_ms, 1000);
+    }
+
+    #[test]
+    fn test_progress_saturating_add_no_overflow_with_elapsed_time() {
+        let mut state = PlayerState {
+            is_playing: true,
+            progress_ms: u32::MAX - 500,
+            duration_ms: u32::MAX,
+            ..Default::default()
+        };
+        let mut last_tick_ms = 0u64;
+        let current_ms = 1000u64;
+
+        let elapsed = current_ms.saturating_sub(last_tick_ms);
+        if elapsed >= 1000 {
+            state.progress_ms = state
+                .progress_ms
+                .saturating_add(elapsed as u32)
+                .min(state.duration_ms);
+            last_tick_ms = current_ms;
+        }
+
+        assert_eq!(state.progress_ms, u32::MAX);
     }
 }

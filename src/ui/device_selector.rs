@@ -1,26 +1,27 @@
 //! Device selector UI rendering
 
 use crate::state::app_state::DeviceEntry;
+use crate::ui::theme::{self, symbols, Catppuccin};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
 /// Render device type icon
 fn device_icon(device_type: &rspotify::model::DeviceType) -> &'static str {
     use rspotify::model::DeviceType;
     match device_type {
-        DeviceType::Computer => "💻",
-        DeviceType::Smartphone => "📱",
-        DeviceType::Speaker => "🔊",
-        DeviceType::Tv => "📺",
-        DeviceType::Avr => "🎵",
+        DeviceType::Computer => symbols::DEVICE_COMPUTER,
+        DeviceType::Smartphone => symbols::DEVICE_PHONE,
+        DeviceType::Speaker => symbols::DEVICE_SPEAKER,
+        DeviceType::Tv => symbols::DEVICE_TV,
+        DeviceType::Avr => symbols::MUSIC,
         DeviceType::Stb => "📡",
         DeviceType::AudioDongle => "🔌",
         DeviceType::GameConsole => "🎮",
         DeviceType::CastVideo => "📹",
-        DeviceType::CastAudio => "🔈",
-        DeviceType::Automobile => "🚗",
+        DeviceType::CastAudio => symbols::DEVICE_SPEAKER,
+        DeviceType::Automobile => symbols::DEVICE_CAR,
         _ => "📻",
     }
 }
@@ -39,18 +40,17 @@ pub fn render_device_selector(
     let y = area.y + (area.height - overlay_height) / 2;
     let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
 
-    // Clear background
+    // CRITICAL: Clear background first to prevent bleed-through
+    frame.render_widget(Clear, overlay_area);
+
+    // Render modal background
     frame.render_widget(
         Block::default()
-            .style(Style::default().bg(Color::Black).fg(Color::White))
+            .style(Style::default().bg(Catppuccin::SURFACE_0))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Catppuccin::secondary().add_modifier(Modifier::BOLD))
             .title(" Select Playback Device ")
-            .title_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            .title_style(Catppuccin::focused()),
         overlay_area,
     );
 
@@ -73,25 +73,33 @@ pub fn render_device_selector(
                         .ok()
                         .and_then(|h| h.into_string().ok())
                         .unwrap_or_else(|| "this device".to_string());
-                    let marker = if *active { " ▶" } else { "   " };
-                    let text = format!("{} 🔊 This Device ({})", marker, hostname);
-                    let style = if i == selected_index {
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                    } else if *active {
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD)
+                    let marker = if *active {
+                        format!("{} ", symbols::ARROW_RIGHT)
                     } else {
-                        Style::default().fg(Color::White)
+                        "  ".to_string()
+                    };
+                    let text = format!(
+                        "{} {} This Device ({})",
+                        marker,
+                        symbols::DEVICE_LOCAL,
+                        hostname
+                    );
+                    let style = if i == selected_index {
+                        Catppuccin::selected()
+                    } else if *active {
+                        Catppuccin::success().add_modifier(Modifier::BOLD)
+                    } else {
+                        Catppuccin::text()
                     };
                     (text, style)
                 }
                 DeviceEntry::Remote(device) => {
                     let icon = device_icon(&device._type);
-                    let active_marker = if device.is_active { " ▶" } else { "   " };
+                    let active_marker = if device.is_active {
+                        format!("{} ", symbols::ARROW_RIGHT)
+                    } else {
+                        "  ".to_string()
+                    };
                     let restricted_marker = if device.is_restricted {
                         " [restricted]"
                     } else {
@@ -103,18 +111,13 @@ pub fn render_device_selector(
                         .unwrap_or_default();
 
                     let style = if i == selected_index {
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
+                        Catppuccin::selected()
                     } else if device.is_active {
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD)
+                        Catppuccin::success().add_modifier(Modifier::BOLD)
                     } else if device.is_restricted {
-                        Style::default().fg(Color::DarkGray)
+                        Catppuccin::dim()
                     } else {
-                        Style::default().fg(Color::White)
+                        Catppuccin::text()
                     };
 
                     let text = format!(
@@ -139,9 +142,13 @@ pub fn render_device_selector(
         2,
     );
 
-    let footer_text = " Enter: Switch  │  Esc: Cancel  │  j/k: Navigate ";
+    let footer_text = format!(
+        " {} Enter  │  {} Esc  │  j/k Navigate ",
+        symbols::ARROW_RIGHT,
+        symbols::ARROW_LEFT
+    );
     let footer = Paragraph::new(footer_text)
-        .style(Style::default().fg(Color::Yellow))
+        .style(Catppuccin::help())
         .alignment(Alignment::Center);
     frame.render_widget(footer, footer_area);
 
@@ -153,10 +160,11 @@ pub fn render_device_selector(
             overlay_area.width - 2,
             3,
         );
-        let msg = Paragraph::new(
-            "No remote devices found.\n\nOpen Spotify on another device to see it here.",
-        )
-        .style(Style::default().fg(Color::Yellow))
+        let msg = Paragraph::new(format!(
+            "No remote devices found.\n\n{} Open Spotify on another device to see it here.",
+            symbols::WARNING
+        ))
+        .style(Catppuccin::warning())
         .alignment(Alignment::Center);
         frame.render_widget(msg, msg_area);
     }

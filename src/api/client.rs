@@ -49,9 +49,9 @@ impl SpotifyClient {
                         scopes: HashSet::new(),
                     };
                     *token_guard = Some(token);
-                    println!("Loaded cached credentials");
+                    tracing::debug!("Loaded cached credentials");
                 } else {
-                    println!("Cached token expired - re-authentication needed");
+                    tracing::warn!("Cached token expired - re-authentication needed");
                 }
             }
         }

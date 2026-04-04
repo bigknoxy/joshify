@@ -5,12 +5,14 @@
 //! - `player_state` - Playback state (moved from player.rs)
 //! - `queue_state` - Queue management
 //! - `library_state` - Liked songs, playlists
+//! - `search_state` - Search with debounce and caching
 
 pub mod app_state;
 pub mod library_state;
 pub mod load_coordinator;
 pub mod player_state;
 pub mod queue_state;
+pub mod search_state;
 
 // Re-export specific items for public use
 pub use app_state::{ContentState, FocusTarget, NavItem};
