@@ -75,6 +75,8 @@ fn test_player_state_with_track() {
         current_album_art_url: Some("https://example.com/art.jpg".to_string()),
         current_album_art_data: Some(vec![0x89, 0x50, 0x4E, 0x47]), // PNG header
         current_track_uri: Some("spotify:track:abc123".to_string()),
+        current_album_art_ascii: None,
+        current_album_art_kitty: None,
     };
 
     assert!(state.is_playing);
@@ -116,6 +118,8 @@ fn test_player_state_no_track() {
         current_album_art_url: None,
         current_album_art_data: None,
         current_track_uri: None,
+        current_album_art_ascii: None,
+        current_album_art_kitty: None,
     };
 
     assert!(!state.is_playing);
@@ -141,6 +145,8 @@ fn test_player_state_episode_context() {
         current_album_art_url: Some("https://example.com/episode.jpg".to_string()),
         current_album_art_data: None,
         current_track_uri: Some("spotify:episode:xyz789".to_string()),
+        current_album_art_ascii: None,
+        current_album_art_kitty: None,
     };
 
     assert!(state.is_playing);
