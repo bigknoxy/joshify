@@ -1,9 +1,12 @@
 //! Interactive setup wizard for Spotify credentials
 
 use anyhow::Result;
-use dialoguer::{Input, theme::ColorfulTheme};
+use dialoguer::{theme::ColorfulTheme, Input};
 
-use crate::auth::{OAuthConfig, save_oauth_config, get_oauth_url, open_browser, exchange_code_for_token, run_oauth_callback_server};
+use crate::auth::{
+    exchange_code_for_token, get_oauth_url, open_browser, run_oauth_callback_server,
+    save_oauth_config, OAuthConfig,
+};
 
 /// Run the interactive setup wizard
 pub fn run_setup() -> Result<OAuthConfig> {
@@ -22,9 +25,13 @@ pub fn run_setup() -> Result<OAuthConfig> {
     let client_id: String = Input::with_theme(&theme)
         .with_prompt("Client ID")
         .validate_with(|input: &String| -> Result<(), &str> {
-            if input.is_empty() { Err("Required") }
-            else if input.len() < 10 { Err("Too short") }
-            else { Ok(()) }
+            if input.is_empty() {
+                Err("Required")
+            } else if input.len() < 10 {
+                Err("Too short")
+            } else {
+                Ok(())
+            }
         })
         .interact_text()?;
 
@@ -32,9 +39,13 @@ pub fn run_setup() -> Result<OAuthConfig> {
     let client_secret: String = Input::with_theme(&theme)
         .with_prompt("Client Secret")
         .validate_with(|input: &String| -> Result<(), &str> {
-            if input.is_empty() { Err("Required") }
-            else if input.len() < 10 { Err("Too short") }
-            else { Ok(()) }
+            if input.is_empty() {
+                Err("Required")
+            } else if input.len() < 10 {
+                Err("Too short")
+            } else {
+                Ok(())
+            }
         })
         .interact_text()?;
 
@@ -45,8 +56,9 @@ pub fn run_setup() -> Result<OAuthConfig> {
         .default(default_redirect.to_string())
         .interact_text()?;
 
-    let redirect_uri = if redirect_uri.is_empty() ||
-        (!redirect_uri.starts_with("http://") && !redirect_uri.starts_with("https://")) {
+    let redirect_uri = if redirect_uri.is_empty()
+        || (!redirect_uri.starts_with("http://") && !redirect_uri.starts_with("https://"))
+    {
         default_redirect.to_string()
     } else {
         redirect_uri

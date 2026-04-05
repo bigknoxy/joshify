@@ -15,6 +15,7 @@ pub enum LoadAction {
     Playlists,
     PlaylistTracks { name: String, id: String },
     Search { query: String },
+    Devices,
 }
 
 /// Result from an async load operation
@@ -109,15 +110,22 @@ pub struct LoadSender<T> {
 
 impl<T: Send + 'static> LoadSender<T> {
     pub fn new(tx: mpsc::Sender<LoadResult<T>>, action: LoadAction, sequence: u64) -> Self {
-        Self { tx, action, sequence }
+        Self {
+            tx,
+            action,
+            sequence,
+        }
     }
 
     /// Send a result, ignoring if channel is closed
     pub async fn send(&self, data: T) {
-        let _ = self.tx.send(LoadResult {
-            action: self.action.clone(),
-            data,
-            sequence: self.sequence,
-        }).await;
+        let _ = self
+            .tx
+            .send(LoadResult {
+                action: self.action.clone(),
+                data,
+                sequence: self.sequence,
+            })
+            .await;
     }
 }

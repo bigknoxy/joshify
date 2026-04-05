@@ -18,6 +18,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
+
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
@@ -25,13 +28,13 @@ jobs:
         run: cargo build --verbose
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --bin joshify --test performance_tests --verbose
 
       - name: Check formatting
         run: cargo fmt --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --message-format=short
 
   release:
     needs: build

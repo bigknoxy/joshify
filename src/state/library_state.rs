@@ -3,7 +3,7 @@
 //! Placeholder for Phase 3 library features.
 //! Caches liked songs and playlists for quick access.
 
-use super::app_state::{TrackListItem, PlaylistListItem};
+use super::app_state::{PlaylistListItem, TrackListItem};
 
 /// Library state
 #[derive(Debug, Clone, Default)]

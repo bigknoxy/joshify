@@ -2,9 +2,9 @@
 //!
 //! Tests for OAuth config, credentials, and persistence.
 
+use serial_test::serial;
 use std::env;
 use tempfile::TempDir;
-use serial_test::serial;
 
 // Re-implement the types we need for testing (mirroring src/auth.rs)
 
@@ -80,23 +80,19 @@ fn load_credentials() -> anyhow::Result<Option<Credentials>> {
     if !creds_path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(creds_path)
-        .context("Failed to read credentials file")?;
-    let creds: Credentials = serde_json::from_str(&content)
-        .context("Failed to parse credentials JSON")?;
+    let content = std::fs::read_to_string(creds_path).context("Failed to read credentials file")?;
+    let creds: Credentials =
+        serde_json::from_str(&content).context("Failed to parse credentials JSON")?;
     Ok(Some(creds))
 }
 
 fn save_credentials(creds: &Credentials) -> anyhow::Result<()> {
     use anyhow::Context;
     let config_dir = get_config_dir()?;
-    std::fs::create_dir_all(&config_dir)
-        .context("Failed to create config directory")?;
+    std::fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
     let creds_path = config_dir.join("credentials.json");
-    let content = serde_json::to_string_pretty(creds)
-        .context("Failed to serialize credentials")?;
-    std::fs::write(creds_path, content)
-        .context("Failed to write credentials file")?;
+    let content = serde_json::to_string_pretty(creds).context("Failed to serialize credentials")?;
+    std::fs::write(creds_path, content).context("Failed to write credentials file")?;
     Ok(())
 }
 

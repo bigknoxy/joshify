@@ -28,8 +28,29 @@ fi
 echo -e "${GREEN}Rust found: $(cargo --version)${NC}"
 echo ""
 
+# Install system dependencies for librespot (Linux only)
+echo "📦 Checking system dependencies..."
+if command -v apt-get &> /dev/null; then
+    echo -e "${YELLOW}Detected Debian/Ubuntu - installing audio dependencies...${NC}"
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq libasound2-dev pkg-config libssl-dev build-essential
+elif command -v dnf &> /dev/null; then
+    echo -e "${YELLOW}Detected Fedora/RHEL - installing audio dependencies...${NC}"
+    sudo dnf install -y alsa-lib-devel pkgconfig openssl-devel gcc
+elif command -v pacman &> /dev/null; then
+    echo -e "${YELLOW}Detected Arch - installing audio dependencies...${NC}"
+    sudo pacman -S --noconfirm alsa-lib pkg-config openssl base-devel
+elif command -v brew &> /dev/null; then
+    echo -e "${GREEN}Detected macOS - no additional system dependencies needed${NC}"
+else
+    echo -e "${YELLOW}Unknown OS - you may need to install audio dependencies manually${NC}"
+    echo "   Linux: libasound2-dev pkg-config libssl-dev build-essential"
+    echo "   macOS: No extra deps needed"
+fi
+
 # Clone and install
-echo "Installing Joshify..."
+echo ""
+echo "🔨 Building and installing Joshify..."
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
@@ -52,6 +73,9 @@ echo "Add these to your ~/.bashrc to skip OAuth setup:"
 echo "  export SPOTIFY_CLIENT_ID=your_client_id"
 echo "  export SPOTIFY_CLIENT_SECRET=your_client_secret"
 echo "  export SPOTIFY_ACCESS_TOKEN=your_access_token"
+echo ""
+echo "🎵 Joshify now plays audio locally through your machine's speakers!"
+echo "   Press 'd' to switch between local and remote devices."
 echo ""
 echo "Uninstall with: curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/uninstall.sh | bash"
 echo ""

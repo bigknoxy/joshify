@@ -16,7 +16,13 @@ enum NavItem {
 
 impl NavItem {
     fn all() -> &'static [NavItem] {
-        &[NavItem::Home, NavItem::Search, NavItem::Library, NavItem::Playlists, NavItem::LikedSongs]
+        &[
+            NavItem::Home,
+            NavItem::Search,
+            NavItem::Library,
+            NavItem::Playlists,
+            NavItem::LikedSongs,
+        ]
     }
 
     fn label(&self) -> &'static str {
@@ -193,7 +199,10 @@ fn test_content_state_transitions() {
 
     // Transition to LoadingInProgress
     state.content_state = ContentState::LoadingInProgress("Playlists".to_string());
-    assert!(matches!(state.content_state, ContentState::LoadingInProgress(_)));
+    assert!(matches!(
+        state.content_state,
+        ContentState::LoadingInProgress(_)
+    ));
 
     // Transition to Playlists
     state.content_state = ContentState::Playlists(vec!["Playlist 1".to_string()]);

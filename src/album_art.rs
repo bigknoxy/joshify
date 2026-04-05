@@ -8,9 +8,9 @@
 //! - ASCII/Unicode fallback (chafa-style)
 
 use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::num::NonZeroUsize;
 
 /// Album art cache (cloneable via Arc)
 /// Uses LRU cache with 50 entry limit to bound memory usage
@@ -32,7 +32,9 @@ impl AlbumArtCache {
         }
 
         Self {
-            cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(NonZeroUsize::new(50).unwrap()))),
+            cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(
+                NonZeroUsize::new(50).unwrap(),
+            ))),
             cache_dir,
         }
     }
@@ -80,17 +82,17 @@ impl AlbumArtCache {
                         Some(data)
                     }
                     Err(e) => {
-                        eprintln!("Failed to read album art response: {}", e);
+                        tracing::warn!("Failed to read album art response: {}", e);
                         None
                     }
                 }
             }
             Ok(Err(e)) => {
-                eprintln!("Failed to fetch album art: {}", e);
+                tracing::warn!("Failed to fetch album art: {}", e);
                 None
             }
             Err(_) => {
-                eprintln!("Album art fetch timed out after 10s: {}", url);
+                tracing::warn!("Album art fetch timed out after 10s: {}", url);
                 None
             }
         }

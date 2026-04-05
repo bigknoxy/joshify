@@ -25,7 +25,9 @@ struct AlbumArtCache {
 impl AlbumArtCache {
     fn new() -> Self {
         Self {
-            cache: Arc::new(tokio::sync::Mutex::new(lru::LruCache::new(NonZeroUsize::new(50).unwrap()))),
+            cache: Arc::new(tokio::sync::Mutex::new(lru::LruCache::new(
+                NonZeroUsize::new(50).unwrap(),
+            ))),
         }
     }
 

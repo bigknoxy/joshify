@@ -20,7 +20,13 @@ enum NavItem {
 
 impl NavItem {
     fn all() -> &'static [NavItem] {
-        &[NavItem::Home, NavItem::Search, NavItem::Library, NavItem::Playlists, NavItem::LikedSongs]
+        &[
+            NavItem::Home,
+            NavItem::Search,
+            NavItem::Library,
+            NavItem::Playlists,
+            NavItem::LikedSongs,
+        ]
     }
 
     fn label(&self) -> &'static str {
@@ -66,7 +72,12 @@ fn test_render_sidebar() {
                 .iter()
                 .map(|item| {
                     let (icon, style) = if *item == NavItem::Home {
-                        ("▶ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                        (
+                            "▶ ",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )
                     } else {
                         ("  ", Style::default().fg(Color::White))
                     };
@@ -74,13 +85,12 @@ fn test_render_sidebar() {
                 })
                 .collect();
 
-            let widget = Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Navigation ")
-                        .border_style(Style::default().fg(Color::Blue))
-                );
+            let widget = Paragraph::new(content).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Navigation ")
+                    .border_style(Style::default().fg(Color::Blue)),
+            );
 
             frame.render_widget(widget, sidebar_area);
         })
@@ -112,7 +122,7 @@ fn test_render_player_bar() {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Now Playing ")
-                    .border_style(Style::default().fg(Color::Green))
+                    .border_style(Style::default().fg(Color::Green)),
             );
 
             frame.render_widget(widget, player_bar_area);
@@ -143,22 +153,19 @@ fn test_render_track_list() {
                 .enumerate()
                 .map(|(i, (name, artist))| {
                     let style = if i == 0 {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     };
                     let icon = if i == 0 { "▶ " } else { "  " };
-                    Line::styled(format!("{}{}. {}", icon, i + 1, name), style)
-                        .patch_style(style)
+                    Line::styled(format!("{}{}. {}", icon, i + 1, name), style).patch_style(style)
                 })
                 .collect();
 
             let widget = Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Tracks ")
-                );
+                .block(Block::default().borders(Borders::ALL).title(" Tracks "));
 
             frame.render_widget(widget, area);
         })
@@ -188,7 +195,9 @@ fn test_render_playlist_list() {
                 .enumerate()
                 .map(|(i, (name, count))| {
                     let style = if i == 0 {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     };
@@ -197,11 +206,7 @@ fn test_render_playlist_list() {
                 .collect();
 
             let widget = Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Playlists ")
-                );
+                .block(Block::default().borders(Borders::ALL).title(" Playlists "));
 
             frame.render_widget(widget, area);
         })
@@ -226,7 +231,7 @@ fn test_search_input_overlay() {
                     Block::default()
                         .borders(Borders::ALL)
                         .title(" Search (Esc to cancel) ")
-                        .border_style(Style::default().fg(Color::Yellow))
+                        .border_style(Style::default().fg(Color::Yellow)),
                 )
                 .style(Style::default().bg(Color::DarkGray));
 
@@ -263,7 +268,7 @@ fn test_help_overlay() {
                     Block::default()
                         .borders(Borders::ALL)
                         .title(" Help (Esc to close) ")
-                        .border_style(Style::default().fg(Color::Green))
+                        .border_style(Style::default().fg(Color::Green)),
                 )
                 .style(Style::default().bg(Color::DarkGray));
 

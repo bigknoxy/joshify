@@ -8,7 +8,7 @@
 #[path = "../src/state/player_state.rs"]
 mod player_state;
 
-use player_state::{PlayerState, format_duration};
+use player_state::{format_duration, PlayerState};
 
 #[test]
 fn test_format_duration() {
@@ -75,6 +75,8 @@ fn test_player_state_with_track() {
         current_album_art_url: Some("https://example.com/art.jpg".to_string()),
         current_album_art_data: Some(vec![0x89, 0x50, 0x4E, 0x47]), // PNG header
         current_track_uri: Some("spotify:track:abc123".to_string()),
+        current_album_art_ascii: None,
+        current_album_art_kitty: None,
     };
 
     assert!(state.is_playing);
@@ -83,9 +85,15 @@ fn test_player_state_with_track() {
     assert_eq!(state.volume, 75);
     assert_eq!(state.current_track_name, Some("Test Track".to_string()));
     assert_eq!(state.current_artist_name, Some("Test Artist".to_string()));
-    assert_eq!(state.current_album_art_url, Some("https://example.com/art.jpg".to_string()));
+    assert_eq!(
+        state.current_album_art_url,
+        Some("https://example.com/art.jpg".to_string())
+    );
     assert!(state.current_album_art_data.is_some());
-    assert_eq!(state.current_track_uri, Some("spotify:track:abc123".to_string()));
+    assert_eq!(
+        state.current_track_uri,
+        Some("spotify:track:abc123".to_string())
+    );
 
     // Modify state
     state.is_playing = false;
@@ -110,6 +118,8 @@ fn test_player_state_no_track() {
         current_album_art_url: None,
         current_album_art_data: None,
         current_track_uri: None,
+        current_album_art_ascii: None,
+        current_album_art_kitty: None,
     };
 
     assert!(!state.is_playing);
@@ -135,12 +145,20 @@ fn test_player_state_episode_context() {
         current_album_art_url: Some("https://example.com/episode.jpg".to_string()),
         current_album_art_data: None,
         current_track_uri: Some("spotify:episode:xyz789".to_string()),
+        current_album_art_ascii: None,
+        current_album_art_kitty: None,
     };
 
     assert!(state.is_playing);
     assert_eq!(state.progress_ms, 1800000);
     assert_eq!(state.duration_ms, 3600000);
     assert_eq!(state.current_track_name, Some("Test Episode".to_string()));
-    assert_eq!(state.current_artist_name, Some("Test Publisher".to_string()));
-    assert_eq!(state.current_track_uri, Some("spotify:episode:xyz789".to_string()));
+    assert_eq!(
+        state.current_artist_name,
+        Some("Test Publisher".to_string())
+    );
+    assert_eq!(
+        state.current_track_uri,
+        Some("spotify:episode:xyz789".to_string())
+    );
 }
