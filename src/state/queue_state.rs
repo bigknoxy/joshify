@@ -18,7 +18,7 @@ pub struct QueueState {
 }
 
 /// Queue entry with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QueueEntry {
     pub uri: String,
     pub name: String,
@@ -48,7 +48,7 @@ impl QueueState {
     }
 
     /// Get the next track from local queue (FIFO)
-    pub fn next(&mut self) -> Option<QueueEntry> {
+    pub fn next_track(&mut self) -> Option<QueueEntry> {
         if !self.local_queue.is_empty() {
             Some(self.local_queue.remove(0))
         } else {
@@ -62,7 +62,7 @@ impl QueueState {
             && self
                 .spotify_queue
                 .as_ref()
-                .map_or(true, |q| q.queue.is_empty())
+                .is_none_or(|q| q.queue.is_empty())
     }
 
     /// Total number of items in queue (local + Spotify)
@@ -74,18 +74,6 @@ impl QueueState {
     /// Update the Spotify queue data
     pub fn update_spotify_queue(&mut self, queue: CurrentUserQueue) {
         self.spotify_queue = Some(queue);
-    }
-}
-
-impl Default for QueueEntry {
-    fn default() -> Self {
-        Self {
-            uri: String::new(),
-            name: String::new(),
-            artist: String::new(),
-            added_by_user: false,
-            is_recommendation: false,
-        }
     }
 }
 
@@ -153,7 +141,7 @@ mod tests {
         queue.add(make_entry("Song A", "Artist A", "spotify:track:1"));
         queue.add(make_entry("Song B", "Artist B", "spotify:track:2"));
 
-        let next = queue.next();
+        let next = queue.next_track();
         assert!(next.is_some());
         let entry = next.unwrap();
         assert_eq!(entry.name, "Song A");
@@ -167,7 +155,7 @@ mod tests {
     #[test]
     fn test_next_on_empty_queue() {
         let mut queue = QueueState::new();
-        assert!(queue.next().is_none());
+        assert!(queue.next_track().is_none());
     }
 
     #[test]
@@ -175,11 +163,11 @@ mod tests {
         let mut queue = QueueState::new();
         queue.add(make_entry("Song A", "Artist A", "spotify:track:1"));
 
-        let first = queue.next();
+        let first = queue.next_track();
         assert!(first.is_some());
         assert_eq!(first.unwrap().name, "Song A");
 
-        let second = queue.next();
+        let second = queue.next_track();
         assert!(second.is_none());
 
         assert!(queue.local_queue.is_empty());
@@ -285,10 +273,10 @@ mod tests {
         queue.add(make_entry("Third", "C", "spotify:track:3"));
 
         // Verify FIFO: first added = first out
-        assert_eq!(queue.next().unwrap().name, "First");
-        assert_eq!(queue.next().unwrap().name, "Second");
-        assert_eq!(queue.next().unwrap().name, "Third");
-        assert!(queue.next().is_none());
+        assert_eq!(queue.next_track().unwrap().name, "First");
+        assert_eq!(queue.next_track().unwrap().name, "Second");
+        assert_eq!(queue.next_track().unwrap().name, "Third");
+        assert!(queue.next_track().is_none());
     }
 
     #[test]

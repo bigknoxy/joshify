@@ -213,4 +213,22 @@ impl SpotifyClient {
             .context("Failed to start playback")?;
         Ok(())
     }
+
+    /// Toggle shuffle state
+    pub async fn toggle_shuffle(&self, shuffle: bool) -> Result<()> {
+        self.oauth
+            .shuffle(shuffle, None)
+            .await
+            .context("Failed to toggle shuffle")?;
+        Ok(())
+    }
+
+    /// Set repeat mode
+    pub async fn set_repeat(&self, state: rspotify::model::RepeatState) -> Result<()> {
+        self.oauth
+            .repeat(state, None)
+            .await
+            .context("Failed to set repeat mode")?;
+        Ok(())
+    }
 }

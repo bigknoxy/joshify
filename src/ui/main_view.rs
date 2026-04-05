@@ -5,7 +5,7 @@ use crate::state::load_coordinator::LoadAction;
 use crate::ui::theme::{self, symbols, Catppuccin};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
 type MainContentState = ContentState;
@@ -28,56 +28,6 @@ fn load_action_display_owned(action: &LoadAction) -> String {
         LoadAction::Search { query } => format!("Searching: {}", query),
         LoadAction::Devices => "Loading devices...".to_string(),
     }
-}
-
-/// Render search input overlay
-fn render_search_input(frame: &mut ratatui::Frame, area: Rect, query: &str, _border_color: Color) {
-    let search_width = 50u16.min(area.width);
-    let search_height = 7u16.min(area.height);
-    let search_x = (area.width - search_width) / 2;
-    let search_y = (area.height - search_height) / 2;
-    let search_area = Rect::new(search_x, search_y, search_width, search_height);
-
-    // Clear first to prevent bleed-through
-    frame.render_widget(Clear, search_area);
-
-    // Then render solid background
-    let bg = Block::default()
-        .style(Style::default().bg(Catppuccin::CRUST).fg(Catppuccin::TEXT))
-        .borders(Borders::ALL)
-        .border_style(Catppuccin::border_focused().add_modifier(Modifier::BOLD))
-        .title(" Search ")
-        .title_style(Catppuccin::focused());
-    frame.render_widget(bg, search_area);
-
-    let cursor_pos = query.len() as u16;
-    let input_line = Line::styled(
-        format!("{}█", query),
-        Catppuccin::search_input().add_modifier(Modifier::BOLD),
-    );
-
-    let content = vec![
-        Line::from(""),
-        Line::styled(
-            format!("{} Search Spotify", symbols::SEARCH),
-            Catppuccin::text().add_modifier(Modifier::BOLD),
-        ),
-        Line::from(""),
-        input_line,
-        Line::from(""),
-        Line::styled(
-            format!(
-                "{} Enter to search  │  {} Esc to cancel",
-                symbols::ARROW_RIGHT,
-                symbols::ARROW_LEFT
-            ),
-            Catppuccin::help(),
-        ),
-    ];
-
-    let widget = Paragraph::new(content).alignment(Alignment::Left);
-    frame.render_widget(widget, search_area);
-    frame.set_cursor_position((search_area.x + 2 + cursor_pos, search_area.y + 3));
 }
 
 /// Render a list of tracks
@@ -107,7 +57,7 @@ fn render_track_list(
     let header_height = 3u16;
     let list_area = Rect::new(
         area.x,
-        area.y + header_height as u16,
+        area.y + header_height,
         area.width,
         area.height.saturating_sub(header_height),
     );
@@ -223,7 +173,7 @@ fn render_playlist_list(
     let header_height = 3u16;
     let list_area = Rect::new(
         area.x,
-        area.y + header_height as u16,
+        area.y + header_height,
         area.width,
         area.height.saturating_sub(header_height),
     );

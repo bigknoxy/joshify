@@ -2,8 +2,43 @@
 //!
 //! Moved from player.rs to the state module for better organization.
 
-use rspotify::model::CurrentPlaybackContext;
+use rspotify::model::{CurrentPlaybackContext, RepeatState};
 use rspotify::prelude::Id;
+
+/// Repeat mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    Track,
+    Context,
+}
+
+impl RepeatMode {
+    pub fn from_spotify(state: RepeatState) -> Self {
+        match state {
+            RepeatState::Off => Self::Off,
+            RepeatState::Track => Self::Track,
+            RepeatState::Context => Self::Context,
+        }
+    }
+
+    pub fn cycle(&self) -> Self {
+        match self {
+            Self::Off => Self::Context,
+            Self::Context => Self::Track,
+            Self::Track => Self::Off,
+        }
+    }
+
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Off => "R",
+            Self::Context => "R",
+            Self::Track => "R¹",
+        }
+    }
+}
 
 /// Playback state
 #[derive(Debug, Clone, Default)]
@@ -15,10 +50,12 @@ pub struct PlayerState {
     pub current_track_name: Option<String>,
     pub current_artist_name: Option<String>,
     pub current_album_art_url: Option<String>,
-    pub current_album_art_data: Option<Vec<u8>>, // Raw image bytes
-    pub current_album_art_kitty: Option<Vec<u8>>, // Pre-processed Kitty escape sequence
-    pub current_album_art_ascii: Option<Vec<ratatui::text::Line<'static>>>, // Pre-rendered ASCII art
+    pub current_album_art_data: Option<Vec<u8>>,
+    pub current_album_art_kitty: Option<Vec<u8>>,
+    pub current_album_art_ascii: Option<Vec<ratatui::text::Line<'static>>>,
     pub current_track_uri: Option<String>,
+    pub shuffle: bool,
+    pub repeat_mode: RepeatMode,
 }
 
 impl PlayerState {
@@ -47,6 +84,7 @@ impl PlayerState {
             }
             Some(rspotify::model::PlayableItem::Episode(episode)) => {
                 let name = episode.name.clone();
+                #[allow(deprecated)]
                 let artist_name = Some(episode.show.publisher.clone());
                 let album_art_url = episode.show.images.first().map(|img| img.url.clone());
                 let duration_ms = episode.duration.num_milliseconds().max(0) as u32;
@@ -77,6 +115,8 @@ impl PlayerState {
             current_album_art_kitty: None,
             current_album_art_ascii: None,
             current_track_uri: track_uri,
+            shuffle: ctx.shuffle_state,
+            repeat_mode: RepeatMode::from_spotify(ctx.repeat_state),
         }
     }
 
@@ -250,6 +290,8 @@ mod tests {
             current_album_art_kitty: None,
             current_album_art_ascii: None,
             current_track_uri: Some("spotify:track:abc123".to_string()),
+            shuffle: false,
+            repeat_mode: RepeatMode::Off,
         };
 
         assert!(state.is_playing);
@@ -279,6 +321,8 @@ mod tests {
             current_album_art_kitty: None,
             current_album_art_ascii: None,
             current_track_uri: None,
+            shuffle: false,
+            repeat_mode: RepeatMode::Off,
         };
 
         assert!(!state.is_playing);
@@ -304,6 +348,8 @@ mod tests {
             current_album_art_kitty: None,
             current_album_art_ascii: None,
             current_track_uri: Some("spotify:episode:xyz789".to_string()),
+            shuffle: false,
+            repeat_mode: RepeatMode::Off,
         };
 
         assert!(state.is_playing);

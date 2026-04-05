@@ -1,5 +1,6 @@
 //! Player bar rendering - Now playing with album art
 
+use crate::state::player_state::RepeatMode;
 use crate::ui::theme::{self, symbols, Catppuccin};
 use ratatui::{
     prelude::*,
@@ -20,6 +21,9 @@ pub fn render_player_bar(
     album_art_ascii: Option<&[Line<'static>]>,
     queue_count: usize,
     focused: bool,
+    shuffle: bool,
+    repeat_mode: RepeatMode,
+    radio_mode: bool,
 ) {
     let play_icon = if is_playing {
         symbols::PLAY
@@ -88,6 +92,24 @@ pub fn render_player_bar(
         String::new()
     };
 
+    // Shuffle/repeat/radio status indicators
+    let mut status_badges = String::new();
+    if shuffle {
+        status_badges.push_str(&format!(" {} ", symbols::SHUFFLE));
+    }
+    match repeat_mode {
+        RepeatMode::Off => {}
+        RepeatMode::Context => {
+            status_badges.push_str(&format!(" {} ", symbols::REPEAT));
+        }
+        RepeatMode::Track => {
+            status_badges.push_str(&format!(" {} ", symbols::REPEAT_ONE));
+        }
+    }
+    if radio_mode {
+        status_badges.push_str(&format!(" {} ", symbols::RADIO));
+    }
+
     // Track info with progress gauge
     let progress_text = format!(
         "{} / {}",
@@ -118,20 +140,23 @@ pub fn render_player_bar(
         format!("{} - {}", display_name, artist_name)
     };
 
+    let line1 = format!(
+        " {}  {}{}{}",
+        play_icon, name_text, queue_indicator, status_badges
+    );
+    let line2 = format!(
+        " {}  |  {}{}  |  ←/→:Seek  |  ↑/↓:Vol  |  s:Shuffle  |  r:Repeat  |  R:Radio",
+        progress_text, vol_icon, vol_bars
+    );
+
     let lines = vec![
         Line::styled(
-            format!(" {}  {}{}", play_icon, name_text, queue_indicator),
+            line1,
             Style::default()
                 .fg(Catppuccin::TEXT)
                 .add_modifier(Modifier::BOLD),
         ),
-        Line::styled(
-            format!(
-                " {}  |  {}{}  |  ←/→:Seek  |  ↑/↓:Vol",
-                progress_text, vol_icon, vol_bars
-            ),
-            vol_style,
-        ),
+        Line::styled(line2, vol_style),
     ];
 
     let border_style = if focused {

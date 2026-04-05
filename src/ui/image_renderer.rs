@@ -67,8 +67,8 @@ pub fn prepare_kitty_image(image_data: &[u8], area: Rect) -> Option<Vec<u8>> {
 
     let cell_width = 8u32;
     let cell_height = 16u32;
-    let target_width = (area.width as u32 * cell_width).max(1).min(200);
-    let target_height = (area.height as u32 * cell_height).max(1).min(200);
+    let target_width = (area.width as u32 * cell_width).clamp(1, 200);
+    let target_height = (area.height as u32 * cell_height).clamp(1, 200);
 
     let img = image::load_from_memory(image_data).ok()?;
     let resized = img.resize(
@@ -86,7 +86,7 @@ pub fn prepare_kitty_image(image_data: &[u8], area: Rect) -> Option<Vec<u8>> {
 
     let base64_data = STANDARD.encode(&buffer);
     let chunk_size = 4096;
-    let total_chunks = (base64_data.len() + chunk_size - 1) / chunk_size;
+    let total_chunks = base64_data.len().div_ceil(chunk_size);
 
     let mut escape = Vec::new();
     // Cursor positioning
@@ -282,13 +282,13 @@ mod tests {
     #[test]
     fn test_album_art_widget_default_protocol() {
         let widget = AlbumArtWidget::new(None);
-        assert_eq!(widget.protocol, Protocol::detect());
+        assert_eq!(widget._protocol, Protocol::detect());
     }
 
     #[test]
     fn test_album_art_widget_with_protocol() {
         let widget = AlbumArtWidget::with_protocol(None, Protocol::Kitty);
-        assert_eq!(widget.protocol, Protocol::Kitty);
+        assert_eq!(widget._protocol, Protocol::Kitty);
     }
 
     #[test]
@@ -354,21 +354,21 @@ mod tests {
 /// Widget for rendering album art in ratatui
 pub struct AlbumArtWidget<'a> {
     image_data: Option<&'a [u8]>,
-    protocol: Protocol,
+    _protocol: Protocol,
 }
 
 impl<'a> AlbumArtWidget<'a> {
     pub fn new(image_data: Option<&'a [u8]>) -> Self {
         Self {
             image_data,
-            protocol: Protocol::detect(),
+            _protocol: Protocol::detect(),
         }
     }
 
     pub fn with_protocol(image_data: Option<&'a [u8]>, protocol: Protocol) -> Self {
         Self {
             image_data,
-            protocol,
+            _protocol: protocol,
         }
     }
 }

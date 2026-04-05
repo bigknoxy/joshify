@@ -258,18 +258,20 @@ pub async fn exchange_code_for_token(config: &OAuthConfig, code: &str) -> Result
 
     let creds = RspotifyCredentials::new(&config.client_id, &config.client_secret);
 
-    let mut oauth_config = OAuth::default();
-    oauth_config.redirect_uri = config.redirect_uri.clone();
-    oauth_config.scopes = HashSet::from([
-        "user-read-playback-state".to_string(),
-        "user-modify-playback-state".to_string(),
-        "user-read-currently-playing".to_string(),
-        "streaming".to_string(),
-        "playlist-read-private".to_string(),
-        "playlist-modify-private".to_string(),
-        "user-library-read".to_string(),
-        "user-read-recently-played".to_string(),
-    ]);
+    let oauth_config = OAuth {
+        redirect_uri: config.redirect_uri.clone(),
+        scopes: HashSet::from([
+            "user-read-playback-state".to_string(),
+            "user-modify-playback-state".to_string(),
+            "user-read-currently-playing".to_string(),
+            "streaming".to_string(),
+            "playlist-read-private".to_string(),
+            "playlist-modify-private".to_string(),
+            "user-library-read".to_string(),
+            "user-read-recently-played".to_string(),
+        ]),
+        ..Default::default()
+    };
 
     let oauth = AuthCodeSpotify::new(creds, oauth_config);
 

@@ -8,7 +8,7 @@ use crate::auth::{load_credentials, OAuthConfig};
 
 /// Spotify API client
 pub struct SpotifyClient {
-    pub(crate) oauth: AuthCodeSpotify,
+    pub oauth: AuthCodeSpotify,
 }
 
 impl SpotifyClient {
@@ -16,18 +16,27 @@ impl SpotifyClient {
     pub async fn new(config: &OAuthConfig) -> Result<Self> {
         let creds = Credentials::new(&config.client_id, &config.client_secret);
 
-        let mut oauth_config = OAuth::default();
-        oauth_config.redirect_uri = config.redirect_uri.clone();
-        oauth_config.scopes = HashSet::from([
-            "user-read-playback-state".to_string(),
-            "user-modify-playback-state".to_string(),
-            "user-read-currently-playing".to_string(),
-            "streaming".to_string(),
-            "playlist-read-private".to_string(),
-            "playlist-modify-private".to_string(),
-            "user-library-read".to_string(),
-            "user-read-recently-played".to_string(),
-        ]);
+        let oauth_config = OAuth {
+            redirect_uri: config.redirect_uri.clone(),
+            scopes: HashSet::from([
+                "user-read-playback-state".to_string(),
+                "user-modify-playback-state".to_string(),
+                "user-read-currently-playing".to_string(),
+                "streaming".to_string(),
+                "playlist-read-private".to_string(),
+                "playlist-modify-private".to_string(),
+                "playlist-modify-public".to_string(),
+                "user-follow-modify".to_string(),
+                "user-follow-read".to_string(),
+                "user-library-modify".to_string(),
+                "user-library-read".to_string(),
+                "user-read-email".to_string(),
+                "user-read-private".to_string(),
+                "user-top-read".to_string(),
+                "user-read-recently-played".to_string(),
+            ]),
+            ..Default::default()
+        };
 
         let oauth = AuthCodeSpotify::new(creds, oauth_config);
 

@@ -66,7 +66,9 @@ pub enum DeviceEntry {
 
 /// Content state for main view
 #[derive(Clone)]
+#[derive(Default)]
 pub enum ContentState {
+    #[default]
     Home,
     Loading(LoadAction),
     LoadingInProgress(LoadAction),
@@ -82,25 +84,17 @@ pub enum ContentState {
     SearchErrorLive(String),
 }
 
-impl Default for ContentState {
-    fn default() -> Self {
-        Self::Home
-    }
-}
 
 /// Focus target for Tab navigation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum FocusTarget {
+    #[default]
     Sidebar,
     MainContent,
     PlayerBar,
 }
 
-impl Default for FocusTarget {
-    fn default() -> Self {
-        Self::Sidebar
-    }
-}
 
 /// Application state coordinator
 pub struct AppState {

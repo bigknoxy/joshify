@@ -1,7 +1,7 @@
 //! Sidebar navigation rendering
 
 use crate::state::app_state::NavItem;
-use crate::ui::theme::{self, symbols, Catppuccin};
+use crate::ui::theme::{symbols, Catppuccin};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},

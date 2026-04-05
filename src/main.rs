@@ -1,21 +1,11 @@
-mod album_art;
-mod api;
-mod auth;
-mod connect;
-mod keyring_store;
-mod player;
-mod session;
-mod setup;
-mod state;
-mod ui;
-
-use crate::auth::OAuthConfig;
-use crate::player::LocalPlayer;
-use crate::session::LocalSession;
-use crate::state::app_state::{PlaylistListItem, TrackListItem};
-use crate::state::player_state::PlayerState;
-use crate::state::search_state::SearchState;
-use crate::state::{ContentState, FocusTarget, LoadAction, NavItem};
+use joshify::auth::OAuthConfig;
+use joshify::player::LocalPlayer;
+use joshify::session::LocalSession;
+use joshify::state::app_state::{PlaylistListItem, TrackListItem};
+use joshify::state::player_state::PlayerState;
+use joshify::state::search_state::SearchState;
+use joshify::state::{ContentState, FocusTarget, LoadAction, NavItem};
+use joshify::CliArgs;
 use anyhow::Result;
 use librespot::core::authentication::Credentials;
 use rspotify::clients::OAuthClient;
@@ -35,11 +25,12 @@ struct HighlightedItem {
     uri: String,
     name: String,
     artist: String,
-    context: Option<PlaybackContext>,
+    _context: Option<PlaybackContext>,
 }
 
 /// Playback context - what collection the current track came from
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum PlaybackContext {
     Playlist {
         uri: String,
@@ -61,7 +52,7 @@ struct App {
     selected_nav: NavItem,
     is_authenticated: bool,
     player_state: PlayerState,
-    queue_state: crate::state::queue_state::QueueState,
+    queue_state: joshify::state::queue_state::QueueState,
     highlighted_item: Option<HighlightedItem>,
     current_context: Option<PlaybackContext>,
     status_message: Option<String>,
@@ -79,7 +70,7 @@ struct App {
     selected_index: usize,
     scroll_offset: usize,
     search_state: SearchState,
-    album_art_cache: album_art::AlbumArtCache,
+    album_art_cache: joshify::album_art::AlbumArtCache,
     last_fetched_art_uri: Option<String>,
     playback_mode: PlaybackMode,
     local_session: Option<Arc<LocalSession>>,
@@ -94,7 +85,7 @@ impl App {
             selected_nav: NavItem::Home,
             is_authenticated: false,
             player_state: PlayerState::default(),
-            queue_state: crate::state::queue_state::QueueState::new(),
+            queue_state: joshify::state::queue_state::QueueState::new(),
             highlighted_item: None,
             current_context: None,
             status_message: None,
@@ -112,7 +103,7 @@ impl App {
             selected_index: 0,
             scroll_offset: 0,
             search_state: SearchState::new(),
-            album_art_cache: album_art::AlbumArtCache::new(),
+            album_art_cache: joshify::album_art::AlbumArtCache::new(),
             last_fetched_art_uri: None,
             playback_mode: PlaybackMode::Local,
             local_session: None,
@@ -152,7 +143,7 @@ impl App {
                     uri: track.uri.clone(),
                     name: track.name.clone(),
                     artist: track.artist.clone(),
-                    context: self.current_context.clone(),
+                    _context: self.current_context.clone(),
                 });
 
                 // Update playlist context track_index when navigating
@@ -169,7 +160,7 @@ impl App {
 
     async fn poll_playback(
         &mut self,
-        client: &Arc<Mutex<api::SpotifyClient>>,
+        client: &Arc<Mutex<joshify::api::SpotifyClient>>,
         tx_art: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     ) {
         let client_guard = client.lock().await;
@@ -181,7 +172,7 @@ impl App {
                 if self
                     .status_message
                     .as_ref()
-                    .map_or(false, |m| m.starts_with("Playback error"))
+                    .is_some_and(|m| m.starts_with("Playback error"))
                 {
                     self.status_message = None;
                 }
@@ -225,7 +216,7 @@ impl App {
                 if self
                     .status_message
                     .as_ref()
-                    .map_or(false, |m| m.starts_with("Playback error"))
+                    .is_some_and(|m| m.starts_with("Playback error"))
                 {
                     self.status_message = None;
                 }
@@ -244,113 +235,6 @@ use ratatui::{prelude::*, widgets::Paragraph};
 use rspotify::prelude::{BaseClient, Id};
 use std::io;
 use tokio::sync::Mutex;
-
-/// CLI arguments for non-interactive mode
-#[derive(Debug, Clone, Default)]
-struct CliArgs {
-    client_id: Option<String>,
-    client_secret: Option<String>,
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    redirect_uri: Option<String>,
-    help: bool,
-}
-
-impl CliArgs {
-    fn parse() -> Self {
-        let mut args = CliArgs::default();
-        let mut i = 1;
-        let cli_args: Vec<String> = std::env::args().collect();
-
-        while i < cli_args.len() {
-            match cli_args[i].as_str() {
-                "--client-id" => {
-                    if i + 1 < cli_args.len() {
-                        args.client_id = Some(cli_args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "--client-secret" => {
-                    if i + 1 < cli_args.len() {
-                        args.client_secret = Some(cli_args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "--access-token" => {
-                    if i + 1 < cli_args.len() {
-                        args.access_token = Some(cli_args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "--refresh-token" => {
-                    if i + 1 < cli_args.len() {
-                        args.refresh_token = Some(cli_args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "--redirect-uri" => {
-                    if i + 1 < cli_args.len() {
-                        args.redirect_uri = Some(cli_args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "--help" | "-h" => {
-                    args.help = true;
-                    i += 1;
-                }
-                _ => {
-                    i += 1;
-                }
-            }
-        }
-
-        args
-    }
-
-    fn print_help() {
-        println!("Joshify - Terminal Spotify Client");
-        println!();
-        println!("USAGE:");
-        println!("    joshify [OPTIONS]");
-        println!();
-        println!("OPTIONS:");
-        println!("    --client-id <ID>       Spotify Client ID (or SPOTIFY_CLIENT_ID)");
-        println!("    --client-secret <SEC>  Spotify Client Secret (or SPOTIFY_CLIENT_SECRET)");
-        println!("    --access-token <TOK>   Spotify Access Token (or SPOTIFY_ACCESS_TOKEN)");
-        println!("    --refresh-token <TOK>  Spotify Refresh Token (or SPOTIFY_REFRESH_TOKEN)");
-        println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
-        println!("    --help, -h             Show this help message");
-        println!();
-        println!("ENVIRONMENT VARIABLES:");
-        println!("    SPOTIFY_CLIENT_ID      Spotify Client ID");
-        println!("    SPOTIFY_CLIENT_SECRET  Spotify Client Secret");
-        println!("    SPOTIFY_ACCESS_TOKEN   Spotify Access Token");
-        println!("    SPOTIFY_REFRESH_TOKEN  Spotify Refresh Token");
-        println!();
-        println!("EXAMPLES:");
-        println!("    # Interactive mode (default)");
-        println!("    joshify");
-        println!();
-        println!("    # Non-interactive with environment variables");
-        println!("    export SPOTIFY_CLIENT_ID=xxx");
-        println!("    export SPOTIFY_CLIENT_SECRET=yyy");
-        println!("    export SPOTIFY_ACCESS_TOKEN=zzz");
-        println!("    joshify");
-        println!();
-        println!("    # Non-interactive with CLI flags");
-        println!("    joshify --client-id xxx --access-token zzz");
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -426,10 +310,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             Some("Connected to Spotify (non-interactive) - Press ? for help".to_string());
     } else {
         // Ensure we have credentials configured (runs interactive setup if needed)
-        let config = setup::ensure_configured()?;
+        let config = joshify::setup::ensure_configured()?;
 
         // Run OAuth browser flow to get access tokens
-        match setup::run_oauth_flow(&config).await {
+        match joshify::setup::run_oauth_flow(&config).await {
             Ok(true) => {
                 // Already authenticated with valid credentials
                 app.is_authenticated = true;
@@ -451,7 +335,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     terminal.clear()?;
 
     // Initialize Spotify client wrapped in Arc<Mutex> for shared access
-    let client = match api::SpotifyClient::new(&config).await {
+    let client = match joshify::api::SpotifyClient::new(&config).await {
         Ok(client) => {
             app.is_authenticated = true;
             app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
@@ -552,7 +436,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if let Some((session, player, event_rx)) = init_local_player(token).await {
             // Start Spotify Connect to make joshify appear as a device
             let credentials = Credentials::with_access_token(token.clone());
-            let mut connect_mgr = connect::ConnectManager::new(connect::default_device_name());
+            let mut connect_mgr = joshify::connect::ConnectManager::new(joshify::connect::default_device_name());
             if let Err(e) = connect_mgr
                 .start(
                     &session.session,
@@ -592,7 +476,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     if let Some(token_str) = creds.get("access_token").and_then(|v| v.as_str()) {
                         let credentials = Credentials::with_access_token(token_str.to_string());
                         let mut connect_mgr =
-                            connect::ConnectManager::new(connect::default_device_name());
+                            joshify::connect::ConnectManager::new(joshify::connect::default_device_name());
                         let _ = connect_mgr
                             .start(
                                 &session.session,
@@ -644,6 +528,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             }
         }
 
+        // Auto-clear expired search errors
+        if let Some(expiry) = app.search_state.error_display_until_ms {
+            if now >= expiry {
+                app.search_state.error = None;
+                app.search_state.error_display_until_ms = None;
+            }
+        }
+
         // Check for async data loading results
         if let Ok(state) = rx.try_recv() {
             match state {
@@ -655,6 +547,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 ContentState::SearchErrorLive(error) => {
                     if app.search_state.is_active {
                         app.search_state.set_error(error);
+                        app.search_state.error_display_until_ms = Some(now + 3000);
                     }
                 }
                 other => {
@@ -680,10 +573,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         player_bar_height,
                     );
                     app.player_state.current_album_art_kitty =
-                        ui::image_renderer::prepare_kitty_image(&art_data, album_area);
+                        joshify::ui::image_renderer::prepare_kitty_image(&art_data, album_area);
                     // Pre-render ASCII art ONCE (not every frame)
                     app.player_state.current_album_art_ascii = Some(
-                        ui::image_renderer::render_album_art_as_lines(&art_data, album_area),
+                        joshify::ui::image_renderer::render_album_art_as_lines(&art_data, album_area),
                     );
                 }
             }
@@ -727,7 +620,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.player_state.is_playing = false;
                         // Auto-advance to next queue item when track ends
                         if !app.queue_state.local_queue.is_empty() {
-                            if let Some(next_entry) = app.queue_state.next() {
+                            if let Some(next_entry) = app.queue_state.next_track() {
                                 if let Some(ref player) = app.local_player {
                                     match player.load_uri(&next_entry.uri, true, 0) {
                                         Ok(_) => {
@@ -809,7 +702,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                     }
                     PlayerEvent::VolumeChanged { volume } => {
-                        app.player_state.volume = (*volume as u32 * 100 / 65535) as u32;
+                        app.player_state.volume = *volume as u32 * 100 / 65535;
                     }
                     PlayerEvent::Seeked { position_ms, .. }
                     | PlayerEvent::PositionChanged { position_ms, .. }
@@ -854,7 +747,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let guard = c.lock().await;
                         match guard.search(&query, 25).await {
                             Ok(tracks) => {
-                                let items: Vec<crate::state::app_state::TrackListItem> = tracks
+                                let items: Vec<joshify::state::app_state::TrackListItem> = tracks
                                     .into_iter()
                                     .filter_map(|t| {
                                         t.id.map(|id| {
@@ -869,7 +762,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     );
                                                     String::new()
                                                 });
-                                            crate::state::app_state::TrackListItem {
+                                            joshify::state::app_state::TrackListItem {
                                                 name: t.name,
                                                 artist,
                                                 uri: format!("spotify:track:{}", id.id()),
@@ -945,8 +838,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 let main_focused = app.focus == FocusTarget::MainContent;
                 let player_focused = app.focus == FocusTarget::PlayerBar;
 
-                ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused);
-                ui::render_main_view(
+                joshify::ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused);
+                joshify::ui::render_main_view(
                     frame,
                     main_content,
                     &app.content_state,
@@ -972,7 +865,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     .as_deref()
                     .unwrap_or("");
 
-                ui::render_player_bar(
+                joshify::ui::render_player_bar(
                     frame,
                     player_bar,
                     track_name,
@@ -983,24 +876,25 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     app.player_state.volume,
                     app.player_state.current_album_art_url.as_deref(),
                     app.player_state
-                        .current_album_art_ascii
-                        .as_ref()
-                        .map(|l| l.as_slice()),
+                        .current_album_art_ascii.as_deref(),
                     app.queue_state.local_queue.len(),
                     player_focused,
+                    app.player_state.shuffle,
+                    app.player_state.repeat_mode,
+                    app.queue_state.radio_mode,
                 );
 
                 // Overlays (rendered last so they appear on top)
                 if app.show_queue {
-                    ui::render_queue_overlay(frame, area, &app.queue_state);
+                    joshify::ui::render_queue_overlay(frame, area, &app.queue_state);
                 }
                 if let Some(ref help_lines) = app.help_lines {
-                    ui::render_help_overlay(frame, area, help_lines);
+                    joshify::ui::render_help_overlay(frame, area, help_lines);
                 }
 
                 // Search overlay - clean modal with live results
                 if app.search_state.is_active {
-                    ui::render_search_overlay(frame, area, &app.search_state);
+                    joshify::ui::render_search_overlay(frame, area, &app.search_state);
                 }
 
                 // Store frame area for mouse handling
@@ -1018,7 +912,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         // Write album art image directly to stdout (bypasses ratatui buffer)
         // Uses pre-processed Kitty escape sequence (no per-frame image processing)
         if let Some(ref kitty_data) = app.player_state.current_album_art_kitty {
-            let _ = ui::image_renderer::write_prepared_kitty_image(kitty_data);
+            let _ = joshify::ui::image_renderer::write_prepared_kitty_image(kitty_data);
         }
 
         // Handle async data loading based on current state
@@ -1051,12 +945,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             };
                             let mut entries = Vec::new();
                             if has_local {
-                                entries.push(crate::state::app_state::DeviceEntry::ThisDevice {
+                                entries.push(joshify::state::app_state::DeviceEntry::ThisDevice {
                                     active: true,
                                 });
                             }
                             for device in devices {
-                                entries.push(crate::state::app_state::DeviceEntry::Remote(device));
+                                entries.push(joshify::state::app_state::DeviceEntry::Remote(device));
                             }
                             let _ = tx_clone.send(ContentState::DeviceSelector(entries)).await;
                         });
@@ -1119,7 +1013,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         .map(|p| PlaylistListItem {
                                             name: p.name,
                                             id: p.id.id().to_string(),
-                                            track_count: p.tracks.total,
+                                            track_count: p.items.total,
                                         })
                                         .collect();
                                     let _ = tx_clone.send(ContentState::Playlists(items)).await;
@@ -1148,7 +1042,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     let tracks: Vec<TrackListItem> = items
                                         .into_iter()
                                         .filter_map(|pi| {
-                                            pi.track.and_then(|t| {
+                                            pi.item.and_then(|t| {
                                                 if let rspotify::model::PlayableItem::Track(track) =
                                                     t
                                                 {
@@ -1308,7 +1202,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             crossterm::event::KeyCode::Char('a') => {
                                 // Add selected track to queue
                                 if let Some(track) = app.search_state.selected_track() {
-                                    app.queue_state.add(crate::state::queue_state::QueueEntry {
+                                    app.queue_state.add(joshify::state::queue_state::QueueEntry {
                                         uri: track.uri.clone(),
                                         name: track.name.clone(),
                                         artist: track.artist.clone(),
@@ -1396,14 +1290,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 {
                                     if !entries.is_empty() && app.selected_index < entries.len() {
                                         match &entries[app.selected_index] {
-                                            crate::state::app_state::DeviceEntry::ThisDevice {
+                                            joshify::state::app_state::DeviceEntry::ThisDevice {
                                                 ..
                                             } => {
                                                 app.playback_mode = PlaybackMode::Local;
                                                 app.status_message =
                                                     Some("Switched to local playback".to_string());
                                             }
-                                            crate::state::app_state::DeviceEntry::Remote(
+                                            joshify::state::app_state::DeviceEntry::Remote(
                                                 device,
                                             ) => {
                                                 if let Some(ref device_id) = device.id {
@@ -1460,6 +1354,61 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         continue;
                     }
 
+                    // Shuffle toggle (s) - works from ANY focus
+                    if key.code == crossterm::event::KeyCode::Char('s') {
+                        if let Some(ref client) = client {
+                            let new_shuffle = !app.player_state.shuffle;
+                            app.player_state.shuffle = new_shuffle;
+                            let c = client.lock().await;
+                            let _ = c.toggle_shuffle(new_shuffle).await;
+                            app.status_message = Some(if new_shuffle {
+                                "Shuffle: ON".to_string()
+                            } else {
+                                "Shuffle: OFF".to_string()
+                            });
+                            continue;
+                        }
+                    }
+
+                    // Repeat toggle (r) - cycles Off → Context → Track → Off
+                    if key.code == crossterm::event::KeyCode::Char('r') {
+                        if let Some(ref client) = client {
+                            app.player_state.repeat_mode = app.player_state.repeat_mode.cycle();
+                            let new_mode = app.player_state.repeat_mode;
+                            let c = client.lock().await;
+                            let spotify_state = match new_mode {
+                                joshify::state::player_state::RepeatMode::Off => {
+                                    rspotify::model::RepeatState::Off
+                                }
+                                joshify::state::player_state::RepeatMode::Context => {
+                                    rspotify::model::RepeatState::Context
+                                }
+                                joshify::state::player_state::RepeatMode::Track => {
+                                    rspotify::model::RepeatState::Track
+                                }
+                            };
+                            let _ = c.set_repeat(spotify_state).await;
+                            let label = match new_mode {
+                                joshify::state::player_state::RepeatMode::Off => "OFF",
+                                joshify::state::player_state::RepeatMode::Context => "ALL",
+                                joshify::state::player_state::RepeatMode::Track => "ONE",
+                            };
+                            app.status_message = Some(format!("Repeat: {}", label));
+                            continue;
+                        }
+                    }
+
+                    // Radio mode toggle (Shift+R) - works from ANY focus
+                    if key.code == crossterm::event::KeyCode::Char('R') {
+                        app.queue_state.radio_mode = !app.queue_state.radio_mode;
+                        app.status_message = Some(if app.queue_state.radio_mode {
+                            "Radio Mode: ON".to_string()
+                        } else {
+                            "Radio Mode: OFF".to_string()
+                        });
+                        continue;
+                    }
+
                     match key.code {
                         // Focus navigation
                         crossterm::event::KeyCode::Tab => {
@@ -1482,28 +1431,28 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 FocusTarget::Sidebar => {
                                     // Select current nav item - show content
                                     match app.selected_nav {
-                                        ui::NavItem::LikedSongs => {
+                                        joshify::ui::NavItem::LikedSongs => {
                                             app.content_state =
                                                 ContentState::Loading(LoadAction::LikedSongs);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
                                         }
-                                        ui::NavItem::Playlists => {
+                                        joshify::ui::NavItem::Playlists => {
                                             app.content_state =
                                                 ContentState::Loading(LoadAction::Playlists);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
                                         }
-                                        ui::NavItem::Home => {
+                                        joshify::ui::NavItem::Home => {
                                             app.content_state = ContentState::Home;
                                         }
-                                        ui::NavItem::Search => {
+                                        joshify::ui::NavItem::Search => {
                                             app.content_state =
                                                 ContentState::Loading(LoadAction::Search {
                                                     query: "Type to search...".to_string(),
                                                 });
                                         }
-                                        ui::NavItem::Library => {
+                                        joshify::ui::NavItem::Library => {
                                             app.content_state =
                                                 ContentState::Loading(LoadAction::Search {
                                                     query: "Loading library...".to_string(),
@@ -1527,7 +1476,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     uri: track.uri.clone(),
                                                     name: track.name.clone(),
                                                     artist: track.artist.clone(),
-                                                    context: app.current_context.clone(),
+                                                    _context: app.current_context.clone(),
                                                 });
 
                                                 if app.playback_mode == PlaybackMode::Local {
@@ -1614,7 +1563,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                                             name, track_index + 1
                                                                         ));
                                                                     }
-                                                                    Err(e) => {
+                                                                    Err(_e) => {
                                                                         // Fallback to single track
                                                                         match c.start_playback(vec![track.uri.clone()], None).await {
                                                                             Ok(_) => {
@@ -1725,8 +1674,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
                             if app.focus == FocusTarget::Sidebar {
                                 let current_idx = app.selected_nav as usize;
-                                let next_idx = (current_idx + 1) % ui::NavItem::all().len();
-                                app.selected_nav = ui::NavItem::all()[next_idx];
+                                let next_idx = (current_idx + 1) % joshify::ui::NavItem::all().len();
+                                app.selected_nav = joshify::ui::NavItem::all()[next_idx];
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list down based on current content
                                 let len = match &app.content_state {
@@ -1749,11 +1698,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 // Volume down when player focused
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = (app.player_state.volume.saturating_sub(5)
+                                        let new_vol = app.player_state.volume.saturating_sub(5)
                                             as u16
                                             * 65535
-                                            / 100)
-                                            .min(65535);
+                                            / 100;
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -1767,11 +1715,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             if app.focus == FocusTarget::Sidebar {
                                 let current_idx = app.selected_nav as usize;
                                 let next_idx = if current_idx == 0 {
-                                    ui::NavItem::all().len() - 1
+                                    joshify::ui::NavItem::all().len() - 1
                                 } else {
                                     current_idx - 1
                                 };
-                                app.selected_nav = ui::NavItem::all()[next_idx];
+                                app.selected_nav = joshify::ui::NavItem::all()[next_idx];
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list up based on current content
                                 let len = match &app.content_state {
@@ -1795,8 +1743,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
                                         let new_vol =
-                                            ((app.player_state.volume + 5) as u16 * 65535 / 100)
-                                                .min(65535);
+                                            (app.player_state.volume + 5) as u16 * 65535 / 100;
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -1864,9 +1811,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char('+') => {
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = ((app.player_state.volume + 5) as u16 * 65535
-                                        / 100)
-                                        .min(65535);
+                                    let new_vol = (app.player_state.volume + 5) as u16 * 65535
+                                        / 100;
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -1879,9 +1825,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
                                     let new_vol =
-                                        (app.player_state.volume.saturating_sub(5) as u16 * 65535
-                                            / 100)
-                                            .min(65535);
+                                        app.player_state.volume.saturating_sub(5) as u16 * 65535
+                                            / 100;
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -1907,7 +1852,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char('a') => {
                             // Add highlighted track to local queue
                             if let Some(ref highlighted) = app.highlighted_item {
-                                let entry = crate::state::queue_state::QueueEntry {
+                                let entry = joshify::state::queue_state::QueueEntry {
                                     uri: highlighted.uri.clone(),
                                     name: highlighted.name.clone(),
                                     artist: highlighted.artist.clone(),
@@ -1932,7 +1877,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     .current_artist_name
                                     .clone()
                                     .unwrap_or_default();
-                                let entry = crate::state::queue_state::QueueEntry {
+                                let entry = joshify::state::queue_state::QueueEntry {
                                     uri: track_uri.clone(),
                                     name,
                                     artist,
@@ -1949,7 +1894,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
 
                         // Settings
-                        crossterm::event::KeyCode::Char('c') => match setup::run_setup() {
+                        crossterm::event::KeyCode::Char('c') => match joshify::setup::run_setup() {
                             Ok(_) => {
                                 app.status_message =
                                     Some("Config updated - restart app to apply".to_string());

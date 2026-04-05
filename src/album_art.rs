@@ -20,6 +20,12 @@ pub struct AlbumArtCache {
     cache_dir: Option<PathBuf>,
 }
 
+impl Default for AlbumArtCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AlbumArtCache {
     pub fn new() -> Self {
         // Set up cache directory

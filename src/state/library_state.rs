@@ -33,7 +33,7 @@ impl LibraryState {
 
     /// Check if liked songs cache is stale (older than 5 minutes)
     pub fn liked_songs_stale(&self) -> bool {
-        self.liked_songs_fetched_at.map_or(true, |ts| {
+        self.liked_songs_fetched_at.is_none_or(|ts| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|now| now.as_secs() - ts > 300)
@@ -43,7 +43,7 @@ impl LibraryState {
 
     /// Check if playlists cache is stale (older than 5 minutes)
     pub fn playlists_stale(&self) -> bool {
-        self.playlists_fetched_at.map_or(true, |ts| {
+        self.playlists_fetched_at.is_none_or(|ts| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|now| now.as_secs() - ts > 300)

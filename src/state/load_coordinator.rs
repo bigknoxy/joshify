@@ -77,7 +77,7 @@ impl LoadCoordinator {
     pub fn is_stale(&self, action: &LoadAction, sequence: u64) -> bool {
         self.completed_sequences
             .get(action)
-            .map_or(false, |&last| sequence < last)
+            .is_some_and(|&last| sequence < last)
     }
 
     /// Cancel all pending tasks

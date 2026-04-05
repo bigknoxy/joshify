@@ -27,6 +27,8 @@ pub struct SearchState {
     pub error: Option<String>,
     /// Pending query that needs to be searched (after debounce)
     pub pending_query: Option<String>,
+    /// Auto-clear error after this timestamp (ms)
+    pub error_display_until_ms: Option<u64>,
 }
 
 impl SearchState {
@@ -43,6 +45,7 @@ impl SearchState {
             results: Vec::new(),
             error: None,
             pending_query: None,
+            error_display_until_ms: None,
         }
     }
 
@@ -57,6 +60,7 @@ impl SearchState {
         self.error = None;
         self.is_loading = false;
         self.pending_query = None;
+        self.error_display_until_ms = None;
     }
 
     /// Deactivate search overlay

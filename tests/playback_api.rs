@@ -97,7 +97,8 @@ fn test_error_string_matching() {
     for (error_msg, should_match) in test_cases {
         let matches = error_msg.contains("NO_ACTIVE_DEVICE")
             || error_msg.contains("no active device")
-            || error_msg.to_lowercase().contains("no active device");
+            || error_msg.to_lowercase().contains("no active device")
+            || error_msg.to_lowercase().contains("no_active_device");
 
         assert_eq!(
             matches, should_match,

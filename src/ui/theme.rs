@@ -216,7 +216,7 @@ impl Layout {
     }
 
     pub fn is_medium(width: u16) -> bool {
-        width >= 60 && width < 100
+        (60..100).contains(&width)
     }
 
     pub fn is_full(width: u16) -> bool {
@@ -257,9 +257,10 @@ pub mod symbols {
     pub const VOL_HIGH: &str = "🔊";
 
     // Repeat/Shuffle
-    pub const REPEAT: &str = "🔁";
-    pub const REPEAT_ONE: &str = "🔂";
-    pub const SHUFFLE: &str = "🔀";
+    pub const SHUFFLE: &str = "⇄";
+    pub const REPEAT: &str = "↻";
+    pub const REPEAT_ONE: &str = "↻¹";
+    pub const RADIO: &str = "📻";
 
     // Status
     pub const ACTIVE: &str = "●";

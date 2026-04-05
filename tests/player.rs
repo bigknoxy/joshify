@@ -8,7 +8,7 @@
 #[path = "../src/state/player_state.rs"]
 mod player_state;
 
-use player_state::{format_duration, PlayerState};
+use player_state::{format_duration, PlayerState, RepeatMode};
 
 #[test]
 fn test_format_duration() {
@@ -77,6 +77,8 @@ fn test_player_state_with_track() {
         current_track_uri: Some("spotify:track:abc123".to_string()),
         current_album_art_ascii: None,
         current_album_art_kitty: None,
+        shuffle: false,
+        repeat_mode: RepeatMode::Off,
     };
 
     assert!(state.is_playing);
@@ -120,6 +122,8 @@ fn test_player_state_no_track() {
         current_track_uri: None,
         current_album_art_ascii: None,
         current_album_art_kitty: None,
+        shuffle: false,
+        repeat_mode: RepeatMode::Off,
     };
 
     assert!(!state.is_playing);
@@ -147,6 +151,8 @@ fn test_player_state_episode_context() {
         current_track_uri: Some("spotify:episode:xyz789".to_string()),
         current_album_art_ascii: None,
         current_album_art_kitty: None,
+        shuffle: false,
+        repeat_mode: RepeatMode::Off,
     };
 
     assert!(state.is_playing);

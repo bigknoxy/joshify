@@ -5,7 +5,7 @@ use crate::state::search_state::SearchState;
 use crate::ui::theme::Catppuccin;
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 /// Render queue overlay with actual queue data
@@ -30,7 +30,7 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
     frame.render_widget(bg, overlay_area);
 
     // Build queue content
-    let content_area = Rect::new(
+    let _content_area = Rect::new(
         overlay_area.x + 1,
         overlay_area.y + 1,
         overlay_area.width - 2,
@@ -83,17 +83,19 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
             if let Some(ref item) = spotify_queue.currently_playing {
                 let (name, artist) = match item {
                     rspotify::model::PlayableItem::Track(track) => (
-                        track.name.as_str(),
+                        track.name.clone(),
                         track
                             .artists
                             .first()
-                            .map(|a| a.name.as_str())
-                            .unwrap_or("Unknown Artist"),
+                            .map(|a| a.name.clone())
+                            .unwrap_or_else(|| "Unknown Artist".to_string()),
                     ),
-                    rspotify::model::PlayableItem::Episode(episode) => {
-                        (episode.name.as_str(), episode.show.publisher.as_str())
+                    rspotify::model::PlayableItem::Episode(episode) =>
+                    {
+                        #[allow(deprecated)]
+                        (episode.name.clone(), episode.show.publisher.clone())
                     }
-                    _ => ("Unknown", "Unknown Artist"),
+                    _ => ("Unknown".to_string(), "Unknown Artist".to_string()),
                 };
                 lines.push(Line::styled(
                     format!("▶ Now: {} - {}", name, artist),
@@ -105,17 +107,19 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
             for (i, item) in spotify_queue.queue.iter().take(5).enumerate() {
                 let (name, artist) = match item {
                     rspotify::model::PlayableItem::Track(track) => (
-                        track.name.as_str(),
+                        track.name.clone(),
                         track
                             .artists
                             .first()
-                            .map(|a| a.name.as_str())
-                            .unwrap_or("Unknown Artist"),
+                            .map(|a| a.name.clone())
+                            .unwrap_or_else(|| "Unknown Artist".to_string()),
                     ),
-                    rspotify::model::PlayableItem::Episode(episode) => {
-                        (episode.name.as_str(), episode.show.publisher.as_str())
+                    rspotify::model::PlayableItem::Episode(episode) =>
+                    {
+                        #[allow(deprecated)]
+                        (episode.name.clone(), episode.show.publisher.clone())
                     }
-                    _ => ("Unknown", "Unknown Artist"),
+                    _ => ("Unknown".to_string(), "Unknown Artist".to_string()),
                 };
                 lines.push(Line::from(format!("{}. {} - {}", i + 1, name, artist)));
             }
@@ -131,9 +135,10 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
     }
 
     if queue_state.local_queue.is_empty()
-        && queue_state.spotify_queue.as_ref().map_or(true, |q| {
-            q.currently_playing.is_none() && q.queue.is_empty()
-        })
+        && queue_state
+            .spotify_queue
+            .as_ref()
+            .is_none_or(|q| q.currently_playing.is_none() && q.queue.is_empty())
     {
         lines.push(Line::styled("Queue is empty", Catppuccin::warning()));
         lines.push(Line::from(""));
@@ -213,13 +218,30 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
         .title_style(Catppuccin::focused());
     let inner = bg.inner(overlay_area);
     frame.render_widget(bg, overlay_area);
+
+    // Calculate available widths for content
+    let input_max_width = inner.width.saturating_sub(4) as usize;
+    let separator_width = inner.width.saturating_sub(4) as usize;
+    let result_max_width = inner.width.saturating_sub(6) as usize;
+
     let mut lines: Vec<Line> = Vec::new();
 
-    // Search input line with cursor
-    let cursor_char = if search_state.query.is_empty() {
-        "Type to search..."
+    // Search input line with truncation
+    let display_query = if search_state.query.is_empty() {
+        "Type to search...".to_string()
+    } else if search_state.query.chars().count() > input_max_width {
+        let skip = search_state
+            .query
+            .chars()
+            .count()
+            .saturating_sub(input_max_width)
+            .saturating_sub(1);
+        format!(
+            "…{}",
+            search_state.query.chars().skip(skip).collect::<String>()
+        )
     } else {
-        &search_state.query
+        search_state.query.clone()
     };
 
     let input_style = if search_state.query.is_empty() {
@@ -228,11 +250,11 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
         Catppuccin::search_input().add_modifier(Modifier::BOLD)
     };
 
-    lines.push(Line::styled(format!("  🔍 {}", cursor_char), input_style));
+    lines.push(Line::styled(format!("  🔍 {}", display_query), input_style));
 
-    // Separator
+    // Dynamic separator width
     lines.push(Line::styled(
-        "  ──────────────────────────────────────────────",
+        format!("  {}", "─".repeat(separator_width)),
         Catppuccin::dim(),
     ));
 
@@ -243,7 +265,20 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             Catppuccin::loading().add_modifier(Modifier::BOLD),
         ));
     } else if let Some(ref error) = search_state.error {
-        lines.push(Line::styled(format!("  ❌ {}", error), Catppuccin::error()));
+        let error_text = if error.chars().count() > result_max_width {
+            let skip = error
+                .chars()
+                .count()
+                .saturating_sub(result_max_width)
+                .saturating_sub(1);
+            format!("…{}", error.chars().skip(skip).collect::<String>())
+        } else {
+            error.clone()
+        };
+        lines.push(Line::styled(
+            format!("  ❌ {}", error_text),
+            Catppuccin::error(),
+        ));
     } else if search_state.query.is_empty() {
         lines.push(Line::styled(
             "  Start typing to search Spotify...",
@@ -280,7 +315,17 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             };
 
             let text = format!("{} {}. {} - {}", marker, i + 1, track.name, track.artist);
-            lines.push(Line::styled(text, style));
+            let truncated = if text.chars().count() > result_max_width {
+                let skip = text
+                    .chars()
+                    .count()
+                    .saturating_sub(result_max_width)
+                    .saturating_sub(1);
+                format!("…{}", text.chars().skip(skip).collect::<String>())
+            } else {
+                text
+            };
+            lines.push(Line::styled(truncated, style));
         }
 
         if search_state.results.len() > 25 {
@@ -299,10 +344,14 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     ));
 
     let widget = Paragraph::new(lines).alignment(Alignment::Left);
-    frame.render_widget(widget, overlay_area);
+    frame.render_widget(widget, inner);
 
-    // Set cursor position for input
-    let cursor_x = overlay_area.x + 3 + search_state.query.chars().count() as u16;
-    let cursor_y = overlay_area.y + 1;
-    frame.set_cursor_position((cursor_x.min(overlay_area.x + overlay_width - 2), cursor_y));
+    // Set cursor position for input (clamped to inner area)
+    let cursor_visible_len = display_query.chars().count() as u16;
+    let cursor_x = inner.x + 3 + cursor_visible_len;
+    let cursor_y = inner.y;
+    frame.set_cursor_position((
+        cursor_x.min(inner.x + inner.width.saturating_sub(2)),
+        cursor_y,
+    ));
 }
