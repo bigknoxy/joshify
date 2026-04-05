@@ -46,15 +46,10 @@ impl ConnectManager {
             ..ConnectConfig::default()
         };
 
-        let (spirc, spirc_task) = Spirc::new(
-            connect_config,
-            session.clone(),
-            credentials,
-            player,
-            mixer,
-        )
-        .await
-        .context("Failed to create Spotify Connect receiver")?;
+        let (spirc, spirc_task) =
+            Spirc::new(connect_config, session.clone(), credentials, player, mixer)
+                .await
+                .context("Failed to create Spotify Connect receiver")?;
 
         let spirc = Arc::new(spirc);
 
@@ -68,10 +63,7 @@ impl ConnectManager {
         self.spirc = Some(spirc);
         self.task_handle = Some(handle);
 
-        tracing::info!(
-            "Spotify Connect active as '{}'",
-            self.device_name
-        );
+        tracing::info!("Spotify Connect active as '{}'", self.device_name);
 
         Ok(())
     }

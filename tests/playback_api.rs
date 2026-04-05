@@ -18,7 +18,11 @@ async fn test_current_playback_no_device() {
     let result = client.current_playback().await;
 
     // Should not error, should return None when no device active
-    assert!(result.is_ok(), "current_playback should not error: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "current_playback should not error: {:?}",
+        result
+    );
 }
 
 #[tokio::test]
@@ -36,8 +40,12 @@ async fn test_available_devices() {
     let result = client.available_devices().await;
 
     // Should not error
-    assert!(result.is_ok(), "available_devices should not error: {:?}", result);
-    
+    assert!(
+        result.is_ok(),
+        "available_devices should not error: {:?}",
+        result
+    );
+
     // If successful, should return a Vec (possibly empty)
     if let Ok(devices) = result {
         println!("Found {} devices", devices.len());
@@ -56,14 +64,18 @@ async fn test_transfer_playback() {
     };
 
     let client = SpotifyClient::new(&config).await.unwrap();
-    
+
     // First get devices
     let devices = client.available_devices().await.unwrap();
-    
+
     if let Some(device) = devices.first() {
         if let Some(ref device_id) = device.id {
             let result = client.transfer_playback(device_id).await;
-            assert!(result.is_ok(), "transfer_playback should not error: {:?}", result);
+            assert!(
+                result.is_ok(),
+                "transfer_playback should not error: {:?}",
+                result
+            );
         }
     }
 }
@@ -71,7 +83,7 @@ async fn test_transfer_playback() {
 #[test]
 fn test_error_string_matching() {
     // Test that our error string matching works for various error formats
-    
+
     let test_cases = vec![
         ("No active device found", true),
         ("NO_ACTIVE_DEVICE", true),
@@ -83,10 +95,14 @@ fn test_error_string_matching() {
     ];
 
     for (error_msg, should_match) in test_cases {
-        let matches = error_msg.contains("NO_ACTIVE_DEVICE") 
+        let matches = error_msg.contains("NO_ACTIVE_DEVICE")
             || error_msg.contains("no active device")
             || error_msg.to_lowercase().contains("no active device");
-        
-        assert_eq!(matches, should_match, "Error matching failed for: {}", error_msg);
+
+        assert_eq!(
+            matches, should_match,
+            "Error matching failed for: {}",
+            error_msg
+        );
     }
 }

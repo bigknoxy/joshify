@@ -41,9 +41,19 @@ struct HighlightedItem {
 /// Playback context - what collection the current track came from
 #[derive(Debug, Clone)]
 enum PlaybackContext {
-    Playlist { uri: String, name: String, track_index: usize },
-    Album { uri: String, name: String },
-    Artist { uri: String, name: String },
+    Playlist {
+        uri: String,
+        name: String,
+        track_index: usize,
+    },
+    Album {
+        uri: String,
+        name: String,
+    },
+    Artist {
+        uri: String,
+        name: String,
+    },
 }
 
 /// Application state
@@ -74,7 +84,8 @@ struct App {
     playback_mode: PlaybackMode,
     local_session: Option<Arc<LocalSession>>,
     local_player: Option<Arc<LocalPlayer>>,
-    player_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>>,
+    player_event_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>>,
 }
 
 impl App {
@@ -190,7 +201,10 @@ impl App {
                         tokio::spawn(async move {
                             match cache.get_or_fetch(&art_url).await {
                                 Some(image_data) => {
-                                    tracing::debug!("Fetched album art for {}", art_uri_for_closure);
+                                    tracing::debug!(
+                                        "Fetched album art for {}",
+                                        art_uri_for_closure
+                                    );
                                     let _ =
                                         tx_art_clone.send((art_uri_for_closure, image_data)).await;
                                 }
@@ -507,7 +521,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
     async fn init_local_player(
         token: &str,
-    ) -> Option<(Arc<LocalSession>, Arc<LocalPlayer>, tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>)> {
+    ) -> Option<(
+        Arc<LocalSession>,
+        Arc<LocalPlayer>,
+        tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>,
+    )> {
         match LocalSession::from_access_token(token).await {
             Ok(local_session) => {
                 let session = Arc::new(local_session);
@@ -536,7 +554,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             let credentials = Credentials::with_access_token(token.clone());
             let mut connect_mgr = connect::ConnectManager::new(connect::default_device_name());
             if let Err(e) = connect_mgr
-                .start(&session.session, credentials, player.player(), player.mixer())
+                .start(
+                    &session.session,
+                    credentials,
+                    player.player(),
+                    player.mixer(),
+                )
                 .await
             {
                 tracing::warn!("Spotify Connect failed to start: {}", e);
@@ -550,9 +573,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system time before epoch")
                 .as_millis() as u64;
-            app.status_message = Some(
-                "Connected to Spotify - Local playback active - Press ? for help".to_string(),
-            );
+            app.status_message =
+                Some("Connected to Spotify - Local playback active - Press ? for help".to_string());
             tracing::info!("Local playback initialized successfully");
         } else {
             app.playback_mode = PlaybackMode::Remote;
@@ -572,7 +594,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let mut connect_mgr =
                             connect::ConnectManager::new(connect::default_device_name());
                         let _ = connect_mgr
-                            .start(&session.session, credentials, player.player(), player.mixer())
+                            .start(
+                                &session.session,
+                                credentials,
+                                player.player(),
+                                player.mixer(),
+                            )
                             .await;
                     }
                 }
@@ -588,9 +615,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system time before epoch")
                 .as_millis() as u64;
-            app.status_message = Some(
-                "Connected to Spotify - Local playback active - Press ? for help".to_string(),
-            );
+            app.status_message =
+                Some("Connected to Spotify - Local playback active - Press ? for help".to_string());
             tracing::info!("Local playback restored from cache");
         }
     }
@@ -705,22 +731,26 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 if let Some(ref player) = app.local_player {
                                     match player.load_uri(&next_entry.uri, true, 0) {
                                         Ok(_) => {
-                                            app.player_state.current_track_name = Some(next_entry.name.clone());
-                                            app.player_state.current_artist_name = Some(next_entry.artist.clone());
-                                            app.player_state.current_track_uri = Some(next_entry.uri.clone());
+                                            app.player_state.current_track_name =
+                                                Some(next_entry.name.clone());
+                                            app.player_state.current_artist_name =
+                                                Some(next_entry.artist.clone());
+                                            app.player_state.current_track_uri =
+                                                Some(next_entry.uri.clone());
                                             app.player_state.is_playing = true;
                                             app.player_state.progress_ms = 0;
                                             app.status_message = Some(format!(
                                                 "Playing next from queue: {}",
                                                 next_entry.name
                                             ));
-                                            tracing::info!("Auto-advanced to queue item: {}", next_entry.name);
+                                            tracing::info!(
+                                                "Auto-advanced to queue item: {}",
+                                                next_entry.name
+                                            );
                                         }
                                         Err(e) => {
-                                            app.status_message = Some(format!(
-                                                "Queue playback error: {}",
-                                                e
-                                            ));
+                                            app.status_message =
+                                                Some(format!("Queue playback error: {}", e));
                                             tracing::warn!("Queue playback failed: {}", e);
                                         }
                                     }
@@ -736,7 +766,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                         // Debounce album art fetch (2 second cooldown to prevent storm during seeking)
                         let art_cooldown_ms = 2000u64;
-                        let can_fetch_art = now.saturating_sub(app.last_art_fetch_ms) >= art_cooldown_ms
+                        let can_fetch_art = now.saturating_sub(app.last_art_fetch_ms)
+                            >= art_cooldown_ms
                             && app.last_fetched_art_uri.as_ref() != Some(&audio_item.uri);
 
                         if can_fetch_art {
@@ -750,13 +781,23 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 let uri = audio_item.uri.clone();
                                 tokio::spawn(async move {
                                     if let Some(track_id) = uri.strip_prefix("spotify:track:") {
-                                        if let Ok(id) = rspotify::model::TrackId::from_id(track_id) {
-                                            if let Ok(track) = c.lock().await.oauth.track(id, None).await {
-                                                if let Some(art_url) = track.album.images.first().map(|i| i.url.clone()) {
+                                        if let Ok(id) = rspotify::model::TrackId::from_id(track_id)
+                                        {
+                                            if let Ok(track) =
+                                                c.lock().await.oauth.track(id, None).await
+                                            {
+                                                if let Some(art_url) = track
+                                                    .album
+                                                    .images
+                                                    .first()
+                                                    .map(|i| i.url.clone())
+                                                {
                                                     if let Ok(resp) = reqwest::get(&art_url).await {
                                                         if let Ok(data) = resp.bytes().await {
                                                             tracing::info!("Album art received: {} bytes for {}", data.len(), uri);
-                                                            let _ = tx_art.send((uri, data.to_vec())).await;
+                                                            let _ = tx_art
+                                                                .send((uri, data.to_vec()))
+                                                                .await;
                                                         }
                                                     }
                                                 }
@@ -840,7 +881,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 let _ = tx_clone.send(ContentState::SearchResultsLive(items)).await;
                             }
                             Err(e) => {
-                                let _ = tx_clone.send(ContentState::SearchErrorLive(format!("Search failed: {}", e))).await;
+                                let _ = tx_clone
+                                    .send(ContentState::SearchErrorLive(format!(
+                                        "Search failed: {}",
+                                        e
+                                    )))
+                                    .await;
                             }
                         }
                     });
@@ -855,115 +901,118 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if should_draw {
             app.last_frame_time_ms = now;
             terminal.draw(|frame| {
-            let area = frame.area();
+                let area = frame.area();
 
-            // Check minimum terminal size
-            if area.width < 50 || area.height < 20 {
-                let warning = Paragraph::new(
-                    "Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.",
-                )
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Yellow));
-                frame.render_widget(warning, area);
-                return;
-            }
+                // Check minimum terminal size
+                if area.width < 50 || area.height < 20 {
+                    let warning = Paragraph::new(
+                        "Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.",
+                    )
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::Yellow));
+                    frame.render_widget(warning, area);
+                    return;
+                }
 
-            // Status bar at top (if present)
-            let top_area = if let Some(ref msg) = app.status_message {
-                let [top, rest] =
-                    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-                let status = Paragraph::new(msg.as_str())
-                    .style(Style::default().fg(Color::Black).bg(Color::Blue));
-                frame.render_widget(status, top);
-                rest
-            } else {
-                area
-            };
+                // Status bar at top (if present)
+                let top_area = if let Some(ref msg) = app.status_message {
+                    let [top, rest] =
+                        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+                    let status = Paragraph::new(msg.as_str())
+                        .style(Style::default().fg(Color::Black).bg(Color::Blue));
+                    frame.render_widget(status, top);
+                    rest
+                } else {
+                    area
+                };
 
-            // Sidebar: fixed width for logo + nav
-            let sidebar_width = 20u16;
+                // Sidebar: fixed width for logo + nav
+                let sidebar_width = 20u16;
 
-            // Split into sidebar and main content
-            let [sidebar, main] =
-                Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)])
-                    .areas(top_area);
+                // Split into sidebar and main content
+                let [sidebar, main] =
+                    Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)])
+                        .areas(top_area);
 
-            // Player bar: 5 rows at bottom (includes album art)
-            let player_bar_height = 5u16;
-            let [main_content, player_bar] =
-                Layout::vertical([Constraint::Min(0), Constraint::Length(player_bar_height)])
-                    .areas(main);
+                // Player bar: 5 rows at bottom (includes album art)
+                let player_bar_height = 5u16;
+                let [main_content, player_bar] =
+                    Layout::vertical([Constraint::Min(0), Constraint::Length(player_bar_height)])
+                        .areas(main);
 
-            // Render all components with focus highlighting
-            let sidebar_focused = app.focus == FocusTarget::Sidebar;
-            let main_focused = app.focus == FocusTarget::MainContent;
-            let player_focused = app.focus == FocusTarget::PlayerBar;
+                // Render all components with focus highlighting
+                let sidebar_focused = app.focus == FocusTarget::Sidebar;
+                let main_focused = app.focus == FocusTarget::MainContent;
+                let player_focused = app.focus == FocusTarget::PlayerBar;
 
-            ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused);
-            ui::render_main_view(
-                frame,
-                main_content,
-                &app.content_state,
-                app.selected_index,
-                app.scroll_offset,
-                app.is_authenticated,
-                if main_focused { Color::Yellow } else { Color::Green },
-                app.player_state.current_track_uri.as_deref(),
-            );
-
-            let track_name = app
-                .player_state
-                .current_track_name
-                .as_deref()
-                .unwrap_or("Not Playing");
-            let artist_name = app
-                .player_state
-                .current_artist_name
-                .as_deref()
-                .unwrap_or("");
-
-            ui::render_player_bar(
-                frame,
-                player_bar,
-                track_name,
-                artist_name,
-                app.player_state.is_playing,
-                app.player_state.progress_ms,
-                app.player_state.duration_ms,
-                app.player_state.volume,
-                app.player_state.current_album_art_url.as_deref(),
-                app.player_state.current_album_art_ascii.as_ref().map(|l| l.as_slice()),
-                app.queue_state.local_queue.len(),
-                player_focused,
-            );
-
-            // Overlays (rendered last so they appear on top)
-            if app.show_queue {
-                ui::render_queue_overlay(frame, area, &app.queue_state);
-            }
-            if let Some(ref help_lines) = app.help_lines {
-                ui::render_help_overlay(frame, area, help_lines);
-            }
-
-            // Search overlay - clean modal with live results
-            if app.search_state.is_active {
-                ui::render_search_overlay(
+                ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused);
+                ui::render_main_view(
                     frame,
-                    area,
-                    &app.search_state,
+                    main_content,
+                    &app.content_state,
+                    app.selected_index,
+                    app.scroll_offset,
+                    app.is_authenticated,
+                    if main_focused {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    },
+                    app.player_state.current_track_uri.as_deref(),
                 );
-            }
 
-            // Store frame area for mouse handling
-            app.area = Some(area);
+                let track_name = app
+                    .player_state
+                    .current_track_name
+                    .as_deref()
+                    .unwrap_or("Not Playing");
+                let artist_name = app
+                    .player_state
+                    .current_artist_name
+                    .as_deref()
+                    .unwrap_or("");
 
-            // Show cursor only when search overlay is active
-            if app.search_state.is_active {
-                let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
-            } else {
-                let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Hide);
-            }
-        })?;
+                ui::render_player_bar(
+                    frame,
+                    player_bar,
+                    track_name,
+                    artist_name,
+                    app.player_state.is_playing,
+                    app.player_state.progress_ms,
+                    app.player_state.duration_ms,
+                    app.player_state.volume,
+                    app.player_state.current_album_art_url.as_deref(),
+                    app.player_state
+                        .current_album_art_ascii
+                        .as_ref()
+                        .map(|l| l.as_slice()),
+                    app.queue_state.local_queue.len(),
+                    player_focused,
+                );
+
+                // Overlays (rendered last so they appear on top)
+                if app.show_queue {
+                    ui::render_queue_overlay(frame, area, &app.queue_state);
+                }
+                if let Some(ref help_lines) = app.help_lines {
+                    ui::render_help_overlay(frame, area, help_lines);
+                }
+
+                // Search overlay - clean modal with live results
+                if app.search_state.is_active {
+                    ui::render_search_overlay(frame, area, &app.search_state);
+                }
+
+                // Store frame area for mouse handling
+                app.area = Some(area);
+
+                // Show cursor only when search overlay is active
+                if app.search_state.is_active {
+                    let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+                } else {
+                    let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Hide);
+                }
+            })?;
         }
 
         // Write album art image directly to stdout (bypasses ratatui buffer)
@@ -992,7 +1041,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 Ok(devs) => devs,
                                 Err(e) => {
                                     let _ = tx_clone
-                                        .send(ContentState::Error(format!("Failed to load devices: {}", e)))
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load devices: {}",
+                                            e
+                                        )))
                                         .await;
                                     return;
                                 }
@@ -1093,29 +1145,45 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             let guard = c.lock().await;
                             match guard.playlist_get_items(&id_clone).await {
                                 Ok(items) => {
-                                    let tracks: Vec<TrackListItem> = items.into_iter().filter_map(|pi| {
-                                        pi.track.and_then(|t| {
-                                            if let rspotify::model::PlayableItem::Track(track) = t {
-                                                track.id.map(|id| {
-                                                    let artist = track.artists.first()
-                                                        .map(|a| a.name.clone())
-                                                        .unwrap_or_else(|| {
-                                                            tracing::warn!("track '{}' has no artists", track.name);
-                                                            String::new()
-                                                        });
-                                                    TrackListItem {
-                                                        name: track.name,
-                                                        artist,
-                                                        uri: format!("spotify:track:{}", id.id()),
-                                                    }
-                                                })
-                                            } else {
-                                                None
-                                            }
+                                    let tracks: Vec<TrackListItem> = items
+                                        .into_iter()
+                                        .filter_map(|pi| {
+                                            pi.track.and_then(|t| {
+                                                if let rspotify::model::PlayableItem::Track(track) =
+                                                    t
+                                                {
+                                                    track.id.map(|id| {
+                                                        let artist = track
+                                                            .artists
+                                                            .first()
+                                                            .map(|a| a.name.clone())
+                                                            .unwrap_or_else(|| {
+                                                                tracing::warn!(
+                                                                    "track '{}' has no artists",
+                                                                    track.name
+                                                                );
+                                                                String::new()
+                                                            });
+                                                        TrackListItem {
+                                                            name: track.name,
+                                                            artist,
+                                                            uri: format!(
+                                                                "spotify:track:{}",
+                                                                id.id()
+                                                            ),
+                                                        }
+                                                    })
+                                                } else {
+                                                    None
+                                                }
+                                            })
                                         })
-                                    }).collect();
+                                        .collect();
                                     let _ = tx_clone
-                                        .send(ContentState::PlaylistTracks(name_clone.clone(), tracks))
+                                        .send(ContentState::PlaylistTracks(
+                                            name_clone.clone(),
+                                            tracks,
+                                        ))
                                         .await;
                                 }
                                 Err(e) => {
@@ -1196,7 +1264,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     // GLOBAL QUIT: Check FIRST so it works from ANY context
                     // Standard TUI convention: q or Ctrl+C to quit (like lazygit, btop, etc.)
                     if key.code == crossterm::event::KeyCode::Char('q')
-                        || key.code == crossterm::event::KeyCode::Char('c') && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                        || key.code == crossterm::event::KeyCode::Char('c')
+                            && key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL)
                     {
                         break;
                     }
@@ -1245,7 +1316,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         is_recommendation: false,
                                     });
                                     let pos = app.queue_state.total_count();
-                                    app.status_message = Some(format!("Added to queue (#{}): {}", pos, track.name));
+                                    app.status_message =
+                                        Some(format!("Added to queue (#{}): {}", pos, track.name));
                                 }
                             }
                             crossterm::event::KeyCode::Char(c) => {
@@ -1271,10 +1343,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             crossterm::event::KeyCode::Char('D') => {
                                 // Remove highlighted item from queue
                                 if let Some(ref highlighted) = app.highlighted_item {
-                                    let idx = app.queue_state.local_queue.iter().position(|e| e.uri == highlighted.uri);
+                                    let idx = app
+                                        .queue_state
+                                        .local_queue
+                                        .iter()
+                                        .position(|e| e.uri == highlighted.uri);
                                     if let Some(i) = idx {
                                         app.queue_state.local_queue.remove(i);
-                                        app.status_message = Some(format!("Removed from queue: {}", highlighted.name));
+                                        app.status_message = Some(format!(
+                                            "Removed from queue: {}",
+                                            highlighted.name
+                                        ));
                                     }
                                 }
                                 continue;
@@ -1289,43 +1368,61 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     // Device selector overlay - handle navigation and dismissal
                     if matches!(app.content_state, ContentState::DeviceSelector(_)) {
                         match key.code {
-                            crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('d') => {
+                            crossterm::event::KeyCode::Esc
+                            | crossterm::event::KeyCode::Char('d') => {
                                 app.content_state = ContentState::Home;
                                 continue;
                             }
-                            crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
-                                if let ContentState::DeviceSelector(ref entries) = app.content_state {
+                            crossterm::event::KeyCode::Char('j')
+                            | crossterm::event::KeyCode::Down => {
+                                if let ContentState::DeviceSelector(ref entries) = app.content_state
+                                {
                                     if !entries.is_empty() {
-                                        app.selected_index = (app.selected_index + 1).min(entries.len() - 1);
+                                        app.selected_index =
+                                            (app.selected_index + 1).min(entries.len() - 1);
                                     }
                                 }
                                 continue;
                             }
-                            crossterm::event::KeyCode::Char('k') | crossterm::event::KeyCode::Up => {
+                            crossterm::event::KeyCode::Char('k')
+                            | crossterm::event::KeyCode::Up => {
                                 if app.selected_index > 0 {
                                     app.selected_index -= 1;
                                 }
                                 continue;
                             }
                             crossterm::event::KeyCode::Enter => {
-                                if let ContentState::DeviceSelector(ref entries) = app.content_state {
+                                if let ContentState::DeviceSelector(ref entries) = app.content_state
+                                {
                                     if !entries.is_empty() && app.selected_index < entries.len() {
                                         match &entries[app.selected_index] {
-                                            crate::state::app_state::DeviceEntry::ThisDevice { .. } => {
+                                            crate::state::app_state::DeviceEntry::ThisDevice {
+                                                ..
+                                            } => {
                                                 app.playback_mode = PlaybackMode::Local;
-                                                app.status_message = Some("Switched to local playback".to_string());
+                                                app.status_message =
+                                                    Some("Switched to local playback".to_string());
                                             }
-                                            crate::state::app_state::DeviceEntry::Remote(device) => {
+                                            crate::state::app_state::DeviceEntry::Remote(
+                                                device,
+                                            ) => {
                                                 if let Some(ref device_id) = device.id {
                                                     if let Some(ref client) = client {
                                                         let c = client.lock().await;
                                                         match c.transfer_playback(device_id).await {
                                                             Ok(_) => {
-                                                                app.playback_mode = PlaybackMode::Remote;
-                                                                app.status_message = Some(format!("Switched to {}", device.name));
+                                                                app.playback_mode =
+                                                                    PlaybackMode::Remote;
+                                                                app.status_message = Some(format!(
+                                                                    "Switched to {}",
+                                                                    device.name
+                                                                ));
                                                             }
                                                             Err(e) => {
-                                                                app.status_message = Some(format!("Failed to switch: {}", e));
+                                                                app.status_message = Some(format!(
+                                                                    "Failed to switch: {}",
+                                                                    e
+                                                                ));
                                                             }
                                                         }
                                                     }
@@ -1438,9 +1535,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     if let Some(ref player) = app.local_player {
                                                         match player.load_uri(&track.uri, true, 0) {
                                                             Ok(_) => {
-                                                                app.player_state.current_track_name = Some(track.name.clone());
-                                                                app.player_state.current_artist_name = Some(track.artist.clone());
-                                                                app.player_state.current_track_uri = Some(track.uri.clone());
+                                                                app.player_state
+                                                                    .current_track_name =
+                                                                    Some(track.name.clone());
+                                                                app.player_state
+                                                                    .current_artist_name =
+                                                                    Some(track.artist.clone());
+                                                                app.player_state
+                                                                    .current_track_uri =
+                                                                    Some(track.uri.clone());
                                                                 app.player_state.is_playing = true;
                                                                 app.player_state.progress_ms = 0;
                                                                 app.status_message = Some(format!(
@@ -1456,7 +1559,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                             }
                                                         }
                                                     } else {
-                                                        app.status_message = Some("Local player not initialized".to_string());
+                                                        app.status_message = Some(
+                                                            "Local player not initialized"
+                                                                .to_string(),
+                                                        );
                                                     }
                                                 } else {
                                                     // Remote playback via Spotify API
@@ -1464,18 +1570,37 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         let c = client.lock().await;
 
                                                         // Try to transfer to first available device
-                                                        if let Ok(devices) = c.available_devices().await {
+                                                        if let Ok(devices) =
+                                                            c.available_devices().await
+                                                        {
                                                             if let Some(device) = devices.first() {
-                                                                if let Some(ref device_id) = device.id {
-                                                                    let _ = c.transfer_playback(device_id).await;
+                                                                if let Some(ref device_id) =
+                                                                    device.id
+                                                                {
+                                                                    let _ = c
+                                                                        .transfer_playback(
+                                                                            device_id,
+                                                                        )
+                                                                        .await;
                                                                 }
                                                             }
                                                         }
 
                                                         // Use context playback if we have a playlist context
-                                                        if let Some(PlaybackContext::Playlist { uri, name, track_index }) = &app.current_context {
-                                                            let playlist_id_str = uri.strip_prefix("spotify:playlist:").unwrap_or(uri);
-                                                            if let Ok(playlist_id) = rspotify::model::PlaylistId::from_id(playlist_id_str) {
+                                                        if let Some(PlaybackContext::Playlist {
+                                                            uri,
+                                                            name,
+                                                            track_index,
+                                                        }) = &app.current_context
+                                                        {
+                                                            let playlist_id_str = uri
+                                                                .strip_prefix("spotify:playlist:")
+                                                                .unwrap_or(uri);
+                                                            if let Ok(playlist_id) =
+                                                                rspotify::model::PlaylistId::from_id(
+                                                                    playlist_id_str,
+                                                                )
+                                                            {
                                                                 // Start playback from the selected track position in the playlist
                                                                 match c.oauth.start_context_playback(
                                                                     rspotify::model::PlayContextId::from(playlist_id),
@@ -1506,9 +1631,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                                 }
                                                             } else {
                                                                 // Invalid playlist ID, fallback to single track
-                                                                match c.start_playback(vec![track.uri.clone()], None).await {
+                                                                match c
+                                                                    .start_playback(
+                                                                        vec![track.uri.clone()],
+                                                                        None,
+                                                                    )
+                                                                    .await
+                                                                {
                                                                     Ok(_) => {
-                                                                        app.status_message = Some(format!("Playing: {}", track.name));
+                                                                        app.status_message =
+                                                                            Some(format!(
+                                                                                "Playing: {}",
+                                                                                track.name
+                                                                            ));
                                                                     }
                                                                     Err(e) => {
                                                                         app.status_message = Some(format!(
@@ -1519,12 +1654,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                                 }
                                                             }
                                                         } else {
-                                                            match c.start_playback(vec![track.uri.clone()], None).await {
+                                                            match c
+                                                                .start_playback(
+                                                                    vec![track.uri.clone()],
+                                                                    None,
+                                                                )
+                                                                .await
+                                                            {
                                                                 Ok(_) => {
-                                                                    app.status_message = Some(format!(
-                                                                        "Playing: {}",
-                                                                        track.name
-                                                                    ));
+                                                                    app.status_message =
+                                                                        Some(format!(
+                                                                            "Playing: {}",
+                                                                            track.name
+                                                                        ));
                                                                 }
                                                                 Err(e) => {
                                                                     app.status_message = Some(format!(
@@ -1607,7 +1749,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 // Volume down when player focused
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = (app.player_state.volume.saturating_sub(5) as u16 * 65535 / 100).min(65535);
+                                        let new_vol = (app.player_state.volume.saturating_sub(5)
+                                            as u16
+                                            * 65535
+                                            / 100)
+                                            .min(65535);
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -1648,7 +1794,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 // Volume up when player focused
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = ((app.player_state.volume + 5) as u16 * 65535 / 100).min(65535);
+                                        let new_vol =
+                                            ((app.player_state.volume + 5) as u16 * 65535 / 100)
+                                                .min(65535);
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -1682,7 +1830,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             // Seek backward 10 seconds
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_pos = app.player_state.progress_ms.saturating_sub(10000);
+                                    let new_pos =
+                                        app.player_state.progress_ms.saturating_sub(10000);
                                     player.seek(new_pos);
                                 }
                             } else if let Some(ref client) = client {
@@ -1715,7 +1864,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char('+') => {
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = ((app.player_state.volume + 5) as u16 * 65535 / 100).min(65535);
+                                    let new_vol = ((app.player_state.volume + 5) as u16 * 65535
+                                        / 100)
+                                        .min(65535);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -1727,7 +1878,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char('-') => {
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = (app.player_state.volume.saturating_sub(5) as u16 * 65535 / 100).min(65535);
+                                    let new_vol =
+                                        (app.player_state.volume.saturating_sub(5) as u16 * 65535
+                                            / 100)
+                                            .min(65535);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -1768,8 +1922,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 ));
                             } else if let Some(ref track_uri) = app.player_state.current_track_uri {
                                 // Fallback: add currently playing track
-                                let name = app.player_state.current_track_name.clone().unwrap_or_default();
-                                let artist = app.player_state.current_artist_name.clone().unwrap_or_default();
+                                let name = app
+                                    .player_state
+                                    .current_track_name
+                                    .clone()
+                                    .unwrap_or_default();
+                                let artist = app
+                                    .player_state
+                                    .current_artist_name
+                                    .clone()
+                                    .unwrap_or_default();
                                 let entry = crate::state::queue_state::QueueEntry {
                                     uri: track_uri.clone(),
                                     name,
@@ -1779,7 +1941,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 };
                                 let queue_pos = app.queue_state.total_count() + 1;
                                 app.queue_state.add(entry);
-                                app.status_message = Some(format!("Added current track to queue (#{queue_pos})"));
+                                app.status_message =
+                                    Some(format!("Added current track to queue (#{queue_pos})"));
                             } else {
                                 app.status_message = Some("No track to add".to_string());
                             }

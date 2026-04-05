@@ -44,7 +44,7 @@ impl SpotifyClient {
             .oauth
             .playlist_items_manual(pid, None, None, None, None)
             .await;
-        
+
         match result {
             Ok(r) => {
                 tracing::debug!("Got {} playlist items", r.items.len());

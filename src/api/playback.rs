@@ -14,43 +14,49 @@ impl SpotifyClient {
         // Make raw API call to get JSON response
         use std::collections::HashMap;
         let params: HashMap<&str, &str> = HashMap::new();
-        let result: Result<String, rspotify::ClientError> = self.oauth.api_get("me/player", &params).await;
-        
+        let result: Result<String, rspotify::ClientError> =
+            self.oauth.api_get("me/player", &params).await;
+
         match result {
             Ok(json_str) => {
                 // Check for empty response (no active playback)
                 if json_str.is_empty() || json_str == "null" {
                     return Ok(None);
                 }
-                
+
                 // Try to parse as CurrentPlaybackContext
                 match serde_json::from_str::<CurrentPlaybackContext>(&json_str) {
                     Ok(ctx) => Ok(Some(ctx)),
                     Err(e) => {
                         // Deserialization failed - analyze what Spotify returned
                         let err_str = e.to_string();
-                        
+
                         // Check for device object with is_active: false
                         // This means "devices exist but nothing playing"
                         if json_str.contains("is_active") && json_str.contains("false") {
                             return Ok(None);
                         }
-                        
+
                         // Check for PlayableItem variant mismatch (ads, unknown types)
-                        if err_str.contains("PlayableItem") || err_str.contains("untagged") || err_str.contains("variant") {
+                        if err_str.contains("PlayableItem")
+                            || err_str.contains("untagged")
+                            || err_str.contains("variant")
+                        {
                             return Ok(None);
                         }
-                        
+
                         // Check if it's an empty or null response
                         if json_str.is_empty() || json_str == "null" || json_str.contains("{}") {
                             return Ok(None);
                         }
-                        
+
                         // Check for "data does not match any variant" - generic serde error
-                        if err_str.contains("data does not match") || err_str.contains("does not match any variant") {
+                        if err_str.contains("data does not match")
+                            || err_str.contains("does not match any variant")
+                        {
                             return Ok(None);
                         }
-                        
+
                         // Fallback: ANY deserialization error = no playback
                         Ok(None)
                     }
@@ -60,13 +66,12 @@ impl SpotifyClient {
                 // API call failed
                 let err_str = e.to_string();
                 let err_debug = format!("{:?}", e);
-                
+
                 let err_lower = err_str.to_lowercase();
                 let err_debug_lower = err_debug.to_lowercase();
-                
+
                 // Match device-related errors
-                let is_device_error = 
-                    err_lower.contains("no active device") 
+                let is_device_error = err_lower.contains("no active device")
                     || err_str.contains("NO_ACTIVE_DEVICE")
                     || err_lower.contains("no device")
                     || err_lower.contains("no player")
@@ -77,7 +82,7 @@ impl SpotifyClient {
                     || err_str.contains("400")
                     || err_debug_lower.contains("player")
                     || err_debug_lower.contains("device");
-                
+
                 if is_device_error {
                     Ok(None)
                 } else {
@@ -94,9 +99,9 @@ impl SpotifyClient {
         tracing::debug!("Found {} devices", devices.len());
         for (i, device) in devices.iter().enumerate() {
             tracing::debug!(
-                "  [{}] {} (type: {:?}, id: {}) - active: {}, restricted: {}", 
-                i, 
-                device.name, 
+                "  [{}] {} (type: {:?}, id: {}) - active: {}, restricted: {}",
+                i,
+                device.name,
                 device._type,
                 device.id.as_ref().unwrap_or(&"none".to_string()),
                 device.is_active,

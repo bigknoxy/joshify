@@ -5,10 +5,7 @@
 
 use anyhow::{Context, Result};
 use librespot::core::{
-    authentication::Credentials,
-    cache::Cache,
-    config::SessionConfig,
-    session::Session,
+    authentication::Credentials, cache::Cache, config::SessionConfig, session::Session,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,7 +47,10 @@ impl LocalSession {
             .await
             .context("Failed to connect to Spotify")?;
 
-        tracing::info!("librespot session connected for user: {}", session.username());
+        tracing::info!(
+            "librespot session connected for user: {}",
+            session.username()
+        );
 
         Ok(Self { session, cache })
     }
@@ -60,9 +60,7 @@ impl LocalSession {
         let session_config = SessionConfig::default();
         let cache = create_cache()?;
 
-        let credentials = cache
-            .credentials()
-            .context("No cached credentials found")?;
+        let credentials = cache.credentials().context("No cached credentials found")?;
 
         let session = Session::new(session_config, Some(cache.clone()));
         session
@@ -70,7 +68,10 @@ impl LocalSession {
             .await
             .context("Failed to connect with cached credentials")?;
 
-        tracing::info!("librespot session restored from cache for user: {}", session.username());
+        tracing::info!(
+            "librespot session restored from cache for user: {}",
+            session.username()
+        );
 
         Ok(Self { session, cache })
     }
