@@ -346,12 +346,8 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     let widget = Paragraph::new(lines).alignment(Alignment::Left);
     frame.render_widget(widget, inner);
 
-    // Set cursor position for input (clamped to inner area)
-    let cursor_visible_len = display_query.chars().count() as u16;
-    let cursor_x = inner.x + 3 + cursor_visible_len;
+    // Set cursor position for input - after the search icon and space
+    let cursor_x = inner.x + 3 + (display_query.chars().count() as u16);
     let cursor_y = inner.y;
-    frame.set_cursor_position((
-        cursor_x.min(inner.x + inner.width.saturating_sub(2)),
-        cursor_y,
-    ));
+    frame.set_cursor_position((cursor_x, cursor_y));
 }

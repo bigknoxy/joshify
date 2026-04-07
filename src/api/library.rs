@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use rspotify::clients::{BaseClient, OAuthClient};
-use rspotify::model::Market;
+
 
 use super::SpotifyClient;
 
@@ -66,7 +66,7 @@ impl SpotifyClient {
     ) -> Result<Vec<rspotify::model::FullTrack>> {
         use rspotify::clients::BaseClient;
 
-        tracing::debug!("Searching Spotify for: '{}' (market=FromToken)", query);
+        tracing::debug!("Searching Spotify for: '{}'", query);
 
         // Attempt token refresh before search if token is expired
         if let Err(e) = self.oauth.auto_reauth().await {
@@ -78,7 +78,7 @@ impl SpotifyClient {
             .search(
                 query,
                 rspotify::model::SearchType::Track,
-                Some(Market::FromToken),
+                None,
                 None,
                 Some(track_limit),
                 None,
