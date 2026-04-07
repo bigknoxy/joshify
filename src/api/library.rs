@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use rspotify::clients::{BaseClient, OAuthClient};
+use rspotify::model::Market;
 
 use super::SpotifyClient;
 
@@ -65,7 +66,7 @@ impl SpotifyClient {
     ) -> Result<Vec<rspotify::model::FullTrack>> {
         use rspotify::clients::BaseClient;
 
-        tracing::debug!("Searching Spotify for: '{}'", query);
+        tracing::debug!("Searching Spotify for: '{}' (market=FromToken)", query);
 
         // Attempt token refresh before search if token is expired
         if let Err(e) = self.oauth.auto_reauth().await {
@@ -77,7 +78,7 @@ impl SpotifyClient {
             .search(
                 query,
                 rspotify::model::SearchType::Track,
-                None,
+                Some(Market::FromToken),
                 None,
                 Some(track_limit),
                 None,
@@ -187,6 +188,17 @@ mod tests {
             assert!(limit > 0, "Limit must be positive: {}", limit);
             assert!(limit <= 50, "Limit must not exceed 50: {}", limit);
         }
+    }
+
+    #[test]
+    fn test_search_market_parameter() {
+        use rspotify::model::{Country, Market};
+        
+        let market = Market::FromToken;
+        assert_eq!(Into::<&'static str>::into(market), "from_token");
+        
+        let market_us = Market::Country(Country::UnitedStates);
+        assert_eq!(Into::<&'static str>::into(market_us), "US");
     }
 
     #[test]
