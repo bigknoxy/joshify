@@ -1,7 +1,7 @@
 //! Spotify client creation and authentication
 
 use anyhow::Result;
-use rspotify::{AuthCodeSpotify, Credentials, OAuth};
+use rspotify::{AuthCodeSpotify, Config, Credentials, OAuth};
 use std::collections::HashSet;
 
 use crate::auth::{load_credentials, OAuthConfig};
@@ -12,7 +12,7 @@ pub struct SpotifyClient {
 }
 
 impl SpotifyClient {
-    /// Create a new Spotify client
+    /// Create a new Spotify client with auto token refresh enabled
     pub async fn new(config: &OAuthConfig) -> Result<Self> {
         let creds = Credentials::new(&config.client_id, &config.client_secret);
 
@@ -38,7 +38,13 @@ impl SpotifyClient {
             ..Default::default()
         };
 
-        let oauth = AuthCodeSpotify::new(creds, oauth_config);
+        // Enable automatic token refreshing
+        let rspotify_config = Config {
+            token_refreshing: true,
+            ..Default::default()
+        };
+
+        let oauth = AuthCodeSpotify::with_config(creds, oauth_config, rspotify_config);
 
         let client = Self { oauth };
 
@@ -60,7 +66,19 @@ impl SpotifyClient {
                     *token_guard = Some(token);
                     tracing::debug!("Loaded cached credentials");
                 } else {
-                    tracing::warn!("Cached token expired - re-authentication needed");
+                    tracing::warn!("Cached token expired - will attempt refresh on next API call");
+                    // Even if expired, set the token so rspotify can attempt refresh
+                    let token = rspotify::Token {
+                        access_token: creds.access_token,
+                        refresh_token: creds.refresh_token,
+                        expires_at: Some(
+                            chrono::DateTime::from_timestamp(creds.expires_at as i64, 0)
+                                .unwrap_or(chrono::DateTime::UNIX_EPOCH),
+                        ),
+                        expires_in: chrono::TimeDelta::seconds(0),
+                        scopes: HashSet::new(),
+                    };
+                    *token_guard = Some(token);
                 }
             }
         }

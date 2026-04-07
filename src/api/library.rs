@@ -63,7 +63,14 @@ impl SpotifyClient {
         query: &str,
         track_limit: u32,
     ) -> Result<Vec<rspotify::model::FullTrack>> {
+        use rspotify::clients::BaseClient;
+
         tracing::debug!("Searching Spotify for: '{}'", query);
+
+        // Attempt token refresh before search if token is expired
+        if let Err(e) = self.oauth.auto_reauth().await {
+            tracing::warn!("Token refresh failed before search: {:?}", e);
+        }
 
         let result = self
             .oauth
@@ -101,6 +108,15 @@ impl SpotifyClient {
                     );
                 } else if err_str.contains("429") || err_debug.contains("429") {
                     tracing::warn!("Rate limited by Spotify API");
+                } else if err_str.contains("400") || err_debug.contains("400") {
+                    tracing::warn!("Bad request to Spotify API - check query format");
+                    // Try to extract the actual error message from Spotify
+                    if let Some(json_start) = err_debug.find("{") {
+                        if let Some(json_end) = err_debug.rfind("}") {
+                            let json = &err_debug[json_start..=json_end];
+                            tracing::warn!("Spotify error response: {}", json);
+                        }
+                    }
                 }
 
                 Err(e).context(format!("Search for '{}' failed", query))
