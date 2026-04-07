@@ -18,6 +18,7 @@ pub struct CliArgs {
     pub refresh_token: Option<String>,
     pub redirect_uri: Option<String>,
     pub help: bool,
+    pub test_search: bool,
 }
 
 impl CliArgs {
@@ -72,6 +73,10 @@ impl CliArgs {
                     args.help = true;
                     i += 1;
                 }
+                "--test-search" => {
+                    args.test_search = true;
+                    i += 1;
+                }
                 _ => {
                     i += 1;
                 }
@@ -93,6 +98,7 @@ impl CliArgs {
         println!("    --access-token <TOK>   Spotify Access Token (or SPOTIFY_ACCESS_TOKEN)");
         println!("    --refresh-token <TOK>  Spotify Refresh Token (or SPOTIFY_REFRESH_TOKEN)");
         println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
+        println!("    --test-search          Test search API and exit");
         println!("    --help, -h             Show this help message");
         println!();
         println!("ENVIRONMENT VARIABLES:");

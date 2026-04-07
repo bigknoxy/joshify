@@ -247,6 +247,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --test-search flag (test search API without TUI)
+    if args.test_search {
+        return run_search_test(args).await;
+    }
+
     // Initialize tracing to file (before terminal init to avoid polluting TUI)
     let log_dir = std::env::var("HOME")
         .map(|h| format!("{}/.cache/joshify", h))
@@ -1199,22 +1204,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             crossterm::event::KeyCode::Down => {
                                 app.search_state.select_down(app.search_state.results.len());
                             }
-                            crossterm::event::KeyCode::Char('a') => {
-                                // Add selected track to queue
-                                if let Some(track) = app.search_state.selected_track() {
-                                    app.queue_state.add(joshify::state::queue_state::QueueEntry {
-                                        uri: track.uri.clone(),
-                                        name: track.name.clone(),
-                                        artist: track.artist.clone(),
-                                        added_by_user: true,
-                                        is_recommendation: false,
-                                    });
-                                    let pos = app.queue_state.total_count();
-                                    app.status_message =
-                                        Some(format!("Added to queue (#{}): {}", pos, track.name));
-                                }
-                            }
                             crossterm::event::KeyCode::Char(c) => {
+                                // All characters go to search input when search is active
                                 app.search_state.insert_char(c);
                             }
                             _ => {}
@@ -1980,4 +1971,99 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Test search API functionality without TUI
+async fn run_search_test(args: CliArgs) -> Result<()> {
+    use joshify::api::SpotifyClient;
+    use joshify::auth::OAuthConfig;
+
+    println!("🔍 Testing Spotify Search API...\n");
+
+    // Load config
+    let config = OAuthConfig::from_args(&args);
+
+    // Check for credentials
+    if config.client_id.is_empty() || config.client_secret.is_empty() {
+        eprintln!("❌ Error: Client ID and Secret required");
+        eprintln!("   Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars");
+        eprintln!("   Or use --client-id and --client-secret flags");
+        std::process::exit(1);
+    }
+
+    // Check for access token
+    let has_token = std::env::var("SPOTIFY_ACCESS_TOKEN").is_ok()
+        || args.access_token.is_some();
+
+    if !has_token {
+        eprintln!("❌ Error: Access token required");
+        eprintln!("   Set SPOTIFY_ACCESS_TOKEN env var");
+        eprintln!("   Or use --access-token flag");
+        std::process::exit(1);
+    }
+
+    println!("✅ Credentials found");
+    println!("📡 Connecting to Spotify API...");
+
+    // Create client
+    let client = match SpotifyClient::new(&config).await {
+        Ok(c) => {
+            println!("✅ Connected to Spotify API");
+            c
+        }
+        Err(e) => {
+            eprintln!("❌ Connection failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Test searches
+    let test_queries = vec![
+        "abba",
+        "beatles",
+        "taylor swift",
+        "rock & roll",
+        "テスト", // Japanese characters
+    ];
+
+    println!("\n🎵 Running test searches...\n");
+
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for query in test_queries {
+        print!("   Searching '{}': ", query);
+        match client.search(query, 5).await {
+            Ok(tracks) => {
+                if tracks.is_empty() {
+                    println!("⚠️  No results (may be region-locked)");
+                } else {
+                    println!("✅ {} results", tracks.len());
+                    for (i, track) in tracks.iter().take(3).enumerate() {
+                        let artist = track.artists.first()
+                            .map(|a| a.name.as_str())
+                            .unwrap_or("Unknown");
+                        println!("      {}. {} - {}", i + 1, artist, track.name);
+                    }
+                    success_count += 1;
+                }
+            }
+            Err(e) => {
+                println!("❌ Failed: {}", e);
+                fail_count += 1;
+            }
+        }
+    }
+
+    println!("\n📊 Test Results:");
+    println!("   ✅ Passed: {}", success_count);
+    println!("   ❌ Failed: {}", fail_count);
+
+    if fail_count > 0 {
+        println!("\n💡 Check logs at ~/.cache/joshify/joshify.log for details");
+        std::process::exit(1);
+    } else {
+        println!("\n🎉 All searches working!");
+        Ok(())
+    }
 }
