@@ -75,6 +75,7 @@ impl SearchState {
         self.cursor_pos += 1;
         self.results.clear();
         self.error = None;
+        self.is_loading = false;
         self.selected_index = 0;
         self.scroll_offset = 0;
     }
@@ -133,6 +134,7 @@ impl SearchState {
     pub fn set_results(&mut self, results: Vec<TrackListItem>) {
         self.results = results;
         self.is_loading = false;
+        self.pending_query = None;
         self.selected_index = 0;
         self.scroll_offset = 0;
     }
@@ -141,6 +143,7 @@ impl SearchState {
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
         self.is_loading = false;
+        self.pending_query = None;
         self.results.clear();
     }
 
@@ -368,6 +371,46 @@ mod tests {
         state.is_active = true;
         state.deactivate();
         assert!(!state.is_active);
+    }
+
+    #[test]
+    fn test_pending_query_cleared_on_results() {
+        let mut state = SearchState::new();
+        state.pending_query = Some("test".to_string());
+        state.set_results(vec![TrackListItem {
+            name: "Test".to_string(),
+            artist: "Artist".to_string(),
+            uri: "spotify:track:123".to_string(),
+        }]);
+        assert!(state.pending_query.is_none());
+    }
+
+    #[test]
+    fn test_pending_query_cleared_on_error() {
+        let mut state = SearchState::new();
+        state.pending_query = Some("test".to_string());
+        state.set_error("error".to_string());
+        assert!(state.pending_query.is_none());
+    }
+
+    #[test]
+    fn test_insert_char_resets_loading() {
+        let mut state = SearchState::new();
+        state.is_loading = true;
+        state.insert_char('a');
+        assert!(!state.is_loading);
+    }
+
+    #[test]
+    fn test_insert_char_clears_results() {
+        let mut state = SearchState::new();
+        state.results.push(TrackListItem {
+            name: "Test".to_string(),
+            artist: "Artist".to_string(),
+            uri: "spotify:track:123".to_string(),
+        });
+        state.insert_char('a');
+        assert!(state.results.is_empty());
     }
 
     #[test]

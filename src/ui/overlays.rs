@@ -346,9 +346,22 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     let widget = Paragraph::new(lines).alignment(Alignment::Left);
     frame.render_widget(widget, inner);
 
-    // Set cursor position - use actual cursor_pos from search_state
-    // The input line starts at inner.x + 3 (after "🔍 ")
-    let cursor_x = inner.x + 3 + (search_state.cursor_pos as u16);
+    // Set cursor position accounting for truncation
+    // When query is truncated, display shows "…{last N chars}" but cursor_pos is for full query
+    let cursor_x = if search_state.query.chars().count() > input_max_width {
+        // Calculate how many characters were skipped in truncation
+        let skip = search_state
+            .query
+            .chars()
+            .count()
+            .saturating_sub(input_max_width)
+            .saturating_sub(1);
+        // Visible cursor = actual position - skipped chars + 1 (for "…")
+        inner.x + 3 + 1 + (search_state.cursor_pos.saturating_sub(skip) as u16)
+    } else {
+        // No truncation - use raw cursor_pos
+        inner.x + 3 + (search_state.cursor_pos as u16)
+    };
     let cursor_y = inner.y;
     frame.set_cursor_position((cursor_x, cursor_y));
 }

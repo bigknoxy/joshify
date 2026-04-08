@@ -545,12 +545,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if let Ok(state) = rx.try_recv() {
             match state {
                 ContentState::SearchResultsLive(results) => {
-                    if app.search_state.is_active {
+                    // Only apply results if they match current query (prevent race condition)
+                    // When typing rapidly, multiple searches fire - we only want the latest
+                    if app.search_state.is_active 
+                       && app.search_state.pending_query.as_ref() == Some(&app.search_state.query) {
                         app.search_state.set_results(results);
                     }
                 }
                 ContentState::SearchErrorLive(error) => {
-                    if app.search_state.is_active {
+                    // Only show error if it matches current query (prevent stale errors)
+                    if app.search_state.is_active 
+                       && app.search_state.pending_query.as_ref() == Some(&app.search_state.query) {
                         app.search_state.set_error(error);
                         app.search_state.error_display_until_ms = Some(now + 3000);
                     }
