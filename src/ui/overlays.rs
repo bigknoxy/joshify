@@ -98,7 +98,7 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
                 lines.push(Line::from(""));
             }
 
-            for (i, item) in spotify_queue.queue.iter().take(10).enumerate() {
+            for (i, item) in spotify_queue.queue.iter().take(15).enumerate() {
                 let (name, artist) = match item {
                     rspotify::model::PlayableItem::Track(track) => (
                         track.name.clone(),
@@ -120,7 +120,7 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
                 lines.push(Line::from(truncated));
             }
 
-            if spotify_queue.queue.len() > 10 {
+            if spotify_queue.queue.len() > 15 {
                 lines.push(Line::styled(
                     format!("... and {} more", spotify_queue.queue.len() - 10),
                     Catppuccin::dim(),
@@ -363,7 +363,7 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
 
         // Render results with selection
         let max_visible = (inner.height as usize).saturating_sub(6);
-        let results_to_show = search_state.results.iter().take(10).enumerate();
+        let results_to_show = search_state.results.iter().take(15).enumerate();
 
         for (i, track) in results_to_show {
             if i < search_state.scroll_offset {
@@ -386,7 +386,7 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             lines.push(Line::styled(truncated, style));
         }
 
-        if search_state.results.len() > 10 {
+        if search_state.results.len() > 15 {
             lines.push(Line::styled(
                 format!("  ... and {} more", search_state.results.len() - 10),
                 Catppuccin::dim(),

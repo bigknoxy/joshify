@@ -26,7 +26,9 @@ fn truncate(text: &str, max_width: usize) -> String {
 /// Get a display message from a LoadAction (owned version)
 fn load_action_display_owned(action: &LoadAction) -> String {
     match action {
-        LoadAction::LikedSongs => "Loading liked songs...".to_string(),
+        LoadAction::LikedSongs | LoadAction::LikedSongsPage { .. } => {
+            "Loading liked songs...".to_string()
+        }
         LoadAction::Playlists => "Loading playlists...".to_string(),
         LoadAction::PlaylistTracks { name, .. } => format!("Loading {}...", name),
         LoadAction::Search { query } => format!("Searching: {}", query),
@@ -34,7 +36,7 @@ fn load_action_display_owned(action: &LoadAction) -> String {
     }
 }
 
-/// Render a list of tracks
+/// Render a list of tracks with optional "load more" indicator
 fn render_track_list(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -44,6 +46,7 @@ fn render_track_list(
     title: &str,
     _border_color: Color,
     playing_uri: Option<&str>,
+    more_available: Option<u32>,
 ) {
     if tracks.is_empty() {
         let widget = Paragraph::new(format!("{} No tracks found", symbols::MUSIC_NOTE))
@@ -149,6 +152,25 @@ fn render_track_list(
 
     let list = List::new(items);
     frame.render_widget(list, list_area);
+
+    // Show "load more" indicator when there are additional tracks
+    if let Some(remaining) = more_available {
+        let load_more_height = 1u16;
+        let load_more_area = Rect::new(
+            list_area.x,
+            list_area.y + list_area.height.saturating_sub(load_more_height),
+            list_area.width,
+            load_more_height,
+        );
+        let load_more_text = format!(
+            "  {} {} more tracks (Enter or ↓ to load)",
+            symbols::ARROW_DOWN,
+            remaining
+        );
+        let load_more =
+            Paragraph::new(load_more_text).style(Catppuccin::dim().add_modifier(Modifier::ITALIC));
+        frame.render_widget(load_more, load_more_area);
+    }
 }
 
 /// Render a list of playlists
@@ -383,19 +405,9 @@ pub fn render_main_view(
                 );
             frame.render_widget(widget, area);
         }
-        ContentState::LikedSongs(tracks)
-        | ContentState::PlaylistTracks(_, tracks)
-        | ContentState::SearchResults(_, tracks) => {
-            let title = match content_state {
-                ContentState::LikedSongs(_) => format!(" {} Liked Songs", symbols::HEART_FILLED),
-                ContentState::PlaylistTracks(name, _) => {
-                    format!(" {} {}", symbols::DISC, name)
-                }
-                ContentState::SearchResults(query, _) => {
-                    format!(" {} Results: {}", symbols::SEARCH, query)
-                }
-                _ => unreachable!(),
-            };
+        ContentState::LikedSongs(tracks) => {
+            let title = format!(" {} Liked Songs", symbols::HEART_FILLED);
+            let more_available: Option<u32> = None;
             render_track_list(
                 frame,
                 area,
@@ -405,6 +417,60 @@ pub fn render_main_view(
                 &title,
                 border_color,
                 playing_uri,
+                more_available,
+            );
+        }
+        ContentState::LikedSongsPage {
+            tracks,
+            total,
+            next_offset,
+        } => {
+            let remaining = total.saturating_sub(tracks.len() as u32);
+            let title = format!(
+                " {} Liked Songs ({}/{})",
+                symbols::HEART_FILLED,
+                tracks.len(),
+                total
+            );
+            let more_available = next_offset.map(|_| remaining);
+            render_track_list(
+                frame,
+                area,
+                tracks,
+                selected_index,
+                scroll_offset,
+                &title,
+                border_color,
+                playing_uri,
+                more_available,
+            );
+        }
+        ContentState::PlaylistTracks(name, tracks) => {
+            let title = format!(" {} {}", symbols::DISC, name);
+            render_track_list(
+                frame,
+                area,
+                tracks,
+                selected_index,
+                scroll_offset,
+                &title,
+                border_color,
+                playing_uri,
+                None,
+            );
+        }
+        ContentState::SearchResults(query, tracks) => {
+            let title = format!(" {} Results: {}", symbols::SEARCH, query);
+            render_track_list(
+                frame,
+                area,
+                tracks,
+                selected_index,
+                scroll_offset,
+                &title,
+                border_color,
+                playing_uri,
+                None,
             );
         }
         ContentState::Playlists(playlists) => {

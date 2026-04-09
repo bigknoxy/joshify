@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LoadAction {
     LikedSongs,
+    LikedSongsPage { offset: u32 },
     Playlists,
     PlaylistTracks { name: String, id: String },
     Search { query: String },

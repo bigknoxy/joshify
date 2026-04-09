@@ -156,14 +156,43 @@ impl SpotifyClient {
         Ok(())
     }
 
-    /// Set volume (0-100)
+    /// Set volume (0-100). Discovers an active device if needed.
     pub async fn set_volume(&self, volume_percent: u32) -> Result<()> {
         let vol = volume_percent.min(100) as u8;
-        self.oauth
-            .volume(vol, None)
-            .await
-            .context("Failed to set volume")?;
-        Ok(())
+        tracing::info!("Setting volume to {}%", vol);
+        match self.oauth.volume(vol, None).await {
+            Ok(()) => {
+                tracing::info!("Volume set to {}% successfully", vol);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("Direct volume set failed ({}), trying with device transfer", e);
+                let devices = self.oauth.device().await.map_err(|de| {
+                    anyhow::anyhow!("Failed to get devices for volume: {}", de)
+                })?;
+                if let Some(device) = devices.first() {
+                    if let Some(ref device_id) = device.id {
+                        tracing::info!("Transferring playback to {} for volume", device.name);
+                        self.oauth
+                            .transfer_playback(device_id, Some(true))
+                            .await
+                            .map_err(|te| {
+                                anyhow::anyhow!("Failed to transfer for volume: {}", te)
+                            })?;
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        self.oauth.volume(vol, Some(device_id)).await.map_err(|ve| {
+                            anyhow::anyhow!("Failed to set volume after transfer: {}", ve)
+                        })
+                    } else {
+                        Err(anyhow::anyhow!("No device ID available for volume"))
+                    }
+                } else {
+                    Err(anyhow::anyhow!(
+                        "No active device found. Open Spotify on a device first."
+                    ))
+                }
+            }
+        }
     }
 
     /// Seek to position

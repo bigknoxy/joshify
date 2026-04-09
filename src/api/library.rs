@@ -6,17 +6,51 @@ use rspotify::clients::{BaseClient, OAuthClient};
 use super::SpotifyClient;
 
 impl SpotifyClient {
-    /// Get user's liked tracks
+    /// Get user's liked tracks (first page)
     pub async fn current_user_saved_tracks(
         &self,
         limit: u32,
     ) -> Result<Vec<rspotify::model::SavedTrack>> {
+        let effective_limit = limit.min(50);
+        tracing::info!("Fetching liked tracks (limit={})", effective_limit);
         let result = self
             .oauth
-            .current_user_saved_tracks_manual(None, None, None)
+            .current_user_saved_tracks_manual(
+                Some(rspotify::model::Market::FromToken),
+                Some(effective_limit),
+                Some(0),
+            )
             .await
             .context("Failed to get liked tracks")?;
-        Ok(result.items.into_iter().take(limit as usize).collect())
+        Ok(result.items)
+    }
+
+    /// Get user's liked tracks with pagination support
+    /// Returns (tracks, total_count, next_offset)
+    pub async fn current_user_saved_tracks_paginated(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<rspotify::model::SavedTrack>, u32, Option<u32>)> {
+        let effective_limit = limit.min(50);
+        tracing::info!("Fetching liked tracks page (limit={}, offset={})", effective_limit, offset);
+        let result = self
+            .oauth
+            .current_user_saved_tracks_manual(
+                Some(rspotify::model::Market::FromToken),
+                Some(effective_limit),
+                Some(offset),
+            )
+            .await
+            .context("Failed to get liked tracks")?;
+        let total = result.total;
+        let next_offset = if result.next.is_some() {
+            Some(offset + effective_limit)
+        } else {
+            None
+        };
+        tracing::info!("Got {} liked tracks (total={}, next_offset={:?})", result.items.len(), total, next_offset);
+        Ok((result.items, total, next_offset))
     }
 
     /// Get user's playlists
