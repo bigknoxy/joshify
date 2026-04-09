@@ -77,6 +77,7 @@ struct App {
     local_player: Option<Arc<LocalPlayer>>,
     player_event_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>>,
+    loading_more_liked_songs: bool,
 }
 
 impl App {
@@ -109,6 +110,7 @@ impl App {
             local_session: None,
             local_player: None,
             player_event_rx: None,
+            loading_more_liked_songs: false,
         }
     }
 
@@ -130,7 +132,7 @@ impl App {
 
     fn update_highlighted_item(&mut self) {
         let tracks = match &self.content_state {
-            ContentState::LikedSongs(t) => Some((t.as_slice(), None::<&str>)),
+            ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => Some((t.as_slice(), None::<&str>)),
             ContentState::PlaylistTracks(name, t) => Some((t.as_slice(), Some(name.as_str()))),
             ContentState::SearchResults(_, t) => Some((t.as_slice(), None::<&str>)),
             _ => None,
@@ -579,7 +581,38 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     }
                 }
                 other => {
-                    app.content_state = other;
+                    app.loading_more_liked_songs = false;
+                    if let ContentState::LikedSongsPage { tracks: new_tracks, total, next_offset } = other {
+                        match &app.content_state {
+                            ContentState::LikedSongsPage { tracks, .. } => {
+                                let mut combined = tracks.clone();
+                                combined.extend(new_tracks);
+                                let mut seen = std::collections::HashSet::new();
+                                combined.retain(|t| seen.insert(t.uri.clone()));
+                                app.content_state = ContentState::LikedSongsPage {
+                                    tracks: combined,
+                                    total,
+                                    next_offset,
+                                };
+                            }
+                            ContentState::LikedSongs(existing_tracks) => {
+                                let mut combined = existing_tracks.clone();
+                                combined.extend(new_tracks);
+                                let mut seen = std::collections::HashSet::new();
+                                combined.retain(|t| seen.insert(t.uri.clone()));
+                                app.content_state = ContentState::LikedSongsPage {
+                                    tracks: combined,
+                                    total,
+                                    next_offset,
+                                };
+                            }
+                            _ => {
+                                // Discard stale LikedSongsPage — user navigated away
+                            }
+                        }
+                    } else {
+                        app.content_state = other;
+                    }
                 }
             }
         }
@@ -803,7 +836,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     let tx_clone = tx.clone();
                     tokio::spawn(async move {
                         let guard = c.lock().await;
-                        match guard.search(&query, 10).await {
+                        match guard.search(&query, 15).await {
                             Ok(tracks) => {
                                 tracing::info!(
                                     "Search spawned {} results for '{}'",
@@ -1066,8 +1099,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let tx_clone = tx.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
-                            match guard.current_user_saved_tracks(50).await {
-                                Ok(tracks) => {
+                            match guard.current_user_saved_tracks_paginated(50, 0).await {
+                                Ok((tracks, total, next_offset)) => {
                                     let items: Vec<TrackListItem> = tracks
                                         .into_iter()
                                         .filter_map(|t| {
@@ -1077,13 +1110,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     .artists
                                                     .first()
                                                     .map(|a| a.name.clone())
-                                                    .unwrap_or_else(|| {
-                                                        tracing::warn!(
-                                                            "track '{}' has no artists",
-                                                            t.track.name
-                                                        );
-                                                        String::new()
-                                                    });
+                                                    .unwrap_or_else(|| String::new());
                                                 TrackListItem {
                                                     name: t.track.name,
                                                     artist,
@@ -1092,7 +1119,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             })
                                         })
                                         .collect();
-                                    let _ = tx_clone.send(ContentState::LikedSongs(items)).await;
+                                    let _ = tx_clone.send(ContentState::LikedSongsPage {
+                                        tracks: items,
+                                        total,
+                                        next_offset,
+                                    }).await;
                                 }
                                 Err(e) => {
                                     let _ = tx_clone
@@ -1105,6 +1136,48 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                         });
                         app.content_state = ContentState::LoadingInProgress(LoadAction::LikedSongs);
+                    }
+                    LoadAction::LikedSongsPage { offset } => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.current_user_saved_tracks_paginated(50, offset).await {
+                                Ok((tracks, total, next_offset)) => {
+                                    let items: Vec<TrackListItem> = tracks
+                                        .into_iter()
+                                        .filter_map(|t| {
+                                            t.track.id.map(|id| {
+                                                let artist = t
+                                                    .track
+                                                    .artists
+                                                    .first()
+                                                    .map(|a| a.name.clone())
+                                                    .unwrap_or_else(|| String::new());
+                                                TrackListItem {
+                                                    name: t.track.name,
+                                                    artist,
+                                                    uri: format!("spotify:track:{}", id.id()),
+                                                }
+                                            })
+                                        })
+                                        .collect();
+                                    let _ = tx_clone.send(ContentState::LikedSongsPage {
+                                        tracks: items,
+                                        total,
+                                        next_offset,
+                                    }).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load more liked songs: {}",
+                                            e
+                                        )))
+                                        .await;
+                                }
+                            }
+                        });
                     }
                     LoadAction::Playlists => {
                         let c = client.clone();
@@ -1213,7 +1286,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let query_clone = query.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
-                            match guard.search(&query_clone, 10).await {
+                            match guard.search(&query_clone, 15).await {
                                 Ok(tracks) => {
                                     let items: Vec<TrackListItem> = tracks
                                         .into_iter()
@@ -1572,6 +1645,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             match app.focus {
                                 FocusTarget::Sidebar => {
                                     // Select current nav item - show content
+                                    app.loading_more_liked_songs = false;
                                     match app.selected_nav {
                                         joshify::ui::NavItem::LikedSongs => {
                                             app.content_state =
@@ -1603,9 +1677,48 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                 }
                                 FocusTarget::MainContent => {
-                                    // Act on current content - play selected track
+                                    if let ContentState::LikedSongsPage { tracks, next_offset: Some(offset), .. } = &app.content_state {
+                                        if !app.loading_more_liked_songs && app.selected_index >= tracks.len().saturating_sub(3) {
+                                            let load_offset = *offset;
+                                            app.loading_more_liked_songs = true;
+                                            if let Some(ref client) = client {
+                                                let c = client.clone();
+                                                let tx_clone = tx.clone();
+                                                tokio::spawn(async move {
+                                                    let guard = c.lock().await;
+                                                    match guard.current_user_saved_tracks_paginated(50, load_offset).await {
+                                                        Ok((tracks, total, next_offset)) => {
+                                                            let items: Vec<TrackListItem> = tracks
+                                                                .into_iter()
+                                                                .filter_map(|t| {
+                                                                    t.track.id.map(|id| {
+                                                                        let artist = t.track.artists.first().map(|a| a.name.clone()).unwrap_or_default();
+                                                                        TrackListItem {
+                                                                            name: t.track.name,
+                                                                            artist,
+                                                                            uri: format!("spotify:track:{}", id.id()),
+                                                                        }
+                                                                    })
+                                                                })
+                                                                .collect();
+                                                            let _ = tx_clone.send(ContentState::LikedSongsPage {
+                                                                tracks: items,
+                                                                total,
+                                                                next_offset,
+                                                            }).await;
+                                                        }
+                                                        Err(e) => {
+                                                            tracing::warn!("Failed to load more liked songs on Enter: {}", e);
+                                                            let _ = tx_clone.send(ContentState::Error(format!("Failed to load more liked songs: {}", e))).await;
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
                                     match &app.content_state {
                                         ContentState::LikedSongs(tracks)
+                                        | ContentState::LikedSongsPage { tracks, .. }
                                         | ContentState::PlaylistTracks(_, tracks)
                                         | ContentState::SearchResults(_, tracks) => {
                                             if !tracks.is_empty()
@@ -1779,7 +1892,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list down based on current content
                                 let len = match &app.content_state {
-                                    ContentState::LikedSongs(t) => t.len(),
+                                    ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => t.len(),
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
@@ -1793,6 +1906,45 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                     // Update highlighted item
                                     app.update_highlighted_item();
+                                    if let ContentState::LikedSongsPage { next_offset: Some(offset), .. } = &app.content_state {
+                                        if !app.loading_more_liked_songs && app.selected_index >= len.saturating_sub(5) {
+                                            let load_offset = *offset;
+                                            app.loading_more_liked_songs = true;
+                                            if let Some(ref client) = client {
+                                                let c = client.clone();
+                                                let tx_clone = tx.clone();
+                                                tokio::spawn(async move {
+                                                    let guard = c.lock().await;
+                                                    match guard.current_user_saved_tracks_paginated(50, load_offset).await {
+                                                        Ok((tracks, total, next_offset)) => {
+                                                            let items: Vec<TrackListItem> = tracks
+                                                                .into_iter()
+                                                                .filter_map(|t| {
+                                                                    t.track.id.map(|id| {
+                                                                        let artist = t.track.artists.first().map(|a| a.name.clone()).unwrap_or_default();
+                                                                        TrackListItem {
+                                                                            name: t.track.name,
+                                                                            artist,
+                                                                            uri: format!("spotify:track:{}", id.id()),
+                                                                        }
+                                                                    })
+                                                                })
+                                                                .collect();
+                                                            let _ = tx_clone.send(ContentState::LikedSongsPage {
+                                                                tracks: items,
+                                                                total,
+                                                                next_offset,
+                                                            }).await;
+                                                        }
+                                                        Err(e) => {
+                                                            tracing::warn!("Failed to load more liked songs: {}", e);
+                                                            let _ = tx_clone.send(ContentState::Error(format!("Failed to load more liked songs: {}", e))).await;
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume down when player focused
@@ -1824,7 +1976,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list up based on current content
                                 let len = match &app.content_state {
-                                    ContentState::LikedSongs(t) => t.len(),
+                                    ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => t.len(),
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
@@ -1852,7 +2004,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     let c = client.clone();
                                     tokio::spawn(async move {
                                         let guard = c.lock().await;
-                                        let _ = guard.set_volume(new_vol).await;
+                                        if let Err(e) = guard.set_volume(new_vol).await {
+                                            tracing::error!("Volume up failed: {}", e);
+                                        }
                                     });
                                 }
                             }
@@ -1888,13 +2042,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         app.player_state.progress_ms.saturating_sub(10000);
                                     player.seek(new_pos);
                                 }
-                            } else if let Some(ref client) = client {
-                                let new_pos = app.player_state.progress_ms.saturating_sub(10000);
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.seek(new_pos, None).await;
-                                });
+                                 } else if let Some(ref client) = client {
+                                        let new_vol = app.player_state.volume;
+                                        let c = client.clone();
+                                        tokio::spawn(async move {
+                                            let guard = c.lock().await;
+                                            if let Err(e) = guard.set_volume(new_vol).await {
+                                                tracing::error!("Volume down failed: {}", e);
+                                            }
+                                        });
                             }
                         }
                         crossterm::event::KeyCode::Right => {
@@ -1932,7 +2088,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 let c = client.clone();
                                 tokio::spawn(async move {
                                     let guard = c.lock().await;
-                                    let _ = guard.set_volume(new_vol).await;
+                                    if let Err(e) = guard.set_volume(new_vol).await {
+                                        tracing::error!("Volume up (+) failed: {}", e);
+                                    }
                                 });
                             }
                         }
@@ -1948,7 +2106,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 let c = client.clone();
                                 tokio::spawn(async move {
                                     let guard = c.lock().await;
-                                    let _ = guard.set_volume(new_vol).await;
+                                    if let Err(e) = guard.set_volume(new_vol).await {
+                                        tracing::error!("Volume down (-) failed: {}", e);
+                                    }
                                 });
                             }
                         }

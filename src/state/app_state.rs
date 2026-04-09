@@ -72,6 +72,11 @@ pub enum ContentState {
     Loading(LoadAction),
     LoadingInProgress(LoadAction),
     LikedSongs(Vec<TrackListItem>),
+    LikedSongsPage {
+        tracks: Vec<TrackListItem>,
+        total: u32,
+        next_offset: Option<u32>,
+    },
     Playlists(Vec<PlaylistListItem>),
     PlaylistTracks(String, Vec<TrackListItem>),
     SearchResults(String, Vec<TrackListItem>),
