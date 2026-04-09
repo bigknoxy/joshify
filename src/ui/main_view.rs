@@ -10,12 +10,16 @@ use ratatui::{
 
 type MainContentState = ContentState;
 
-/// Truncate text to fit within width, adding ellipsis if needed
+/// Truncate text to fit within display width, adding ellipsis if needed
 fn truncate(text: &str, max_width: usize) -> String {
-    if text.len() <= max_width {
+    if unicode_width::UnicodeWidthStr::width(text) <= max_width {
         text.to_string()
     } else {
-        format!("{}…", &text[..max_width.saturating_sub(1)])
+        let (truncated, _) = unicode_truncate::UnicodeTruncateStr::unicode_truncate(
+            text,
+            max_width.saturating_sub(1),
+        );
+        format!("{truncated}…")
     }
 }
 

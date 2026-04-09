@@ -112,6 +112,81 @@ pub fn write_prepared_kitty_image(prepared: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Clear a rectangular area on the terminal screen by overwriting with spaces.
+/// Uses exact column positioning and space-filling to avoid erasing content
+/// beyond the area bounds (unlike \x1b[K which erases to end of line).
+pub fn clear_terminal_area(area: Rect) -> std::io::Result<()> {
+    use std::io::Write;
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    let spaces = " ".repeat(area.width as usize);
+    let mut buf = Vec::new();
+    for y in area.top()..area.bottom() {
+        buf.extend_from_slice(format!("\x1b[{};{}H{}", y + 1, area.x + 1, spaces).as_bytes());
+    }
+    let mut stdout = std::io::stdout();
+    stdout.write_all(&buf)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Delete a previously-rendered Kitty image by its area.
+/// Uses the Kitty graphics protocol's delete command (\x1b_Ga=d) to remove
+/// images in a specific region without affecting surrounding text.
+/// Falls back to clear_terminal_area if Kitty protocol isn't available.
+pub fn delete_kitty_image_in_area(area: Rect) -> std::io::Result<()> {
+    use std::io::Write;
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    let mut buf = Vec::new();
+    // Kitty delete command: delete all images that intersect with the given rectangle
+    // \x1b_Ga=d,C=1,x=<left>,y=<top>,w=<width>,h=<height>\x1b\
+    buf.extend_from_slice(
+        format!(
+            "\x1b_Ga=d,C=1,x={},y={},w={},h={}\x1b\\",
+            area.x + 1,
+            area.y + 1,
+            area.width,
+            area.height
+        )
+        .as_bytes(),
+    );
+    let mut stdout = std::io::stdout();
+    stdout.write_all(&buf)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Clear a rectangular area in the ratatui buffer by filling it with spaces.
+/// This is needed to erase previously-rendered Kitty images before drawing at a new position.
+/// Without this, the old image persists on screen because Kitty images bypass the ratatui buffer.
+pub fn clear_area(frame: &mut ratatui::Frame, area: Rect) {
+    let buf = frame.buffer_mut();
+    for x in area.left()..area.right() {
+        for y in area.top()..area.bottom() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_char(' ');
+                cell.set_style(Style::default().bg(ratatui::style::Color::Reset));
+            }
+        }
+    }
+}
+
+/// Mark cells in an area as skipped so ratatui doesn't overwrite them.
+/// Call this after rendering album art to prevent the buffer from overwriting the image.
+pub fn skip_area(frame: &mut ratatui::Frame, area: Rect) {
+    let buf = frame.buffer_mut();
+    for x in area.left()..area.right() {
+        for y in area.top()..area.bottom() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_skip(true);
+            }
+        }
+    }
+}
+
 /// Write raw image data as Kitty graphics (legacy - does full processing every call)
 fn write_kitty(image_data: &[u8], area: Rect) -> std::io::Result<()> {
     if let Some(prepared) = prepare_kitty_image(image_data, area) {

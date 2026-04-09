@@ -1,3 +1,4 @@
+use anyhow::Result;
 use joshify::auth::OAuthConfig;
 use joshify::player::LocalPlayer;
 use joshify::session::LocalSession;
@@ -6,7 +7,6 @@ use joshify::state::player_state::PlayerState;
 use joshify::state::search_state::SearchState;
 use joshify::state::{ContentState, FocusTarget, LoadAction, NavItem};
 use joshify::CliArgs;
-use anyhow::Result;
 use librespot::core::authentication::Credentials;
 use rspotify::clients::OAuthClient;
 use std::sync::Arc;
@@ -169,15 +169,10 @@ impl App {
                 let old_track_uri = self.player_state.current_track_uri.clone();
                 self.player_state = PlayerState::from_context(&ctx);
 
-                if self
-                    .status_message
-                    .as_ref()
-                    .is_some_and(|m| m.starts_with("Playback error"))
-                {
-                    self.status_message = None;
-                }
-
                 let new_track_uri = self.player_state.current_track_uri.clone();
+                if old_track_uri != new_track_uri {
+                    self.player_state.reset_scroll();
+                }
                 let new_album_art_url = self.player_state.current_album_art_url.clone();
 
                 if new_track_uri != old_track_uri
@@ -441,7 +436,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         if let Some((session, player, event_rx)) = init_local_player(token).await {
             // Start Spotify Connect to make joshify appear as a device
             let credentials = Credentials::with_access_token(token.clone());
-            let mut connect_mgr = joshify::connect::ConnectManager::new(joshify::connect::default_device_name());
+            let mut connect_mgr =
+                joshify::connect::ConnectManager::new(joshify::connect::default_device_name());
             if let Err(e) = connect_mgr
                 .start(
                     &session.session,
@@ -480,8 +476,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&token) {
                     if let Some(token_str) = creds.get("access_token").and_then(|v| v.as_str()) {
                         let credentials = Credentials::with_access_token(token_str.to_string());
-                        let mut connect_mgr =
-                            joshify::connect::ConnectManager::new(joshify::connect::default_device_name());
+                        let mut connect_mgr = joshify::connect::ConnectManager::new(
+                            joshify::connect::default_device_name(),
+                        );
                         let _ = connect_mgr
                             .start(
                                 &session.session,
@@ -542,22 +539,43 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         }
 
         // Check for async data loading results
-        if let Ok(state) = rx.try_recv() {
+        while let Ok(state) = rx.try_recv() {
             match state {
                 ContentState::SearchResultsLive(results) => {
-                    // Only apply results if they match current query (prevent race condition)
-                    // When typing rapidly, multiple searches fire - we only want the latest
-                    if app.search_state.is_active 
-                       && app.search_state.pending_query.as_ref() == Some(&app.search_state.query) {
+                    tracing::debug!(
+                        "Received SearchResultsLive: {} items, active={}, pending={:?}, current={}",
+                        results.len(),
+                        app.search_state.is_active,
+                        app.search_state.pending_query,
+                        app.search_state.query,
+                    );
+                    if app.search_state.is_active
+                        && app.search_state.pending_query.as_ref() == Some(&app.search_state.query)
+                    {
                         app.search_state.set_results(results);
+                        tracing::info!("Search results applied successfully");
+                    } else {
+                        tracing::debug!(
+                            "Search results discarded (stale): pending={:?}, current={}",
+                            app.search_state.pending_query,
+                            app.search_state.query,
+                        );
                     }
                 }
                 ContentState::SearchErrorLive(error) => {
-                    // Only show error if it matches current query (prevent stale errors)
-                    if app.search_state.is_active 
-                       && app.search_state.pending_query.as_ref() == Some(&app.search_state.query) {
+                    tracing::debug!("Received SearchErrorLive: {}", error);
+                    if app.search_state.is_active
+                        && app.search_state.pending_query.as_ref() == Some(&app.search_state.query)
+                    {
                         app.search_state.set_error(error);
-                        app.search_state.error_display_until_ms = Some(now + 3000);
+                        app.search_state.error_display_until_ms = Some(now + 5000);
+                    } else {
+                        tracing::debug!(
+                            "Search error discarded (stale): pending={:?}, current={}, error={}",
+                            app.search_state.pending_query,
+                            app.search_state.query,
+                            error,
+                        );
                     }
                 }
                 other => {
@@ -568,14 +586,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
         // Check for album art data results
         while let Ok((track_uri, art_data)) = rx_art.try_recv() {
-            // Only update if this is still the current track
             if app.player_state.current_track_uri.as_ref() == Some(&track_uri) {
                 app.player_state.current_album_art_data = Some(art_data.clone());
-                // Pre-process Kitty escape sequence ONCE (not every frame)
                 if let Some(frame_area) = app.area {
-                    let player_bar_height = 5u16;
+                    let player_bar_height = 6u16;
                     let sidebar_width = 20u16;
-                    let album_art_width = 10u16;
+                    let album_art_width = 12u16;
                     let album_area = Rect::new(
                         sidebar_width,
                         frame_area.height.saturating_sub(player_bar_height),
@@ -584,10 +600,42 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     );
                     app.player_state.current_album_art_kitty =
                         joshify::ui::image_renderer::prepare_kitty_image(&art_data, album_area);
-                    // Pre-render ASCII art ONCE (not every frame)
-                    app.player_state.current_album_art_ascii = Some(
-                        joshify::ui::image_renderer::render_album_art_as_lines(&art_data, album_area),
-                    );
+                    app.player_state.current_album_art_ascii =
+                        Some(joshify::ui::image_renderer::render_album_art_as_lines(
+                            &art_data, album_area,
+                        ));
+                    app.player_state.art_rendered_for_area = Some(album_area);
+                }
+            }
+        }
+
+        // Re-process album art if terminal was resized (area changed)
+        // Clear the old Kitty image area before re-rendering at the new position
+        if let Some(frame_area) = app.area {
+            let player_bar_height = 6u16;
+            let sidebar_width = 20u16;
+            let album_art_width = 12u16;
+            let current_album_area = Rect::new(
+                sidebar_width,
+                frame_area.height.saturating_sub(player_bar_height),
+                album_art_width,
+                player_bar_height,
+            );
+            if app.player_state.art_rendered_for_area != Some(current_album_area) {
+                // Invalidate last Kitty render area so the old position gets cleared
+                // on the next frame render. This prevents ghost images on resize.
+                if let Some(ref art_data) = app.player_state.current_album_art_data {
+                    app.player_state.current_album_art_kitty =
+                        joshify::ui::image_renderer::prepare_kitty_image(
+                            art_data,
+                            current_album_area,
+                        );
+                    app.player_state.current_album_art_ascii =
+                        Some(joshify::ui::image_renderer::render_album_art_as_lines(
+                            art_data,
+                            current_album_area,
+                        ));
+                    app.player_state.art_rendered_for_area = Some(current_album_area);
                 }
             }
         }
@@ -755,8 +803,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     let tx_clone = tx.clone();
                     tokio::spawn(async move {
                         let guard = c.lock().await;
-                        match guard.search(&query, 25).await {
+                        match guard.search(&query, 10).await {
                             Ok(tracks) => {
+                                tracing::info!(
+                                    "Search spawned {} results for '{}'",
+                                    tracks.len(),
+                                    query
+                                );
                                 let items: Vec<joshify::state::app_state::TrackListItem> = tracks
                                     .into_iter()
                                     .filter_map(|t| {
@@ -780,10 +833,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         })
                                     })
                                     .collect();
-                                // Send results back via channel
+                                tracing::info!("Sending {} TrackListItems to channel", items.len());
                                 let _ = tx_clone.send(ContentState::SearchResultsLive(items)).await;
                             }
                             Err(e) => {
+                                tracing::error!("Search async error for '{}': {}", query, e);
                                 let _ = tx_clone
                                     .send(ContentState::SearchErrorLive(format!(
                                         "Search failed: {}",
@@ -803,6 +857,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
         if should_draw {
             app.last_frame_time_ms = now;
+
+            // Advance scrolling title animation
+            if let Some(ref title) = app.player_state.current_track_name {
+                let title_width = unicode_width::UnicodeWidthStr::width(title.as_str());
+                let info_width = app
+                    .area
+                    .map(|a| a.width.saturating_sub(20 + 12 + 4) as usize)
+                    .unwrap_or(0);
+                app.player_state.tick_scroll(title_width, info_width);
+            }
+
             terminal.draw(|frame| {
                 let area = frame.area();
 
@@ -837,8 +902,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)])
                         .areas(top_area);
 
-                // Player bar: 5 rows at bottom (includes album art)
-                let player_bar_height = 5u16;
+                // Player bar: 6 rows at bottom (includes album art)
+                let player_bar_height = 6u16;
                 let [main_content, player_bar] =
                     Layout::vertical([Constraint::Min(0), Constraint::Length(player_bar_height)])
                         .areas(main);
@@ -885,13 +950,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     app.player_state.duration_ms,
                     app.player_state.volume,
                     app.player_state.current_album_art_url.as_deref(),
-                    app.player_state
-                        .current_album_art_ascii.as_deref(),
+                    app.player_state.current_album_art_ascii.as_deref(),
                     app.queue_state.local_queue.len(),
                     player_focused,
                     app.player_state.shuffle,
                     app.player_state.repeat_mode,
                     app.queue_state.radio_mode,
+                    &app.player_state.title_scroll_state,
                 );
 
                 // Overlays (rendered last so they appear on top)
@@ -921,8 +986,37 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
         // Write album art image directly to stdout (bypasses ratatui buffer)
         // Uses pre-processed Kitty escape sequence (no per-frame image processing)
+        // Important: Must delete the old Kitty image before drawing at a new position.
+        // Kitty images persist on screen until explicitly deleted. On resize, we use
+        // the Kitty delete protocol command which removes only the image pixels without
+        // affecting surrounding text content.
         if let Some(ref kitty_data) = app.player_state.current_album_art_kitty {
+            // Delete the old Kitty image using the Kitty graphics protocol delete command.
+            // This only removes the image in the specified area, not surrounding text.
+            if let Some(old_area) = app.player_state.last_kitty_render_area {
+                let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
+                // Also clear the area with spaces as a fallback for non-Kitty terminals
+                let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+            }
             let _ = joshify::ui::image_renderer::write_prepared_kitty_image(kitty_data);
+            // Record where we just rendered so we can delete it next time
+            if let Some(frame_area) = app.area {
+                let player_bar_height = 6u16;
+                let sidebar_width = 20u16;
+                let album_art_width = 12u16;
+                app.player_state.last_kitty_render_area = Some(Rect::new(
+                    sidebar_width,
+                    frame_area.height.saturating_sub(player_bar_height),
+                    album_art_width,
+                    player_bar_height,
+                ));
+            }
+        } else {
+            // No current image - clear any previous render area
+            if let Some(old_area) = app.player_state.last_kitty_render_area.take() {
+                let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
+                let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+            }
         }
 
         // Handle async data loading based on current state
@@ -960,7 +1054,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 });
                             }
                             for device in devices {
-                                entries.push(joshify::state::app_state::DeviceEntry::Remote(device));
+                                entries
+                                    .push(joshify::state::app_state::DeviceEntry::Remote(device));
                             }
                             let _ = tx_clone.send(ContentState::DeviceSelector(entries)).await;
                         });
@@ -1118,7 +1213,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let query_clone = query.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
-                            match guard.search(&query_clone, 50).await {
+                            match guard.search(&query_clone, 10).await {
                                 Ok(tracks) => {
                                     let items: Vec<TrackListItem> = tracks
                                         .into_iter()
@@ -1181,11 +1276,33 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         match key.code {
                             crossterm::event::KeyCode::Enter => {
                                 if let Some(track) = app.search_state.selected_track() {
-                                    // Play selected track
                                     if let Some(ref client) = client {
-                                        let c = client.lock().await;
+                                        let c = client.clone();
                                         let uri = track.uri.clone();
-                                        let _ = c.start_playback(vec![uri], None).await;
+                                        let tx_clone = tx.clone();
+                                        tokio::spawn(async move {
+                                            let guard = c.lock().await;
+                                            if let Ok(devices) = guard.available_devices().await {
+                                                if let Some(device) = devices.first() {
+                                                    if let Some(ref device_id) = device.id {
+                                                        let _ = guard
+                                                            .transfer_playback(device_id)
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                            if let Err(e) =
+                                                guard.start_playback(vec![uri], None).await
+                                            {
+                                                tracing::error!("Search playback error: {}", e);
+                                                let _ = tx_clone
+                                                    .send(ContentState::SearchErrorLive(format!(
+                                                        "Playback failed: {}",
+                                                        e
+                                                    )))
+                                                    .await;
+                                            }
+                                        });
                                     }
                                     app.status_message = Some(format!("Playing: {}", track.name));
                                 }
@@ -1195,7 +1312,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.search_state.deactivate();
                             }
                             crossterm::event::KeyCode::Backspace => {
-                                app.search_state.delete_char();
+                                app.search_state.delete_char(now);
                             }
                             crossterm::event::KeyCode::Left => {
                                 app.search_state.move_cursor_left();
@@ -1209,9 +1326,33 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             crossterm::event::KeyCode::Down => {
                                 app.search_state.select_down(app.search_state.results.len());
                             }
+                            crossterm::event::KeyCode::Tab => {
+                                if let Some(track) = app.search_state.selected_track() {
+                                    if let Some(ref client) = client {
+                                        let c = client.clone();
+                                        let uri = track.uri.clone();
+                                        tokio::spawn(async move {
+                                            let guard = c.lock().await;
+                                            let _ = guard.add_to_queue(&uri).await;
+                                        });
+                                    }
+                                    let queue_pos = app.queue_state.total_count() + 1;
+                                    app.queue_state
+                                        .add(joshify::state::queue_state::QueueEntry {
+                                            uri: track.uri.clone(),
+                                            name: track.name.clone(),
+                                            artist: track.artist.clone(),
+                                            added_by_user: true,
+                                            is_recommendation: false,
+                                        });
+                                    app.status_message = Some(format!(
+                                        "Queued: {} - {} (#{})",
+                                        track.name, track.artist, queue_pos
+                                    ));
+                                }
+                            }
                             crossterm::event::KeyCode::Char(c) => {
-                                // All characters go to search input when search is active
-                                app.search_state.insert_char(c);
+                                app.search_state.insert_char(c, now);
                             }
                             _ => {}
                         }
@@ -1298,23 +1439,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             ) => {
                                                 if let Some(ref device_id) = device.id {
                                                     if let Some(ref client) = client {
-                                                        let c = client.lock().await;
-                                                        match c.transfer_playback(device_id).await {
-                                                            Ok(_) => {
-                                                                app.playback_mode =
-                                                                    PlaybackMode::Remote;
-                                                                app.status_message = Some(format!(
-                                                                    "Switched to {}",
-                                                                    device.name
-                                                                ));
-                                                            }
-                                                            Err(e) => {
-                                                                app.status_message = Some(format!(
-                                                                    "Failed to switch: {}",
-                                                                    e
-                                                                ));
-                                                            }
-                                                        }
+                                                        let c = client.clone();
+                                                        let device_id = device_id.clone();
+                                                        let device_name = device.name.clone();
+                                                        tokio::spawn(async move {
+                                                            let guard = c.lock().await;
+                                                            let _ = guard.transfer_playback(&device_id).await;
+                                                        });
+                                                        app.playback_mode = PlaybackMode::Remote;
+                                                        app.status_message = Some(format!(
+                                                            "Switching to {}...",
+                                                            device_name
+                                                        ));
                                                     }
                                                 }
                                             }
@@ -1340,12 +1476,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             }
                         } else if let Some(ref client) = client {
-                            let c = client.lock().await;
-                            if app.player_state.is_playing {
-                                let _ = c.playback_pause().await;
-                            } else {
-                                let _ = c.playback_resume().await;
-                            }
+                            let c = client.clone();
+                            let is_playing = app.player_state.is_playing;
+                            tokio::spawn(async move {
+                                let guard = c.lock().await;
+                                if is_playing {
+                                    let _ = guard.playback_pause().await;
+                                } else {
+                                    let _ = guard.playback_resume().await;
+                                }
+                            });
                         }
                         continue;
                     }
@@ -1355,8 +1495,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         if let Some(ref client) = client {
                             let new_shuffle = !app.player_state.shuffle;
                             app.player_state.shuffle = new_shuffle;
-                            let c = client.lock().await;
-                            let _ = c.toggle_shuffle(new_shuffle).await;
+                            let c = client.clone();
+                            tokio::spawn(async move {
+                                let guard = c.lock().await;
+                                let _ = guard.toggle_shuffle(new_shuffle).await;
+                            });
                             app.status_message = Some(if new_shuffle {
                                 "Shuffle: ON".to_string()
                             } else {
@@ -1371,7 +1514,6 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         if let Some(ref client) = client {
                             app.player_state.repeat_mode = app.player_state.repeat_mode.cycle();
                             let new_mode = app.player_state.repeat_mode;
-                            let c = client.lock().await;
                             let spotify_state = match new_mode {
                                 joshify::state::player_state::RepeatMode::Off => {
                                     rspotify::model::RepeatState::Off
@@ -1383,7 +1525,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     rspotify::model::RepeatState::Track
                                 }
                             };
-                            let _ = c.set_repeat(spotify_state).await;
+                            let c = client.clone();
+                            tokio::spawn(async move {
+                                let guard = c.lock().await;
+                                let _ = guard.set_repeat(spotify_state).await;
+                            });
                             let label = match new_mode {
                                 joshify::state::player_state::RepeatMode::Off => "OFF",
                                 joshify::state::player_state::RepeatMode::Context => "ALL",
@@ -1512,115 +1658,68 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 } else {
                                                     // Remote playback via Spotify API
                                                     if let Some(ref client) = client {
-                                                        let c = client.lock().await;
-
-                                                        // Try to transfer to first available device
-                                                        if let Ok(devices) =
-                                                            c.available_devices().await
-                                                        {
-                                                            if let Some(device) = devices.first() {
-                                                                if let Some(ref device_id) =
-                                                                    device.id
+                                                        let c = client.clone();
+                                                        let track_uri = track.uri.clone();
+                                                        let track_name = track.name.clone();
+                                                        let context = app.current_context.clone();
+                                                        tokio::spawn(async move {
+                                                            let guard = c.lock().await;
+                                                            if let Ok(devices) =
+                                                                guard.available_devices().await
+                                                            {
+                                                                if let Some(device) =
+                                                                    devices.first()
                                                                 {
-                                                                    let _ = c
-                                                                        .transfer_playback(
-                                                                            device_id,
-                                                                        )
-                                                                        .await;
+                                                                    if let Some(ref device_id) =
+                                                                        device.id
+                                                                    {
+                                                                        let _ = guard
+                                                                            .transfer_playback(
+                                                                                device_id,
+                                                                            )
+                                                                            .await;
+                                                                    }
                                                                 }
                                                             }
-                                                        }
-
-                                                        // Use context playback if we have a playlist context
-                                                        if let Some(PlaybackContext::Playlist {
-                                                            uri,
-                                                            name,
-                                                            track_index,
-                                                        }) = &app.current_context
-                                                        {
-                                                            let playlist_id_str = uri
-                                                                .strip_prefix("spotify:playlist:")
-                                                                .unwrap_or(uri);
-                                                            if let Ok(playlist_id) =
-                                                                rspotify::model::PlaylistId::from_id(
-                                                                    playlist_id_str,
-                                                                )
+                                                            if let Some(
+                                                                PlaybackContext::Playlist {
+                                                                    uri,
+                                                                    ..
+                                                                },
+                                                            ) = &context
                                                             {
-                                                                // Start playback from the selected track position in the playlist
-                                                                match c.oauth.start_context_playback(
-                                                                    rspotify::model::PlayContextId::from(playlist_id),
-                                                                    None,
-                                                                    Some(rspotify::model::Offset::Uri(track.uri.clone())),
-                                                                    None,
-                                                                ).await {
-                                                                    Ok(_) => {
-                                                                        app.status_message = Some(format!(
-                                                                            "Playing playlist: {} (track {})",
-                                                                            name, track_index + 1
-                                                                        ));
-                                                                    }
-                                                                    Err(_e) => {
-                                                                        // Fallback to single track
-                                                                        match c.start_playback(vec![track.uri.clone()], None).await {
-                                                                            Ok(_) => {
-                                                                                app.status_message = Some(format!("Playing: {}", track.name));
-                                                                            }
-                                                                            Err(e) => {
-                                                                                app.status_message = Some(format!(
-                                                                                    "Playback error: {} (Open Spotify on another device first)",
-                                                                                    e
-                                                                                ));
-                                                                            }
-                                                                        }
-                                                                    }
+                                                                let playlist_id_str = uri
+                                                                    .strip_prefix(
+                                                                        "spotify:playlist:",
+                                                                    )
+                                                                    .unwrap_or(uri);
+                                                                if let Ok(playlist_id) =
+                                                                    rspotify::model::PlaylistId::from_id(
+                                                                        playlist_id_str,
+                                                                    )
+                                                                {
+                                                                    let _ = guard.oauth.start_context_playback(
+                                                                        rspotify::model::PlayContextId::from(playlist_id),
+                                                                        None,
+                                                                        Some(rspotify::model::Offset::Uri(track_uri.clone())),
+                                                                        None,
+                                                                    ).await;
+                                                                } else {
+                                                                    let _ = guard.start_playback(vec![track_uri], None).await;
                                                                 }
                                                             } else {
-                                                                // Invalid playlist ID, fallback to single track
-                                                                match c
+                                                                let _ = guard
                                                                     .start_playback(
-                                                                        vec![track.uri.clone()],
+                                                                        vec![track_uri],
                                                                         None,
                                                                     )
-                                                                    .await
-                                                                {
-                                                                    Ok(_) => {
-                                                                        app.status_message =
-                                                                            Some(format!(
-                                                                                "Playing: {}",
-                                                                                track.name
-                                                                            ));
-                                                                    }
-                                                                    Err(e) => {
-                                                                        app.status_message = Some(format!(
-                                                                            "Playback error: {} (Open Spotify on another device first)",
-                                                                            e
-                                                                        ));
-                                                                    }
-                                                                }
+                                                                    .await;
                                                             }
-                                                        } else {
-                                                            match c
-                                                                .start_playback(
-                                                                    vec![track.uri.clone()],
-                                                                    None,
-                                                                )
-                                                                .await
-                                                            {
-                                                                Ok(_) => {
-                                                                    app.status_message =
-                                                                        Some(format!(
-                                                                            "Playing: {}",
-                                                                            track.name
-                                                                        ));
-                                                                }
-                                                                Err(e) => {
-                                                                    app.status_message = Some(format!(
-                                                                        "Playback error: {} (Open Spotify on another device first)",
-                                                                        e
-                                                                    ));
-                                                                }
-                                                            }
-                                                        }
+                                                        });
+                                                        app.status_message = Some(format!(
+                                                            "Playing: {}",
+                                                            track_name
+                                                        ));
                                                     }
                                                 }
                                             }
@@ -1655,12 +1754,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             }
                                         }
                                     } else if let Some(ref client) = client {
-                                        let c = client.lock().await;
-                                        if app.player_state.is_playing {
-                                            let _ = c.playback_pause().await;
-                                        } else {
-                                            let _ = c.playback_resume().await;
-                                        }
+                                        let c = client.clone();
+                                        let is_playing = app.player_state.is_playing;
+                                        tokio::spawn(async move {
+                                            let guard = c.lock().await;
+                                            if is_playing {
+                                                let _ = guard.playback_pause().await;
+                                            } else {
+                                                let _ = guard.playback_resume().await;
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -1670,7 +1773,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
                             if app.focus == FocusTarget::Sidebar {
                                 let current_idx = app.selected_nav as usize;
-                                let next_idx = (current_idx + 1) % joshify::ui::NavItem::all().len();
+                                let next_idx =
+                                    (current_idx + 1) % joshify::ui::NavItem::all().len();
                                 app.selected_nav = joshify::ui::NavItem::all()[next_idx];
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list down based on current content
@@ -1692,18 +1796,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume down when player focused
+                                app.player_state.volume = app.player_state.volume.saturating_sub(5);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = app.player_state.volume.saturating_sub(5)
-                                            as u16
-                                            * 65535
-                                            / 100;
+                                        let new_vol = app.player_state.volume as u16 * 65535 / 100;
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
-                                    let new_vol = app.player_state.volume.saturating_sub(5);
-                                    let c = client.lock().await;
-                                    let _ = c.set_volume(new_vol).await;
+                                    let new_vol = app.player_state.volume;
+                                    let c = client.clone();
+                                    tokio::spawn(async move {
+                                        let guard = c.lock().await;
+                                        let _ = guard.set_volume(new_vol).await;
+                                    });
                                 }
                             }
                         }
@@ -1736,16 +1841,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume up when player focused
+                                app.player_state.volume = (app.player_state.volume + 5).min(100);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol =
-                                            (app.player_state.volume + 5) as u16 * 65535 / 100;
+                                        let new_vol = app.player_state.volume as u16 * 65535 / 100;
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
-                                    let new_vol = (app.player_state.volume + 5).min(100);
-                                    let c = client.lock().await;
-                                    let _ = c.set_volume(new_vol).await;
+                                    let new_vol = app.player_state.volume;
+                                    let c = client.clone();
+                                    tokio::spawn(async move {
+                                        let guard = c.lock().await;
+                                        let _ = guard.set_volume(new_vol).await;
+                                    });
                                 }
                             }
                         }
@@ -1753,24 +1861,27 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         // Playback controls (work from any focus)
                         crossterm::event::KeyCode::Char('n') => {
                             if app.playback_mode == PlaybackMode::Local {
-                                // Local: stop current, next track would need queue management
                                 if let Some(ref player) = app.local_player {
                                     player.stop();
                                 }
                             } else if let Some(ref client) = client {
-                                let c = client.lock().await;
-                                let _ = c.playback_next().await;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.playback_next().await;
+                                });
                             }
                         }
                         crossterm::event::KeyCode::Char('p') => {
-                            // Remote only for now (local would need queue)
                             if let Some(ref client) = client {
-                                let c = client.lock().await;
-                                let _ = c.playback_previous().await;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.playback_previous().await;
+                                });
                             }
                         }
                         crossterm::event::KeyCode::Left => {
-                            // Seek backward 10 seconds
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
                                     let new_pos =
@@ -1779,12 +1890,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if let Some(ref client) = client {
                                 let new_pos = app.player_state.progress_ms.saturating_sub(10000);
-                                let c = client.lock().await;
-                                let _ = c.seek(new_pos, None).await;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.seek(new_pos, None).await;
+                                });
                             }
                         }
                         crossterm::event::KeyCode::Right => {
-                            // Seek forward 10 seconds
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
                                     let new_pos = app
@@ -1800,35 +1913,43 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     .progress_ms
                                     .saturating_add(10000)
                                     .min(app.player_state.duration_ms);
-                                let c = client.lock().await;
-                                let _ = c.seek(new_pos, None).await;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.seek(new_pos, None).await;
+                                });
                             }
                         }
                         crossterm::event::KeyCode::Char('+') => {
+                            app.player_state.volume = (app.player_state.volume + 5).min(100);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = (app.player_state.volume + 5) as u16 * 65535
-                                        / 100;
+                                    let new_vol = app.player_state.volume as u16 * 65535 / 100;
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
-                                let new_vol = (app.player_state.volume + 5).min(100);
-                                let c = client.lock().await;
-                                let _ = c.set_volume(new_vol).await;
+                                let new_vol = app.player_state.volume;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.set_volume(new_vol).await;
+                                });
                             }
                         }
                         crossterm::event::KeyCode::Char('-') => {
+                            app.player_state.volume = app.player_state.volume.saturating_sub(5);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol =
-                                        app.player_state.volume.saturating_sub(5) as u16 * 65535
-                                            / 100;
+                                    let new_vol = app.player_state.volume as u16 * 65535 / 100;
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
-                                let new_vol = app.player_state.volume.saturating_sub(5);
-                                let c = client.lock().await;
-                                let _ = c.set_volume(new_vol).await;
+                                let new_vol = app.player_state.volume;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.set_volume(new_vol).await;
+                                });
                             }
                         }
 
@@ -1839,10 +1960,6 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                         // Queue toggle
                         crossterm::event::KeyCode::Char('Q') => {
-                            if let Some(ref client) = client {
-                                let c = client.lock().await;
-                                let _ = c.get_queue().await;
-                            }
                             app.show_queue = !app.show_queue;
                         }
                         crossterm::event::KeyCode::Char('a') => {
@@ -1997,8 +2114,7 @@ async fn run_search_test(args: CliArgs) -> Result<()> {
     }
 
     // Check for access token
-    let has_token = std::env::var("SPOTIFY_ACCESS_TOKEN").is_ok()
-        || args.access_token.is_some();
+    let has_token = std::env::var("SPOTIFY_ACCESS_TOKEN").is_ok() || args.access_token.is_some();
 
     if !has_token {
         eprintln!("❌ Error: Access token required");
@@ -2045,7 +2161,9 @@ async fn run_search_test(args: CliArgs) -> Result<()> {
                 } else {
                     println!("✅ {} results", tracks.len());
                     for (i, track) in tracks.iter().take(3).enumerate() {
-                        let artist = track.artists.first()
+                        let artist = track
+                            .artists
+                            .first()
                             .map(|a| a.name.as_str())
                             .unwrap_or("Unknown");
                         println!("      {}. {} - {}", i + 1, artist, track.name);

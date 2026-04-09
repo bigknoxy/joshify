@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use rspotify::clients::{BaseClient, OAuthClient};
 
-
 use super::SpotifyClient;
 
 impl SpotifyClient {
@@ -66,28 +65,41 @@ impl SpotifyClient {
     ) -> Result<Vec<rspotify::model::FullTrack>> {
         use rspotify::clients::BaseClient;
 
-        tracing::debug!("Searching Spotify for: '{}'", query);
+        tracing::info!("Searching Spotify for: '{}'", query);
 
-        // Attempt token refresh before search if token is expired
         if let Err(e) = self.oauth.auto_reauth().await {
             tracing::warn!("Token refresh failed before search: {:?}", e);
         }
+
+        let limit = track_limit.min(10);
+        tracing::debug!(
+            "Search params: query='{}', limit={}, market=FromToken",
+            query,
+            limit
+        );
 
         let result = self
             .oauth
             .search(
                 query,
                 rspotify::model::SearchType::Track,
+                Some(rspotify::model::Market::FromToken),
                 None,
-                None,
-                Some(track_limit),
+                Some(limit),
                 None,
             )
             .await;
 
         match result {
             Ok(rspotify::model::SearchResult::Tracks(page)) => {
-                tracing::debug!("Search returned {} tracks", page.items.len());
+                tracing::info!(
+                    "Search returned {} tracks for '{}'",
+                    page.items.len(),
+                    query
+                );
+                if page.items.is_empty() {
+                    tracing::warn!("Spotify returned empty track list for query '{}' - this may indicate a market/auth issue", query);
+                }
                 Ok(page.items)
             }
             Ok(other) => {
@@ -97,7 +109,7 @@ impl SpotifyClient {
             Err(e) => {
                 let err_str = e.to_string();
                 let err_debug = format!("{:?}", e);
-                tracing::error!("Search API error: {}", err_str);
+                tracing::error!("Search API error for '{}': {}", query, err_str);
                 tracing::debug!("Search API error details: {}", err_debug);
 
                 if err_str.contains("401")
@@ -111,7 +123,6 @@ impl SpotifyClient {
                     tracing::warn!("Rate limited by Spotify API");
                 } else if err_str.contains("400") || err_debug.contains("400") {
                     tracing::warn!("Bad request to Spotify API - check query format");
-                    // Try to extract the actual error message from Spotify
                     if let Some(json_start) = err_debug.find("{") {
                         if let Some(json_end) = err_debug.rfind("}") {
                             let json = &err_debug[json_start..=json_end];
@@ -193,10 +204,10 @@ mod tests {
     #[test]
     fn test_search_market_parameter() {
         use rspotify::model::{Country, Market};
-        
+
         let market = Market::FromToken;
         assert_eq!(Into::<&'static str>::into(market), "from_token");
-        
+
         let market_us = Market::Country(Country::UnitedStates);
         assert_eq!(Into::<&'static str>::into(market_us), "US");
     }
@@ -226,7 +237,9 @@ mod tests {
         for uri in invalid_uris {
             let parts: Vec<&str> = uri.split(':').collect();
             if parts.len() >= 3 && parts[0] == "spotify" && parts[1] == "track" {
-                assert!(parts[2].is_empty() || rspotify::model::TrackId::from_id(parts[2]).is_err());
+                assert!(
+                    parts[2].is_empty() || rspotify::model::TrackId::from_id(parts[2]).is_err()
+                );
             }
         }
     }

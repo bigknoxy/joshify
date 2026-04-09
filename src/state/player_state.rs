@@ -40,6 +40,22 @@ impl RepeatMode {
     }
 }
 
+/// Scrolling title state for marquee animation
+#[derive(Debug, Clone, Default)]
+pub enum TitleScrollState {
+    #[default]
+    Static,
+    PausedAtStart {
+        frames_left: usize,
+    },
+    Scrolling {
+        fractional_offset: f32,
+    },
+    PausedAtEnd {
+        frames_left: usize,
+    },
+}
+
 /// Playback state
 #[derive(Debug, Clone, Default)]
 pub struct PlayerState {
@@ -56,6 +72,10 @@ pub struct PlayerState {
     pub current_track_uri: Option<String>,
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
+    pub art_rendered_for_area: Option<ratatui::prelude::Rect>,
+    /// Area where the last Kitty image was rendered (for clearing on resize/track change)
+    pub last_kitty_render_area: Option<ratatui::prelude::Rect>,
+    pub title_scroll_state: TitleScrollState,
 }
 
 impl PlayerState {
@@ -117,6 +137,9 @@ impl PlayerState {
             current_track_uri: track_uri,
             shuffle: ctx.shuffle_state,
             repeat_mode: RepeatMode::from_spotify(ctx.repeat_state),
+            art_rendered_for_area: None,
+            last_kitty_render_area: None,
+            title_scroll_state: TitleScrollState::Static,
         }
     }
 
@@ -128,6 +151,66 @@ impl PlayerState {
             (Some(_), None) => true,
             (None, None) => false,
         }
+    }
+
+    /// Advance the scrolling title animation by one frame
+    /// Returns the current integer scroll offset
+    pub fn tick_scroll(&mut self, title_display_width: usize, available_width: usize) -> usize {
+        if title_display_width <= available_width {
+            self.title_scroll_state = TitleScrollState::Static;
+            return 0;
+        }
+
+        let max_offset = title_display_width - available_width;
+        let pause_frames = 60; // ~2s at 30fps
+        let scroll_speed: f32 = 0.27; // ~8 cols/sec at 30fps
+
+        match &mut self.title_scroll_state {
+            TitleScrollState::Static => {
+                self.title_scroll_state = TitleScrollState::PausedAtStart {
+                    frames_left: pause_frames,
+                };
+                0
+            }
+            TitleScrollState::PausedAtStart { frames_left } => {
+                if *frames_left == 0 {
+                    self.title_scroll_state = TitleScrollState::Scrolling {
+                        fractional_offset: 0.0,
+                    };
+                } else {
+                    *frames_left -= 1;
+                }
+                0
+            }
+            TitleScrollState::Scrolling { fractional_offset } => {
+                *fractional_offset += scroll_speed;
+                let int_offset = *fractional_offset as usize;
+                if int_offset >= max_offset {
+                    self.title_scroll_state = TitleScrollState::PausedAtEnd {
+                        frames_left: pause_frames,
+                    };
+                    max_offset
+                } else {
+                    int_offset
+                }
+            }
+            TitleScrollState::PausedAtEnd { frames_left } => {
+                if *frames_left == 0 {
+                    self.title_scroll_state = TitleScrollState::PausedAtStart {
+                        frames_left: pause_frames,
+                    };
+                    0
+                } else {
+                    *frames_left -= 1;
+                    max_offset
+                }
+            }
+        }
+    }
+
+    /// Reset scroll state (call when track changes)
+    pub fn reset_scroll(&mut self) {
+        self.title_scroll_state = TitleScrollState::Static;
     }
 }
 
@@ -292,6 +375,7 @@ mod tests {
             current_track_uri: Some("spotify:track:abc123".to_string()),
             shuffle: false,
             repeat_mode: RepeatMode::Off,
+            ..Default::default()
         };
 
         assert!(state.is_playing);
@@ -323,6 +407,7 @@ mod tests {
             current_track_uri: None,
             shuffle: false,
             repeat_mode: RepeatMode::Off,
+            ..Default::default()
         };
 
         assert!(!state.is_playing);
@@ -350,6 +435,7 @@ mod tests {
             current_track_uri: Some("spotify:episode:xyz789".to_string()),
             shuffle: false,
             repeat_mode: RepeatMode::Off,
+            ..Default::default()
         };
 
         assert!(state.is_playing);

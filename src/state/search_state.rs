@@ -1,6 +1,7 @@
 //! Search state management with debounce and caching
 
 use crate::state::app_state::TrackListItem;
+use unicode_width::UnicodeWidthStr;
 
 /// Search state with debounce and result caching
 #[derive(Debug, Clone, Default)]
@@ -15,8 +16,8 @@ pub struct SearchState {
     pub selected_index: usize,
     /// Scroll offset for results
     pub scroll_offset: usize,
-    /// Last time a search was triggered (ms)
-    pub last_search_time_ms: u64,
+    /// Time of last keystroke (ms) - debounce is measured from this
+    pub last_keystroke_ms: u64,
     /// Debounce cooldown in ms (300ms recommended)
     pub debounce_ms: u64,
     /// Whether a search is currently in progress
@@ -29,6 +30,8 @@ pub struct SearchState {
     pub pending_query: Option<String>,
     /// Auto-clear error after this timestamp (ms)
     pub error_display_until_ms: Option<u64>,
+    /// The last query that was successfully searched (prevents re-searching same query)
+    pub last_searched_query: Option<String>,
 }
 
 impl SearchState {
@@ -39,13 +42,14 @@ impl SearchState {
             cursor_pos: 0,
             selected_index: 0,
             scroll_offset: 0,
-            last_search_time_ms: 0,
+            last_keystroke_ms: 0,
             debounce_ms: 300,
             is_loading: false,
             results: Vec::new(),
             error: None,
             pending_query: None,
             error_display_until_ms: None,
+            last_searched_query: None,
         }
     }
 
@@ -56,11 +60,13 @@ impl SearchState {
         self.cursor_pos = 0;
         self.selected_index = 0;
         self.scroll_offset = 0;
+        self.last_keystroke_ms = 0;
         self.results.clear();
         self.error = None;
         self.is_loading = false;
         self.pending_query = None;
         self.error_display_until_ms = None;
+        self.last_searched_query = None;
     }
 
     /// Deactivate search overlay
@@ -69,25 +75,32 @@ impl SearchState {
     }
 
     /// Insert a character at cursor position
-    pub fn insert_char(&mut self, c: char) {
+    pub fn insert_char(&mut self, c: char, now_ms: u64) {
         let byte_idx = self.byte_index();
         self.query.insert(byte_idx, c);
         self.cursor_pos += 1;
+        self.last_keystroke_ms = now_ms;
+        self.last_searched_query = None;
         self.results.clear();
         self.error = None;
         self.is_loading = false;
+        self.pending_query = None;
         self.selected_index = 0;
         self.scroll_offset = 0;
     }
 
     /// Delete character before cursor
-    pub fn delete_char(&mut self) {
+    pub fn delete_char(&mut self, now_ms: u64) {
         if self.cursor_pos > 0 {
             let byte_idx = self.byte_index();
             self.query.remove(byte_idx.saturating_sub(1));
             self.cursor_pos = self.cursor_pos.saturating_sub(1);
+            self.last_keystroke_ms = now_ms;
+            self.last_searched_query = None;
             self.results.clear();
             self.error = None;
+            self.is_loading = false;
+            self.pending_query = None;
             self.selected_index = 0;
             self.scroll_offset = 0;
         }
@@ -112,7 +125,7 @@ impl SearchState {
             .unwrap_or(self.query.len())
     }
 
-    /// Check if debounce cooldown has elapsed
+    /// Check if debounce cooldown has elapsed and a search is needed
     pub fn should_search(&self, current_time_ms: u64) -> bool {
         if self.query.is_empty() {
             return false;
@@ -120,18 +133,24 @@ impl SearchState {
         if self.is_loading {
             return false;
         }
-        current_time_ms.saturating_sub(self.last_search_time_ms) >= self.debounce_ms
+        if self.pending_query.is_some() {
+            return false;
+        }
+        if self.last_searched_query.as_ref() == Some(&self.query) {
+            return false;
+        }
+        current_time_ms.saturating_sub(self.last_keystroke_ms) >= self.debounce_ms
     }
 
     /// Mark that a search has been initiated
-    pub fn mark_search_started(&mut self, time_ms: u64) {
-        self.last_search_time_ms = time_ms;
+    pub fn mark_search_started(&mut self, _time_ms: u64) {
         self.is_loading = true;
         self.pending_query = Some(self.query.clone());
     }
 
     /// Set search results
     pub fn set_results(&mut self, results: Vec<TrackListItem>) {
+        self.last_searched_query = Some(self.query.clone());
         self.results = results;
         self.is_loading = false;
         self.pending_query = None;
@@ -141,6 +160,7 @@ impl SearchState {
 
     /// Set search error
     pub fn set_error(&mut self, error: String) {
+        self.last_searched_query = Some(self.query.clone());
         self.error = Some(error);
         self.is_loading = false;
         self.pending_query = None;
@@ -169,6 +189,23 @@ impl SearchState {
     /// Reset cursor to beginning
     pub fn reset_cursor(&mut self) {
         self.cursor_pos = 0;
+    }
+
+    /// Get display width (in terminal columns) of text before the cursor
+    pub fn cursor_display_offset(&self) -> usize {
+        let byte_pos = self.byte_index();
+        if byte_pos == 0 {
+            0
+        } else if byte_pos >= self.query.len() {
+            UnicodeWidthStr::width(self.query.as_str())
+        } else {
+            UnicodeWidthStr::width(&self.query[..byte_pos])
+        }
+    }
+
+    /// Get display width of the full query
+    pub fn query_display_width(&self) -> usize {
+        UnicodeWidthStr::width(self.query.as_str())
     }
 }
 
@@ -208,19 +245,20 @@ mod tests {
     #[test]
     fn test_insert_char() {
         let mut state = SearchState::new();
-        state.insert_char('h');
-        state.insert_char('i');
+        state.insert_char('h', 0);
+        state.insert_char('i', 100);
 
         assert_eq!(state.query, "hi");
         assert_eq!(state.cursor_pos, 2);
+        assert_eq!(state.last_keystroke_ms, 100);
     }
 
     #[test]
     fn test_delete_char() {
         let mut state = SearchState::new();
-        state.insert_char('h');
-        state.insert_char('i');
-        state.delete_char();
+        state.insert_char('h', 0);
+        state.insert_char('i', 100);
+        state.delete_char(200);
 
         assert_eq!(state.query, "h");
         assert_eq!(state.cursor_pos, 1);
@@ -229,7 +267,7 @@ mod tests {
     #[test]
     fn test_delete_char_at_start_does_nothing() {
         let mut state = SearchState::new();
-        state.delete_char();
+        state.delete_char(0);
 
         assert!(state.query.is_empty());
         assert_eq!(state.cursor_pos, 0);
@@ -238,9 +276,9 @@ mod tests {
     #[test]
     fn test_cursor_movement() {
         let mut state = SearchState::new();
-        state.insert_char('a');
-        state.insert_char('b');
-        state.insert_char('c');
+        state.insert_char('a', 0);
+        state.insert_char('b', 100);
+        state.insert_char('c', 200);
 
         state.move_cursor_left();
         assert_eq!(state.cursor_pos, 2);
@@ -268,15 +306,13 @@ mod tests {
     fn test_should_search_respects_debounce() {
         let mut state = SearchState::new();
         state.query = "test".to_string();
-        state.last_search_time_ms = 0;
+        state.last_keystroke_ms = 100;
         state.debounce_ms = 300;
 
-        // Not enough time has passed
         assert!(!state.should_search(200));
-
-        // Enough time has passed
-        assert!(state.should_search(300));
+        assert!(!state.should_search(399));
         assert!(state.should_search(400));
+        assert!(state.should_search(500));
     }
 
     #[test]
@@ -290,7 +326,18 @@ mod tests {
         let mut state = SearchState::new();
         state.query = "test".to_string();
         state.is_loading = true;
-        state.last_search_time_ms = 0;
+        state.last_keystroke_ms = 0;
+
+        assert!(!state.should_search(1000));
+    }
+
+    #[test]
+    fn test_should_search_not_already_searched() {
+        let mut state = SearchState::new();
+        state.query = "test".to_string();
+        state.last_searched_query = Some("test".to_string());
+        state.last_keystroke_ms = 0;
+        state.debounce_ms = 300;
 
         assert!(!state.should_search(1000));
     }
@@ -301,7 +348,6 @@ mod tests {
         state.query = "test".to_string();
         state.mark_search_started(500);
 
-        assert_eq!(state.last_search_time_ms, 500);
         assert!(state.is_loading);
         assert_eq!(state.pending_query, Some("test".to_string()));
     }
@@ -397,7 +443,7 @@ mod tests {
     fn test_insert_char_resets_loading() {
         let mut state = SearchState::new();
         state.is_loading = true;
-        state.insert_char('a');
+        state.insert_char('a', 0);
         assert!(!state.is_loading);
     }
 
@@ -409,7 +455,7 @@ mod tests {
             artist: "Artist".to_string(),
             uri: "spotify:track:123".to_string(),
         });
-        state.insert_char('a');
+        state.insert_char('a', 0);
         assert!(state.results.is_empty());
     }
 
@@ -418,9 +464,82 @@ mod tests {
         let mut state = SearchState::new();
         state.query = "hllo".to_string();
         state.cursor_pos = 1;
-        state.insert_char('e');
+        state.insert_char('e', 0);
 
         assert_eq!(state.query, "hello");
         assert_eq!(state.cursor_pos, 2);
+    }
+
+    #[test]
+    fn test_cursor_display_offset_ascii() {
+        let mut state = SearchState::new();
+        state.query = "hello".to_string();
+        state.cursor_pos = 3;
+
+        assert_eq!(state.cursor_display_offset(), 3);
+    }
+
+    #[test]
+    fn test_cursor_display_offset_with_emoji() {
+        let mut state = SearchState::new();
+        state.query = "h🦀llo".to_string();
+        state.cursor_pos = 1;
+
+        assert_eq!(state.cursor_display_offset(), 1);
+
+        state.cursor_pos = 2;
+        assert_eq!(state.cursor_display_offset(), 3);
+
+        state.cursor_pos = 3;
+        assert_eq!(state.cursor_display_offset(), 4);
+    }
+
+    #[test]
+    fn test_query_display_width_ascii() {
+        let mut state = SearchState::new();
+        state.query = "hello".to_string();
+
+        assert_eq!(state.query_display_width(), 5);
+    }
+
+    #[test]
+    fn test_query_display_width_with_emoji() {
+        let mut state = SearchState::new();
+        state.query = "h🦀llo".to_string();
+
+        assert_eq!(state.query_display_width(), 6);
+    }
+
+    #[test]
+    fn test_cursor_display_offset_empty() {
+        let state = SearchState::new();
+        assert_eq!(state.cursor_display_offset(), 0);
+        assert_eq!(state.query_display_width(), 0);
+    }
+
+    #[test]
+    fn test_cursor_display_offset_end() {
+        let mut state = SearchState::new();
+        state.query = "test".to_string();
+        state.cursor_pos = 4;
+
+        assert_eq!(state.cursor_display_offset(), 4);
+        assert_eq!(state.query_display_width(), 4);
+    }
+
+    #[test]
+    fn test_debounce_from_last_keystroke() {
+        let mut state = SearchState::new();
+        state.debounce_ms = 300;
+
+        state.insert_char('t', 1000);
+        assert!(!state.should_search(1100));
+        assert!(!state.should_search(1299));
+        assert!(state.should_search(1300));
+
+        state.insert_char('a', 2000);
+        assert!(!state.should_search(2200));
+        assert!(!state.should_search(2299));
+        assert!(state.should_search(2300));
     }
 }

@@ -79,6 +79,7 @@ fn test_player_state_with_track() {
         current_album_art_kitty: None,
         shuffle: false,
         repeat_mode: RepeatMode::Off,
+        ..Default::default()
     };
 
     assert!(state.is_playing);
@@ -124,6 +125,7 @@ fn test_player_state_no_track() {
         current_album_art_kitty: None,
         shuffle: false,
         repeat_mode: RepeatMode::Off,
+        ..Default::default()
     };
 
     assert!(!state.is_playing);
@@ -153,6 +155,7 @@ fn test_player_state_episode_context() {
         current_album_art_kitty: None,
         shuffle: false,
         repeat_mode: RepeatMode::Off,
+        ..Default::default()
     };
 
     assert!(state.is_playing);

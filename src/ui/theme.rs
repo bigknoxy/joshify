@@ -298,6 +298,7 @@ pub mod symbols {
 
     // UI
     pub const SEARCH: &str = "🔍";
+    pub const SEARCH_PROMPT: &str = "/";
     pub const SETTINGS: &str = "⚙";
     pub const HELP: &str = "❓";
     pub const QUEUE: &str = "📋";

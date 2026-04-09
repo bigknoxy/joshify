@@ -198,6 +198,95 @@ fn render_overlay_base(frame: &mut ratatui::Frame, area: Rect, title: &str, cont
     frame.render_widget(widget, overlay_area);
 }
 
+/// Get display width of a string in terminal columns
+fn display_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    UnicodeWidthStr::width(s)
+}
+
+/// Truncate text from the start to fit within max_width display columns, adding ellipsis prefix
+fn truncate_from_start(text: &str, max_width: usize) -> String {
+    use unicode_truncate::UnicodeTruncateStr;
+    if display_width(text) <= max_width {
+        text.to_string()
+    } else {
+        let (truncated, _) = text.unicode_truncate_start(max_width.saturating_sub(1));
+        format!("…{}", truncated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use unicode_truncate::UnicodeTruncateStr;
+    use unicode_width::UnicodeWidthStr;
+
+    fn test_display_width(s: &str) -> usize {
+        UnicodeWidthStr::width(s)
+    }
+
+    fn test_truncate_from_start(text: &str, max_width: usize) -> String {
+        if test_display_width(text) <= max_width {
+            text.to_string()
+        } else {
+            let (truncated, _) = text.unicode_truncate_start(max_width.saturating_sub(1));
+            format!("…{}", truncated)
+        }
+    }
+
+    #[test]
+    fn test_display_width_ascii() {
+        assert_eq!(test_display_width("hello"), 5);
+        assert_eq!(test_display_width(""), 0);
+        assert_eq!(test_display_width("test123"), 7);
+    }
+
+    #[test]
+    fn test_display_width_emoji() {
+        assert_eq!(test_display_width("🦀"), 2);
+        assert_eq!(test_display_width("h🦀llo"), 6);
+        assert_eq!(test_display_width("🔍"), 2);
+        assert_eq!(test_display_width("🔍🔍"), 4);
+    }
+
+    #[test]
+    fn test_display_width_mixed() {
+        assert_eq!(test_display_width("test🦀"), 6);
+        assert_eq!(test_display_width("🦀test"), 6);
+        assert_eq!(test_display_width("a🦀b"), 4);
+    }
+
+    #[test]
+    fn test_truncate_from_start_no_truncation() {
+        assert_eq!(test_truncate_from_start("hello", 10), "hello");
+        assert_eq!(test_truncate_from_start("test", 4), "test");
+    }
+
+    #[test]
+    fn test_truncate_from_start_with_truncation() {
+        let result = test_truncate_from_start("hello world", 5);
+        assert!(result.starts_with("…"));
+        assert!(test_display_width(&result) <= 5);
+    }
+
+    #[test]
+    fn test_truncate_from_start_with_emoji() {
+        let result = test_truncate_from_start("hello🦀world", 6);
+        assert!(result.starts_with("…"));
+        assert!(test_display_width(&result) <= 6);
+    }
+
+    #[test]
+    fn test_truncate_from_start_empty() {
+        assert_eq!(test_truncate_from_start("", 5), "");
+    }
+
+    #[test]
+    fn test_prefix_width_correct() {
+        const SEARCH_PREFIX: &str = "  / ";
+        assert_eq!(test_display_width(SEARCH_PREFIX), 4);
+    }
+}
+
 /// Render search overlay with live results
 pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_state: &SearchState) {
     let overlay_width = (area.width as f32 * 0.7).clamp(50.0, area.width as f32) as u16;
@@ -219,29 +308,22 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     let inner = bg.inner(overlay_area);
     frame.render_widget(bg, overlay_area);
 
+    // Prefix for search input: "  / " = 4 display columns (all ASCII width-1)
+    const SEARCH_PREFIX: &str = "  / ";
+    let prefix_width = display_width(SEARCH_PREFIX);
+
     // Calculate available widths for content
-    let input_max_width = inner.width.saturating_sub(4) as usize;
+    let input_max_width = inner.width.saturating_sub(prefix_width as u16) as usize;
     let separator_width = inner.width.saturating_sub(4) as usize;
     let result_max_width = inner.width.saturating_sub(6) as usize;
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Search input line with truncation
+    // Search input line with display-width-aware truncation
     let display_query = if search_state.query.is_empty() {
         "Type to search...".to_string()
-    } else if search_state.query.chars().count() > input_max_width {
-        let skip = search_state
-            .query
-            .chars()
-            .count()
-            .saturating_sub(input_max_width)
-            .saturating_sub(1);
-        format!(
-            "…{}",
-            search_state.query.chars().skip(skip).collect::<String>()
-        )
     } else {
-        search_state.query.clone()
+        truncate_from_start(&search_state.query, input_max_width)
     };
 
     let input_style = if search_state.query.is_empty() {
@@ -250,7 +332,10 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
         Catppuccin::search_input().add_modifier(Modifier::BOLD)
     };
 
-    lines.push(Line::styled(format!("  🔍 {}", display_query), input_style));
+    lines.push(Line::styled(
+        format!("{}{}", SEARCH_PREFIX, display_query),
+        input_style,
+    ));
 
     // Dynamic separator width
     lines.push(Line::styled(
@@ -265,16 +350,7 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             Catppuccin::loading().add_modifier(Modifier::BOLD),
         ));
     } else if let Some(ref error) = search_state.error {
-        let error_text = if error.chars().count() > result_max_width {
-            let skip = error
-                .chars()
-                .count()
-                .saturating_sub(result_max_width)
-                .saturating_sub(1);
-            format!("…{}", error.chars().skip(skip).collect::<String>())
-        } else {
-            error.clone()
-        };
+        let error_text = truncate_from_start(error, result_max_width);
         lines.push(Line::styled(
             format!("  ❌ {}", error_text),
             Catppuccin::error(),
@@ -296,7 +372,7 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
 
         // Render results with selection
         let max_visible = (inner.height as usize).saturating_sub(6);
-        let results_to_show = search_state.results.iter().take(25).enumerate();
+        let results_to_show = search_state.results.iter().take(10).enumerate();
 
         for (i, track) in results_to_show {
             if i < search_state.scroll_offset {
@@ -315,22 +391,13 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             };
 
             let text = format!("{} {}. {} - {}", marker, i + 1, track.name, track.artist);
-            let truncated = if text.chars().count() > result_max_width {
-                let skip = text
-                    .chars()
-                    .count()
-                    .saturating_sub(result_max_width)
-                    .saturating_sub(1);
-                format!("…{}", text.chars().skip(skip).collect::<String>())
-            } else {
-                text
-            };
+            let truncated = truncate_from_start(&text, result_max_width);
             lines.push(Line::styled(truncated, style));
         }
 
-        if search_state.results.len() > 25 {
+        if search_state.results.len() > 10 {
             lines.push(Line::styled(
-                format!("  ... and {} more", search_state.results.len() - 25),
+                format!("  ... and {} more", search_state.results.len() - 10),
                 Catppuccin::dim(),
             ));
         }
@@ -339,29 +406,31 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     // Footer with key hints
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        "  Enter: Play  │  a: Add to queue  │  ↑↓: Navigate  │  Esc: Close",
+        "  Enter: Play  │  Tab: Queue  │  ↑↓: Navigate  │  Esc: Close",
         Catppuccin::help(),
     ));
 
     let widget = Paragraph::new(lines).alignment(Alignment::Left);
     frame.render_widget(widget, inner);
 
-    // Set cursor position accounting for truncation
-    // When query is truncated, display shows "…{last N chars}" but cursor_pos is for full query
-    let cursor_x = if search_state.query.chars().count() > input_max_width {
-        // Calculate how many characters were skipped in truncation
-        let skip = search_state
-            .query
-            .chars()
-            .count()
-            .saturating_sub(input_max_width)
-            .saturating_sub(1);
-        // Visible cursor = actual position - skipped chars + 1 (for "…")
-        inner.x + 3 + 1 + (search_state.cursor_pos.saturating_sub(skip) as u16)
-    } else {
-        // No truncation - use raw cursor_pos
-        inner.x + 3 + (search_state.cursor_pos as u16)
-    };
+    // Set cursor position using display width (not character count)
     let cursor_y = inner.y;
+    let cursor_x = {
+        // Use the SearchState helper methods for display width calculations
+        let cursor_display_offset = search_state.cursor_display_offset();
+        let query_width = search_state.query_display_width();
+
+        if query_width > input_max_width {
+            // Text is truncated from start: "…{visible portion}"
+            // Need to compute how much display width was skipped
+            let visible_start_width = query_width.saturating_sub(input_max_width.saturating_sub(1));
+            let visible_cursor_offset = cursor_display_offset.saturating_sub(visible_start_width);
+            // +1 for the "…" prefix
+            inner.x + prefix_width as u16 + 1 + visible_cursor_offset as u16
+        } else {
+            // No truncation - use raw display offset
+            inner.x + prefix_width as u16 + cursor_display_offset as u16
+        }
+    };
     frame.set_cursor_position((cursor_x, cursor_y));
 }

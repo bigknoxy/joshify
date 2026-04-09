@@ -65,8 +65,7 @@ pub enum DeviceEntry {
 }
 
 /// Content state for main view
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum ContentState {
     #[default]
     Home,
@@ -84,17 +83,14 @@ pub enum ContentState {
     SearchErrorLive(String),
 }
 
-
 /// Focus target for Tab navigation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FocusTarget {
     #[default]
     Sidebar,
     MainContent,
     PlayerBar,
 }
-
 
 /// Application state coordinator
 pub struct AppState {
