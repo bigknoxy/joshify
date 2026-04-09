@@ -581,7 +581,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     }
                 }
                 other => {
-                    // Handle LikedSongsPage - append tracks when loading next page
+                    app.loading_more_liked_songs = false;
                     if let ContentState::LikedSongsPage { tracks: new_tracks, total, next_offset } = other {
                         match &app.content_state {
                             ContentState::LikedSongsPage { tracks, .. } => {
@@ -607,14 +607,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 };
                             }
                             _ => {
-                                app.content_state = ContentState::LikedSongsPage {
-                                    tracks: new_tracks,
-                                    total,
-                                    next_offset,
-                                };
+                                // Discard stale LikedSongsPage — user navigated away
                             }
                         }
-                        app.loading_more_liked_songs = false;
                     } else {
                         app.content_state = other;
                     }
@@ -1650,6 +1645,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             match app.focus {
                                 FocusTarget::Sidebar => {
                                     // Select current nav item - show content
+                                    app.loading_more_liked_songs = false;
                                     match app.selected_nav {
                                         joshify::ui::NavItem::LikedSongs => {
                                             app.content_state =
@@ -1713,6 +1709,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         }
                                                         Err(e) => {
                                                             tracing::warn!("Failed to load more liked songs on Enter: {}", e);
+                                                            let _ = tx_clone.send(ContentState::Error(format!("Failed to load more liked songs: {}", e))).await;
                                                         }
                                                     }
                                                 });
@@ -1941,6 +1938,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         }
                                                         Err(e) => {
                                                             tracing::warn!("Failed to load more liked songs: {}", e);
+                                                            let _ = tx_clone.send(ContentState::Error(format!("Failed to load more liked songs: {}", e))).await;
                                                         }
                                                     }
                                                 });
