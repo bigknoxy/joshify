@@ -7,26 +7,32 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-/// The Joshify mascot - green kaiju Godzilla side profile
+/// The Joshify mascot - gorilla with headphones
 fn joshify_logo() -> Vec<Line<'static>> {
     let g = Style::default().fg(Catppuccin::GREEN);
     let gb = Style::default()
         .fg(Catppuccin::GREEN)
         .add_modifier(Modifier::BOLD);
+    let hp = Style::default().fg(Catppuccin::MAUVE);
     vec![
         Line::from(""),
-        Line::styled("            ▄▄▄▄", g),
-        Line::styled("          ▄▀  ◉  ▀▄", g),
-        Line::styled("         ▐▌       ╲▄", g),
-        Line::styled("         ▐ ▌  ▀▀▀▀▀▀▄", g),
-        Line::styled("   ▄▄▄▄▄▄█▀▀▌      ║", g),
-        Line::styled("  ▀▓▓▓▓▓▓▓▓▓▌   ▄▀", g),
-        Line::styled("   ▀▀▀▀▀▓▓▓▓▓▓▓▀", g),
-        Line::styled("     ▄▀  ▐▌  ▐▌", g),
-        Line::styled("    ▄▀    █    █", g),
-        Line::styled("    ▀▀▀▀▀▀▀▀▀▀", g),
+        Line::styled("      ╭═══════╮", hp),
+        Line::styled("    ╔═╝ ◉   ◉ ╚═╗", hp),
+        Line::styled("    ║ ╭───────╮ ║", g),
+        Line::styled("    ║ │ ██████ │ ║", g),
+        Line::styled("    ║ │ ▀▀▀▀▀ │ ║", g),
+        Line::styled("    ╚═╧ ▼▼▼▼▼ ╧═╝", g),
+        Line::styled("        ╲▄▄▄▄▄╱", g),
+        Line::styled("       ╱▓▓▌ ▐▓▓╲", g),
+        Line::styled("      │▓▓▓▌ ▐▓▓▓│", g),
+        Line::styled("      │ ║║   ║║ │", g),
+        Line::styled("      ╰─╯    ╰─╯", g),
         Line::styled(
-            format!("   {} JOSHIFY {}", symbols::MUSIC_NOTE, symbols::MUSIC_NOTE),
+            format!(
+                "     {} JOSHIFY {}",
+                symbols::MUSIC_NOTE,
+                symbols::MUSIC_NOTE
+            ),
             gb,
         ),
         Line::from(""),

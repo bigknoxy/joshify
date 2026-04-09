@@ -10,33 +10,24 @@ use ratatui::{
 
 /// Render queue overlay with actual queue data
 pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state: &QueueState) {
-    // Create centered overlay area
     let overlay_width = (area.width as f32 * 0.7).clamp(40.0, area.width as f32) as u16;
     let overlay_height = (area.height as f32 * 0.7).clamp(15.0, area.height as f32) as u16;
     let overlay_x = (area.width - overlay_width) / 2;
     let overlay_y = (area.height - overlay_height) / 2;
     let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
 
-    // CRITICAL: Clear first to prevent any bleed-through
     frame.render_widget(Clear, overlay_area);
 
-    // Then render solid background block
     let bg = Block::default()
         .style(Style::default().bg(Catppuccin::CRUST).fg(Catppuccin::TEXT))
         .borders(Borders::ALL)
-        .border_style(Catppuccin::secondary().add_modifier(Modifier::BOLD))
+        .border_style(Catppuccin::border_focused().add_modifier(Modifier::BOLD))
         .title(" Queue ")
         .title_style(Catppuccin::focused());
+    let inner = bg.inner(overlay_area);
     frame.render_widget(bg, overlay_area);
 
-    // Build queue content
-    let _content_area = Rect::new(
-        overlay_area.x + 1,
-        overlay_area.y + 1,
-        overlay_area.width - 2,
-        overlay_area.height - 4,
-    );
-
+    let content_width = inner.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line> = Vec::new();
 
     // Currently playing
@@ -63,7 +54,8 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
                 "•"
             };
             let text = format!("{} {}. {} - {}", marker, i + 1, entry.name, entry.artist);
-            lines.push(Line::styled(text, Catppuccin::text()));
+            let truncated = truncate_from_start(&text, content_width);
+            lines.push(Line::styled(truncated, Catppuccin::text()));
         }
         lines.push(Line::from(""));
     }
@@ -97,14 +89,16 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
                     }
                     _ => ("Unknown".to_string(), "Unknown Artist".to_string()),
                 };
+                let text = format!("▶ Now: {} - {}", name, artist);
+                let truncated = truncate_from_start(&text, content_width);
                 lines.push(Line::styled(
-                    format!("▶ Now: {} - {}", name, artist),
+                    truncated,
                     Catppuccin::success().add_modifier(Modifier::BOLD),
                 ));
                 lines.push(Line::from(""));
             }
 
-            for (i, item) in spotify_queue.queue.iter().take(5).enumerate() {
+            for (i, item) in spotify_queue.queue.iter().take(10).enumerate() {
                 let (name, artist) = match item {
                     rspotify::model::PlayableItem::Track(track) => (
                         track.name.clone(),
@@ -121,12 +115,14 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
                     }
                     _ => ("Unknown".to_string(), "Unknown Artist".to_string()),
                 };
-                lines.push(Line::from(format!("{}. {} - {}", i + 1, name, artist)));
+                let text = format!("{}. {} - {}", i + 1, name, artist);
+                let truncated = truncate_from_start(&text, content_width);
+                lines.push(Line::from(truncated));
             }
 
-            if spotify_queue.queue.len() > 5 {
+            if spotify_queue.queue.len() > 10 {
                 lines.push(Line::styled(
-                    format!("... and {} more", spotify_queue.queue.len() - 5),
+                    format!("... and {} more", spotify_queue.queue.len() - 10),
                     Catppuccin::dim(),
                 ));
             }
@@ -150,52 +146,47 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
     lines.push(Line::styled("Press Esc to close", Catppuccin::help()));
 
     let widget = Paragraph::new(lines).alignment(Alignment::Left);
-    frame.render_widget(widget, overlay_area);
+    frame.render_widget(widget, inner);
 }
 
 /// Render help overlay
 pub fn render_help_overlay(frame: &mut ratatui::Frame, area: Rect, help_lines: &[String]) {
-    let lines: Vec<Line> = help_lines
-        .iter()
-        .map(|l| {
-            if l.starts_with("===") {
-                Line::styled(
-                    l.clone(),
-                    Catppuccin::secondary().add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Line::styled(l.clone(), Catppuccin::text())
-            }
-        })
-        .collect();
-
-    render_overlay_base(frame, area, " Help (?/Esc) ", lines);
-}
-
-/// Base overlay renderer - ensures NON-TRANSPARENT background
-fn render_overlay_base(frame: &mut ratatui::Frame, area: Rect, title: &str, content: Vec<Line>) {
-    // Create centered overlay area
     let overlay_width = (area.width as f32 * 0.7).clamp(40.0, area.width as f32) as u16;
     let overlay_height = (area.height as f32 * 0.7).clamp(15.0, area.height as f32) as u16;
     let overlay_x = (area.width - overlay_width) / 2;
     let overlay_y = (area.height - overlay_height) / 2;
     let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
 
-    // CRITICAL: Clear first to prevent any bleed-through
     frame.render_widget(Clear, overlay_area);
 
-    // Then render solid background block
     let bg = Block::default()
         .style(Style::default().bg(Catppuccin::CRUST).fg(Catppuccin::TEXT))
         .borders(Borders::ALL)
-        .border_style(Catppuccin::secondary().add_modifier(Modifier::BOLD))
-        .title(title)
+        .border_style(Catppuccin::border_focused().add_modifier(Modifier::BOLD))
+        .title(" Help (?/Esc) ")
         .title_style(Catppuccin::focused());
+    let inner = bg.inner(overlay_area);
     frame.render_widget(bg, overlay_area);
 
-    // Render content on top
-    let widget = Paragraph::new(content).alignment(Alignment::Left);
-    frame.render_widget(widget, overlay_area);
+    let content_width = inner.width.saturating_sub(2) as usize;
+
+    let lines: Vec<Line> = help_lines
+        .iter()
+        .map(|l| {
+            let truncated = truncate_from_start(l, content_width);
+            if l.starts_with("===") {
+                Line::styled(
+                    truncated,
+                    Catppuccin::secondary().add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Line::styled(truncated, Catppuccin::text())
+            }
+        })
+        .collect();
+
+    let widget = Paragraph::new(lines).alignment(Alignment::Left);
+    frame.render_widget(widget, inner);
 }
 
 /// Get display width of a string in terminal columns
