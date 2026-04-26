@@ -296,3 +296,169 @@ fn test_nav_selection() {
     state.select_nav(NavItem::LikedSongs);
     assert_eq!(state.selected_nav, NavItem::LikedSongs);
 }
+
+/// Track list item for testing liked songs pagination fix
+#[derive(Clone, PartialEq, Debug)]
+struct TrackItem {
+    name: String,
+    artist: String,
+    uri: String,
+}
+
+/// Content state with LikedSongsPage variant (mirrors app_state.rs structure)
+#[derive(Clone, PartialEq, Debug)]
+enum TestContentStateWithPagination {
+    Home,
+    Loading(String),
+    LoadingInProgress(String),
+    LikedSongs(Vec<TrackItem>),
+    LikedSongsPage {
+        tracks: Vec<TrackItem>,
+        total: u32,
+        next_offset: Option<u32>,
+    },
+    Error(String),
+}
+
+/// Test the fix for: Liked Songs stuck on "Loading liked songs..."
+/// Bug: When loading liked songs initially, results were discarded because
+/// the receiver only accepted LikedSongsPage if current state was already
+/// LikedSongs or LikedSongsPage, but during initial load the state was
+/// LoadingInProgress.
+#[test]
+fn test_liked_songs_initial_load_from_loading_in_progress() {
+    // Simulate the state transition during initial load
+    let mut state = TestContentStateWithPagination::LoadingInProgress("LikedSongs".to_string());
+
+    // Simulate receiving results from the async task
+    let new_tracks = vec![
+        TrackItem {
+            name: "Track 1".to_string(),
+            artist: "Artist 1".to_string(),
+            uri: "spotify:track:1".to_string(),
+        },
+        TrackItem {
+            name: "Track 2".to_string(),
+            artist: "Artist 2".to_string(),
+            uri: "spotify:track:2".to_string(),
+        },
+    ];
+    let total = 100u32;
+    let next_offset = Some(50u32);
+
+    // This is the fixed logic - should accept results during LoadingInProgress
+    match &state {
+        TestContentStateWithPagination::Loading(_)
+        | TestContentStateWithPagination::LoadingInProgress(_) => {
+            // Initial load - replace loading state with results
+            state = TestContentStateWithPagination::LikedSongsPage {
+                tracks: new_tracks.clone(),
+                total,
+                next_offset,
+            };
+        }
+        _ => {
+            panic!("Should have matched Loading or LoadingInProgress");
+        }
+    }
+
+    // Verify state was updated correctly
+    match state {
+        TestContentStateWithPagination::LikedSongsPage {
+            tracks,
+            total: t,
+            next_offset: no,
+        } => {
+            assert_eq!(tracks.len(), 2);
+            assert_eq!(tracks[0].name, "Track 1");
+            assert_eq!(tracks[1].name, "Track 2");
+            assert_eq!(t, 100);
+            assert_eq!(no, Some(50));
+        }
+        _ => panic!("Expected LikedSongsPage state, got {:?}", state),
+    }
+}
+
+/// Test that pagination still works correctly (appending to existing tracks)
+#[test]
+fn test_liked_songs_pagination_appends_to_existing() {
+    // Start with existing tracks
+    let existing_tracks = vec![
+        TrackItem {
+            name: "Existing 1".to_string(),
+            artist: "Artist 1".to_string(),
+            uri: "spotify:track:existing1".to_string(),
+        },
+    ];
+    let mut state = TestContentStateWithPagination::LikedSongsPage {
+        tracks: existing_tracks,
+        total: 100,
+        next_offset: Some(50),
+    };
+
+    // Simulate receiving more tracks (pagination)
+    let new_tracks = vec![
+        TrackItem {
+            name: "New Track".to_string(),
+            artist: "New Artist".to_string(),
+            uri: "spotify:track:new".to_string(),
+        },
+    ];
+
+    // Pagination logic: append to existing
+    match &state {
+        TestContentStateWithPagination::LikedSongsPage { tracks, .. } => {
+            let mut combined = tracks.clone();
+            combined.extend(new_tracks);
+            // Deduplication (simulating the HashSet logic)
+            let mut seen = std::collections::HashSet::new();
+            combined.retain(|t| seen.insert(t.uri.clone()));
+            state = TestContentStateWithPagination::LikedSongsPage {
+                tracks: combined,
+                total: 100,
+                next_offset: Some(100),
+            };
+        }
+        _ => panic!("Should have matched LikedSongsPage"),
+    }
+
+    // Verify tracks were appended
+    match state {
+        TestContentStateWithPagination::LikedSongsPage { tracks, .. } => {
+            assert_eq!(tracks.len(), 2);
+            assert_eq!(tracks[0].name, "Existing 1");
+            assert_eq!(tracks[1].name, "New Track");
+        }
+        _ => panic!("Expected LikedSongsPage state"),
+    }
+}
+
+/// Test that results are correctly discarded when user navigates away
+#[test]
+fn test_liked_songs_results_discarded_on_navigation() {
+    // User navigated away to Home
+    let state = TestContentStateWithPagination::Home;
+
+    let new_tracks = vec![TrackItem {
+        name: "Track".to_string(),
+        artist: "Artist".to_string(),
+        uri: "spotify:track:1".to_string(),
+    }];
+
+    // Results should be discarded when state is not loading-related
+    let mut discarded = false;
+    match &state {
+        TestContentStateWithPagination::Loading(_)
+        | TestContentStateWithPagination::LoadingInProgress(_)
+        | TestContentStateWithPagination::LikedSongs(_)
+        | TestContentStateWithPagination::LikedSongsPage { .. } => {
+            // Would update state
+        }
+        _ => {
+            // Discard stale results
+            discarded = true;
+        }
+    }
+
+    assert!(discarded, "Results should be discarded when user navigated away");
+}

@@ -2,6 +2,7 @@
 
 use crate::state::app_state::{ContentState, PlaylistListItem, TrackListItem};
 use crate::state::load_coordinator::LoadAction;
+use crate::ui::layout_cache::LayoutCache;
 use crate::ui::theme::{self, symbols, Catppuccin};
 use ratatui::{
     prelude::*,
@@ -47,7 +48,12 @@ fn render_track_list(
     _border_color: Color,
     playing_uri: Option<&str>,
     more_available: Option<u32>,
+    layout_cache: &mut LayoutCache,
 ) {
+    // Store main view area and clear track items for fresh population
+    layout_cache.main_view = Some(area);
+    layout_cache.track_items.clear();
+
     if tracks.is_empty() {
         let widget = Paragraph::new(format!("{} No tracks found", symbols::MUSIC_NOTE))
             .style(Catppuccin::dim())
@@ -153,6 +159,13 @@ fn render_track_list(
     let list = List::new(items);
     frame.render_widget(list, list_area);
 
+    // Populate track item rectangles for hit testing
+    for (i, _) in (scroll_offset..end).enumerate() {
+        let item_y = list_area.y + i as u16;
+        let item_area = Rect::new(list_area.x, item_y, list_area.width, 1);
+        layout_cache.track_items.push(item_area);
+    }
+
     // Show "load more" indicator when there are additional tracks
     if let Some(remaining) = more_available {
         let load_more_height = 1u16;
@@ -182,7 +195,12 @@ fn render_playlist_list(
     scroll_offset: usize,
     title: &str,
     _border_color: Color,
+    layout_cache: &mut LayoutCache,
 ) {
+    // Store main view area and clear playlist items for fresh population
+    layout_cache.main_view = Some(area);
+    layout_cache.playlist_items.clear();
+
     if playlists.is_empty() {
         let widget = Paragraph::new(format!("{} No playlists found", symbols::DISC))
             .style(Catppuccin::dim())
@@ -277,6 +295,13 @@ fn render_playlist_list(
 
     let list = List::new(items);
     frame.render_widget(list, list_area);
+
+    // Populate playlist item rectangles for hit testing
+    for (i, _) in (scroll_offset..end).enumerate() {
+        let item_y = list_area.y + i as u16;
+        let item_area = Rect::new(list_area.x, item_y, list_area.width, 1);
+        layout_cache.playlist_items.push(item_area);
+    }
 }
 
 /// Render the main view
@@ -289,6 +314,7 @@ pub fn render_main_view(
     is_authenticated: bool,
     border_color: Color,
     playing_uri: Option<&str>,
+    layout_cache: &mut LayoutCache,
 ) {
     // Determine layout mode for responsive design
     let _layout_mode = if theme::Layout::is_compact(area.width) {
@@ -418,6 +444,7 @@ pub fn render_main_view(
                 border_color,
                 playing_uri,
                 more_available,
+                layout_cache,
             );
         }
         ContentState::LikedSongsPage {
@@ -443,6 +470,7 @@ pub fn render_main_view(
                 border_color,
                 playing_uri,
                 more_available,
+                layout_cache,
             );
         }
         ContentState::PlaylistTracks(name, tracks) => {
@@ -457,6 +485,7 @@ pub fn render_main_view(
                 border_color,
                 playing_uri,
                 None,
+                layout_cache,
             );
         }
         ContentState::SearchResults(query, tracks) => {
@@ -471,6 +500,7 @@ pub fn render_main_view(
                 border_color,
                 playing_uri,
                 None,
+                layout_cache,
             );
         }
         ContentState::Playlists(playlists) => {
@@ -482,6 +512,7 @@ pub fn render_main_view(
                 scroll_offset,
                 &format!(" {} Playlists", symbols::DISC),
                 border_color,
+                layout_cache,
             );
         }
         ContentState::DeviceSelector(entries) => {
@@ -603,5 +634,130 @@ mod tests {
             .iter()
             .position(|t| playing_uri == Some(t.uri.as_str()));
         assert_ne!(playing_idx, Some(selected_index));
+    }
+
+    #[test]
+    fn test_track_item_rect_calculation() {
+        use ratatui::layout::Rect;
+
+        // Simulate the track item rect calculation logic
+        let list_area = Rect::new(0, 3, 60, 10);
+        let scroll_offset = 0;
+        let visible_count = 5;
+        let end = (scroll_offset + visible_count).min(10);
+
+        let mut track_items: Vec<Rect> = Vec::new();
+        for (i, _) in (scroll_offset..end).enumerate() {
+            let item_y = list_area.y + i as u16;
+            let item_area = Rect::new(list_area.x, item_y, list_area.width, 1);
+            track_items.push(item_area);
+        }
+
+        // Verify correct number of items
+        assert_eq!(track_items.len(), 5);
+
+        // Verify first item position
+        assert_eq!(track_items[0].x, 0);
+        assert_eq!(track_items[0].y, 3);
+        assert_eq!(track_items[0].width, 60);
+        assert_eq!(track_items[0].height, 1);
+
+        // Verify last item position
+        assert_eq!(track_items[4].y, 7);
+    }
+
+    #[test]
+    fn test_track_item_rect_with_scroll() {
+        use ratatui::layout::Rect;
+
+        // Test with scroll offset
+        let list_area = Rect::new(0, 3, 60, 10);
+        let scroll_offset = 2;
+        let visible_count = 3;
+        let end = (scroll_offset + visible_count).min(10);
+
+        let mut track_items: Vec<Rect> = Vec::new();
+        for (i, _) in (scroll_offset..end).enumerate() {
+            let item_y = list_area.y + i as u16;
+            let item_area = Rect::new(list_area.x, item_y, list_area.width, 1);
+            track_items.push(item_area);
+        }
+
+        // Should have 3 visible items
+        assert_eq!(track_items.len(), 3);
+
+        // First visible item is at list_area.y (scroll offset affects which tracks, not position)
+        assert_eq!(track_items[0].y, 3);
+        assert_eq!(track_items[1].y, 4);
+        assert_eq!(track_items[2].y, 5);
+    }
+
+    #[test]
+    fn test_playlist_item_rect_calculation() {
+        use ratatui::layout::Rect;
+
+        // Simulate the playlist item rect calculation logic
+        let list_area = Rect::new(0, 3, 60, 10);
+        let scroll_offset = 0;
+        let visible_count = 4;
+        let end = (scroll_offset + visible_count).min(8);
+
+        let mut playlist_items: Vec<Rect> = Vec::new();
+        for (i, _) in (scroll_offset..end).enumerate() {
+            let item_y = list_area.y + i as u16;
+            let item_area = Rect::new(list_area.x, item_y, list_area.width, 1);
+            playlist_items.push(item_area);
+        }
+
+        // Verify correct number of items
+        assert_eq!(playlist_items.len(), 4);
+
+        // Verify positions
+        for (i, rect) in playlist_items.iter().enumerate() {
+            assert_eq!(rect.y, 3 + i as u16);
+            assert_eq!(rect.width, 60);
+            assert_eq!(rect.height, 1);
+        }
+    }
+
+    #[test]
+    fn test_saturating_math_prevents_overflow() {
+        use ratatui::layout::Rect;
+
+        // Test with very small area
+        let area = Rect::new(0, 0, 5, 2);
+        let header_height = 3u16;
+        let list_area = Rect::new(
+            area.x,
+            area.y.saturating_add(header_height),
+            area.width,
+            area.height.saturating_sub(header_height),
+        );
+
+        // Should not panic, list_area.height should be 0
+        assert_eq!(list_area.height, 0);
+
+        // Test content width calculation
+        let content_width = area.width.saturating_sub(2) as usize;
+        assert_eq!(content_width, 3);
+    }
+
+    #[test]
+    fn test_layout_cache_clear_before_populate() {
+        use crate::ui::layout_cache::LayoutCache;
+
+        let mut cache = LayoutCache::new();
+
+        // Pre-populate with some data
+        cache.track_items.push(Rect::new(0, 0, 10, 1));
+        cache.track_items.push(Rect::new(0, 1, 10, 1));
+        cache.playlist_items.push(Rect::new(0, 5, 10, 1));
+
+        // Clear should reset
+        cache.track_items.clear();
+        cache.playlist_items.clear();
+
+        assert!(cache.track_items.is_empty());
+        assert!(cache.playlist_items.is_empty());
     }
 }

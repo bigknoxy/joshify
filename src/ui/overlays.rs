@@ -149,46 +149,6 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
     frame.render_widget(widget, inner);
 }
 
-/// Render help overlay
-pub fn render_help_overlay(frame: &mut ratatui::Frame, area: Rect, help_lines: &[String]) {
-    let overlay_width = (area.width as f32 * 0.7).clamp(40.0, area.width as f32) as u16;
-    let overlay_height = (area.height as f32 * 0.7).clamp(15.0, area.height as f32) as u16;
-    let overlay_x = (area.width - overlay_width) / 2;
-    let overlay_y = (area.height - overlay_height) / 2;
-    let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
-
-    frame.render_widget(Clear, overlay_area);
-
-    let bg = Block::default()
-        .style(Style::default().bg(Catppuccin::CRUST).fg(Catppuccin::TEXT))
-        .borders(Borders::ALL)
-        .border_style(Catppuccin::border_focused().add_modifier(Modifier::BOLD))
-        .title(" Help (?/Esc) ")
-        .title_style(Catppuccin::focused());
-    let inner = bg.inner(overlay_area);
-    frame.render_widget(bg, overlay_area);
-
-    let content_width = inner.width.saturating_sub(2) as usize;
-
-    let lines: Vec<Line> = help_lines
-        .iter()
-        .map(|l| {
-            let truncated = truncate_from_start(l, content_width);
-            if l.starts_with("===") {
-                Line::styled(
-                    truncated,
-                    Catppuccin::secondary().add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Line::styled(truncated, Catppuccin::text())
-            }
-        })
-        .collect();
-
-    let widget = Paragraph::new(lines).alignment(Alignment::Left);
-    frame.render_widget(widget, inner);
-}
-
 /// Get display width of a string in terminal columns
 fn display_width(s: &str) -> usize {
     use unicode_width::UnicodeWidthStr;

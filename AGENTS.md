@@ -78,6 +78,73 @@ src/
 4. **Context playback**: Use `Offset::Uri(track_uri)` for playlist context (not `Offset::Position`)
 5. **Single-level tokio spawn**: Avoid nested `tokio::spawn` — flatten async boundaries
 
+## Development Workflow
+
+### Process
+1. **Research** → Understand the problem, review existing code, check patterns
+2. **Plan** → Document approach, decisions, alternatives considered
+3. **Review Plan** → Self-review or use subagents for feedback
+4. **Implement** → Write code following all style guidelines
+5. **Code Review** → Use `@code-simplifier` for review
+6. **QA Testing** → Full test suite: `cargo test`, `cargo clippy`, manual verification
+7. **Commit** → Clean commit with descriptive message
+
+### Required Documentation
+All work must update these files:
+
+1. **tasks/todo.md** - Running task list with status
+2. **.learnings/learnings.md** - New patterns, bugs, gotchas discovered
+3. **.learnings/history.md** - Development history log
+
+**Format for learnings.md**:
+```markdown
+### YYYY-MM-DD
+#### Category: [bug|pattern|decision|gotcha]
+**Learned**: [What was learned]
+**Context**: [Where it happened]
+**Prevention**: [How to avoid in future]
+**File**: [Relevant file]
+```
+
+**Format for history.md**:
+```markdown
+### YYYY-MM-DD: [Feature/Change Name]
+**Branch**: [branch]
+**Status**: [In Progress|Complete|Blocked]
+**What**: [Bullet points]
+**Decisions**: [Why choices were made]
+**Files**: [Created/modified]
+**Testing**: [Coverage]
+**Learnings**: [What to remember]
+```
+
+### Expert Subagents
+Use specialized agents for appropriate tasks:
+- `@rust-tui` - Ratatui/crossterm UI components
+- `@rust-test` - Test writing and validation
+- `@rust-perf` - Performance optimization
+- `@code-simplifier` - Code review and simplification
+- `@spotify-api` - Spotify Web API integration
+- `@librespot` - Local playback integration
+
+### Skills to Use
+- `/autoplan` - Auto-review pipeline for plans
+- `/qa` - Systematic QA testing
+- `/review` - Pre-landing code review
+- `/document-release` - Post-ship documentation
+- `/health` - Code quality dashboard
+
+### Verification Rules
+- **Never assume** - Verify ALL with tests, logs, or manual checks
+- **All changes need tests** - Unit tests for logic, integration tests for flows
+- **Run before commit**:
+  ```bash
+  cargo test --lib
+  cargo clippy --message-format=short
+  cargo fmt --check
+  ```
+- **Manual verification** for UI changes - test at 80x24 and larger terminals
+
 ## Known Issues
 
 - 100 clippy warnings (pre-existing, mostly deprecated fields/unused imports)

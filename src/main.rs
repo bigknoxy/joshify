@@ -64,7 +64,8 @@ struct App {
     event_batch: Vec<librespot::playback::player::PlayerEvent>,
     focus: FocusTarget,
     show_queue: bool,
-    help_lines: Option<Vec<String>>,
+    help_state: Option<joshify::ui::HelpOverlayState>,
+    help_content: Option<joshify::ui::HelpContent>,
     area: Option<Rect>,
     content_state: ContentState,
     selected_index: usize,
@@ -78,6 +79,10 @@ struct App {
     player_event_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>>,
     loading_more_liked_songs: bool,
+    /// Layout cache for mouse hit testing
+    layout_cache: joshify::ui::LayoutCache,
+    /// Mouse state for tracking double-clicks
+    mouse_state: joshify::ui::MouseState,
 }
 
 impl App {
@@ -98,7 +103,8 @@ impl App {
             event_batch: Vec::with_capacity(32),
             focus: FocusTarget::Sidebar,
             show_queue: false,
-            help_lines: None,
+            help_state: None,
+            help_content: None,
             area: None,
             content_state: ContentState::Home,
             selected_index: 0,
@@ -111,6 +117,8 @@ impl App {
             local_player: None,
             player_event_rx: None,
             loading_more_liked_songs: false,
+            layout_cache: joshify::ui::LayoutCache::new(),
+            mouse_state: joshify::ui::MouseState::new(),
         }
     }
 
@@ -606,6 +614,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     next_offset,
                                 };
                             }
+                            ContentState::Loading(LoadAction::LikedSongs)
+                            | ContentState::LoadingInProgress(LoadAction::LikedSongs) => {
+                                // Initial load — replace loading state with results
+                                app.content_state = ContentState::LikedSongsPage {
+                                    tracks: new_tracks,
+                                    total,
+                                    next_offset,
+                                };
+                            }
                             _ => {
                                 // Discard stale LikedSongsPage — user navigated away
                             }
@@ -904,6 +921,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             terminal.draw(|frame| {
                 let area = frame.area();
 
+                // Clear layout cache at start of each frame for fresh hit testing
+                app.layout_cache.clear();
+
                 // Check minimum terminal size
                 if area.width < 50 || area.height < 20 {
                     let warning = Paragraph::new(
@@ -946,7 +966,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 let main_focused = app.focus == FocusTarget::MainContent;
                 let player_focused = app.focus == FocusTarget::PlayerBar;
 
-                joshify::ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused);
+                joshify::ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused, &mut app.layout_cache);
                 joshify::ui::render_main_view(
                     frame,
                     main_content,
@@ -960,6 +980,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         Color::Green
                     },
                     app.player_state.current_track_uri.as_deref(),
+                    &mut app.layout_cache,
                 );
 
                 let track_name = app
@@ -990,14 +1011,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     app.player_state.repeat_mode,
                     app.queue_state.radio_mode,
                     &app.player_state.title_scroll_state,
+                    &mut app.layout_cache,
                 );
 
                 // Overlays (rendered last so they appear on top)
                 if app.show_queue {
                     joshify::ui::render_queue_overlay(frame, area, &app.queue_state);
                 }
-                if let Some(ref help_lines) = app.help_lines {
-                    joshify::ui::render_help_overlay(frame, area, help_lines);
+                if let (Some(ref content), Some(ref mut state)) = (&app.help_content, &mut app.help_state) {
+                    joshify::ui::render_help_overlay(frame, area, content, state);
                 }
 
                 // Search overlay - clean modal with live results
@@ -1110,7 +1132,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     .artists
                                                     .first()
                                                     .map(|a| a.name.clone())
-                                                    .unwrap_or_else(|| String::new());
+                                                    .unwrap_or_default();
                                                 TrackListItem {
                                                     name: t.track.name,
                                                     artist,
@@ -1153,7 +1175,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     .artists
                                                     .first()
                                                     .map(|a| a.name.clone())
-                                                    .unwrap_or_else(|| String::new());
+                                                    .unwrap_or_default();
                                                 TrackListItem {
                                                     name: t.track.name,
                                                     artist,
@@ -2185,66 +2207,366 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                         // Help
                         crossterm::event::KeyCode::Char('?') => {
-                            if app.help_lines.is_some() {
-                                app.help_lines = None;
+                            if app.help_content.is_some() {
+                                app.help_content = None;
+                                app.help_state = None;
                             } else {
-                                app.help_lines = Some(vec![
-                                    "=== Navigation ===".into(),
-                                    "Tab/Shift+Tab: Focus sections".into(),
-                                    "j/k or ↑/↓: Navigate".into(),
-                                    "Enter: Select/Play".into(),
-                                    "".into(),
-                                    "=== Search ===".into(),
-                                    "/: Start search".into(),
-                                    "Esc: Cancel search".into(),
-                                    "".into(),
-                                    "=== Playback ===".into(),
-                                    "Space: Play/Pause (global)".into(),
-                                    "n: Next track".into(),
-                                    "p: Previous track".into(),
-                                    "←/→: Seek ±10s".into(),
-                                    "".into(),
-                                    "=== Queue ===".into(),
-                                    "Q: Toggle queue view".into(),
-                                    "a: Add highlighted track to queue".into(),
-                                    "c: Clear queue (in queue view)".into(),
-                                    "D: Remove highlighted item (in queue view)".into(),
-                                    "Enter: Play selected queue item".into(),
-                                    "".into(),
-                                    "=== Volume ===".into(),
-                                    "+/-: Volume up/down".into(),
-                                    "".into(),
-                                    "=== System ===".into(),
-                                    "d: Select device".into(),
-                                    "c: Reconfigure".into(),
-                                    "q / Ctrl+C: Quit".into(),
-                                    "Esc: Close overlays".into(),
-                                ]);
+                                app.help_content = Some(joshify::ui::HelpContent::joshify_help());
+                                app.help_state = Some(joshify::ui::HelpOverlayState::default());
                             }
                         }
                         crossterm::event::KeyCode::Esc => {
                             app.show_queue = false;
-                            app.help_lines = None;
+                            app.help_content = None;
+                            app.help_state = None;
                         }
                         _ => {}
                     }
                 }
                 crossterm::event::Event::Mouse(mouse) => {
-                    if let crossterm::event::MouseEventKind::Down(
-                        crossterm::event::MouseButton::Left,
-                    ) = mouse.kind
-                    {
-                        // Click on top area to focus sidebar, middle for main, bottom for player
-                        if let Some(area) = app.area {
-                            let ratio = mouse.row as f32 / area.height as f32;
-                            if ratio < 0.1 {
-                                app.focus = FocusTarget::Sidebar;
-                            } else if ratio < 0.8 {
-                                app.focus = FocusTarget::MainContent;
-                            } else {
-                                app.focus = FocusTarget::PlayerBar;
+                    let action = joshify::ui::handle_mouse_event(
+                        mouse,
+                        &app.layout_cache,
+                        &mut app.mouse_state,
+                    );
+
+                    match action {
+                        joshify::ui::MouseAction::SelectNavItem(nav) => {
+                            app.selected_nav = nav;
+                            match nav {
+                                NavItem::LikedSongs => {
+                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::LikedSongs);
+                                    app.selected_index = 0;
+                                    app.scroll_offset = 0;
+                                }
+                                NavItem::Playlists => {
+                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::Playlists);
+                                    app.selected_index = 0;
+                                    app.scroll_offset = 0;
+                                }
+                                NavItem::Home => {
+                                    app.content_state = ContentState::Home;
+                                }
+                                NavItem::Search => {
+                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::Search {
+                                        query: "Type to search...".to_string(),
+                                    });
+                                }
+                                NavItem::Library => {
+                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::Search {
+                                        query: "Loading library...".to_string(),
+                                    });
+                                }
                             }
                         }
+                        joshify::ui::MouseAction::SelectTrack(index) => {
+                            app.selected_index = index;
+                            if app.selected_index < app.scroll_offset {
+                                app.scroll_offset = app.selected_index;
+                            }
+                        }
+                        joshify::ui::MouseAction::SelectPlaylist(index) => {
+                            app.selected_index = index;
+                            if app.selected_index < app.scroll_offset {
+                                app.scroll_offset = app.selected_index;
+                            }
+                        }
+                        joshify::ui::MouseAction::OpenPlaylist(index) => {
+                            // Double-click on playlist - open its tracks
+                            if let ContentState::Playlists(playlists) = &app.content_state {
+                                if !playlists.is_empty() && index < playlists.len() {
+                                    let playlist = &playlists[index];
+                                    app.content_state = ContentState::Loading(
+                                        joshify::state::LoadAction::PlaylistTracks {
+                                            name: playlist.name.clone(),
+                                            id: playlist.id.clone(),
+                                        },
+                                    );
+                                    app.selected_index = 0;
+                                    app.scroll_offset = 0;
+                                }
+                            }
+                        }
+                        joshify::ui::MouseAction::PlayTrack(index) => {
+                            // Double-click on track - play with playlist context if available
+                            let tracks = match &app.content_state {
+                                ContentState::LikedSongs(t)
+                                | ContentState::LikedSongsPage { tracks: t, .. }
+                                | ContentState::PlaylistTracks(_, t)
+                                | ContentState::SearchResults(_, t) => Some(t),
+                                _ => None,
+                            };
+
+                            if let Some(tracks) = tracks {
+                                if !tracks.is_empty() && index < tracks.len() {
+                                    let track = &tracks[index];
+                                    app.selected_index = index;
+
+                                    // Set up playlist context if viewing a playlist
+                                    if let ContentState::PlaylistTracks(playlist_id, _) = &app.content_state {
+                                        let playlist_uri = format!("spotify:playlist:{}", playlist_id);
+                                        app.current_context = Some(PlaybackContext::Playlist {
+                                            uri: playlist_uri,
+                                            name: playlist_id.clone(),
+                                            track_index: index,
+                                        });
+                                    }
+
+                                    // Track the highlighted item for queue operations
+                                    app.highlighted_item = Some(HighlightedItem {
+                                        uri: track.uri.clone(),
+                                        name: track.name.clone(),
+                                        artist: track.artist.clone(),
+                                        _context: app.current_context.clone(),
+                                    });
+
+                                    if app.playback_mode == PlaybackMode::Local {
+                                        // Play locally with librespot
+                                        if let Some(ref player) = app.local_player {
+                                            match player.load_uri(&track.uri, true, 0) {
+                                                Ok(_) => {
+                                                    app.player_state.current_track_name = Some(track.name.clone());
+                                                    app.player_state.current_artist_name = Some(track.artist.clone());
+                                                    app.player_state.current_track_uri = Some(track.uri.clone());
+                                                    app.player_state.is_playing = true;
+                                                    app.player_state.progress_ms = 0;
+                                                    app.status_message = Some(format!(
+                                                        "Playing locally: {}",
+                                                        track.name
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    app.status_message = Some(format!(
+                                                        "Local playback error: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            app.status_message = Some(
+                                                "Local player not initialized".to_string(),
+                                            );
+                                        }
+                                    } else {
+                                        // Remote playback via Spotify API
+                                        if let Some(ref client) = client {
+                                            let c = client.clone();
+                                            let track_uri = track.uri.clone();
+                                            let track_name = track.name.clone();
+                                            let context = app.current_context.clone();
+                                            let playlist_id_for_context = if let ContentState::PlaylistTracks(pid, _) = &app.content_state {
+                                                Some(pid.clone())
+                                            } else {
+                                                None
+                                            };
+
+                                            tokio::spawn(async move {
+                                                let guard = c.lock().await;
+                                                if let Ok(devices) = guard.available_devices().await {
+                                                    if let Some(device) = devices.first() {
+                                                        if let Some(ref device_id) = device.id {
+                                                            let _ = guard.transfer_playback(device_id).await;
+                                                        }
+                                                    }
+                                                }
+
+                                                // Use playlist context if available
+                                                if let Some(pid) = playlist_id_for_context {
+                                                    let _playlist_uri = format!("spotify:playlist:{}", pid);
+                                                    if let Ok(playlist_id) = rspotify::model::PlaylistId::from_id(&pid) {
+                                                        let _ = guard.oauth.start_context_playback(
+                                                            rspotify::model::PlayContextId::from(playlist_id),
+                                                            None,
+                                                            Some(rspotify::model::Offset::Uri(track_uri.clone())),
+                                                            None,
+                                                        ).await;
+                                                    } else {
+                                                        // Fallback to direct track playback
+                                                        let _ = guard.start_playback(vec![track_uri], None).await;
+                                                    }
+                                                } else if let Some(PlaybackContext::Playlist { uri, .. }) = &context {
+                                                    // Use existing context if available
+                                                    let playlist_id_str = uri.strip_prefix("spotify:playlist:").unwrap_or(uri);
+                                                    if let Ok(playlist_id) = rspotify::model::PlaylistId::from_id(playlist_id_str) {
+                                                        let _ = guard.oauth.start_context_playback(
+                                                            rspotify::model::PlayContextId::from(playlist_id),
+                                                            None,
+                                                            Some(rspotify::model::Offset::Uri(track_uri.clone())),
+                                                            None,
+                                                        ).await;
+                                                    } else {
+                                                        let _ = guard.start_playback(vec![track_uri], None).await;
+                                                    }
+                                                } else {
+                                                    // No context - play track directly
+                                                    let _ = guard.start_playback(vec![track_uri], None).await;
+                                                }
+                                            });
+                                            app.status_message = Some(format!("Playing: {}", track_name));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        joshify::ui::MouseAction::SetFocus(focus) => {
+                            app.focus = focus;
+                        }
+                        joshify::ui::MouseAction::TogglePlayPause => {
+                            // Trigger play/pause
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    if app.player_state.is_playing {
+                                        player.pause();
+                                    } else {
+                                        player.play();
+                                    }
+                                }
+                            } else if let Some(ref client) = client {
+                                let c = client.clone();
+                                let is_playing = app.player_state.is_playing;
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    if is_playing {
+                                        let _ = guard.playback_pause().await;
+                                    } else {
+                                        let _ = guard.playback_resume().await;
+                                    }
+                                });
+                            }
+                        }
+                        joshify::ui::MouseAction::SkipNext => {
+                            // Next track
+                            if let Some(ref client) = client {
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.playback_next().await;
+                                });
+                            }
+                        }
+                        joshify::ui::MouseAction::SkipPrevious => {
+                            // Previous track
+                            if let Some(ref client) = client {
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.playback_previous().await;
+                                });
+                            }
+                        }
+                        joshify::ui::MouseAction::ToggleQueue => {
+                            app.show_queue = !app.show_queue;
+                        }
+                        joshify::ui::MouseAction::CloseOverlay => {
+                            app.show_queue = false;
+                            app.help_content = None;
+                            app.help_state = None;
+                        }
+                        joshify::ui::MouseAction::ScrollUp => {
+                            // Handle scroll up based on focus
+                            match app.focus {
+                                FocusTarget::Sidebar => {
+                                    // Navigate sidebar up
+                                    let nav_items = NavItem::all();
+                                    let current_idx = nav_items.iter().position(|&n| n == app.selected_nav).unwrap_or(0);
+                                    if current_idx > 0 {
+                                        app.selected_nav = nav_items[current_idx - 1];
+                                    }
+                                }
+                                FocusTarget::MainContent => {
+                                    // Scroll up in list
+                                    if app.selected_index > 0 {
+                                        app.selected_index -= 1;
+                                        if app.selected_index < app.scroll_offset {
+                                            app.scroll_offset = app.selected_index;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        joshify::ui::MouseAction::ScrollDown => {
+                            // Handle scroll down based on focus
+                            match app.focus {
+                                FocusTarget::Sidebar => {
+                                    // Navigate sidebar down
+                                    let nav_items = NavItem::all();
+                                    let current_idx = nav_items.iter().position(|&n| n == app.selected_nav).unwrap_or(0);
+                                    if current_idx < nav_items.len() - 1 {
+                                        app.selected_nav = nav_items[current_idx + 1];
+                                    }
+                                }
+                                FocusTarget::MainContent => {
+                                    // Scroll down in list
+                                    let len = match &app.content_state {
+                                        ContentState::LikedSongs(t) => t.len(),
+                                        ContentState::LikedSongsPage { tracks, .. } => tracks.len(),
+                                        ContentState::PlaylistTracks(_, t) => t.len(),
+                                        ContentState::SearchResults(_, t) => t.len(),
+                                        _ => 0,
+                                    };
+                                    if len > 0 && app.selected_index < len - 1 {
+                                        app.selected_index += 1;
+                                        if app.selected_index >= app.scroll_offset + 10 {
+                                            app.scroll_offset = app.selected_index - 9;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        joshify::ui::MouseAction::AdjustVolume(delta) => {
+                            // Adjust volume
+                            let new_volume = (app.player_state.volume as i32 + delta).clamp(0, 100) as u32;
+                            app.player_state.volume = new_volume;
+                            
+                            if app.playback_mode == PlaybackMode::Local {
+                                // Use local player for volume control
+                                if let Some(ref player) = app.local_player {
+                                    // Convert 0-100 percentage to 0-65535 for librespot
+                                    // Use u32 for calculation to prevent overflow, then cast to u16
+                                    let new_vol = (new_volume as u32 * 65535 / 100) as u16;
+                                    player.set_volume(new_vol);
+                                }
+                            } else if let Some(ref client) = client {
+                                // Use Spotify API for remote playback
+                                let c = client.clone();
+                                let volume = new_volume;
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.set_volume(volume).await;
+                                });
+                            }
+                        }
+                        joshify::ui::MouseAction::ToggleShuffle => {
+                            // Toggle shuffle
+                            if let Some(ref client) = client {
+                                let new_shuffle = !app.player_state.shuffle;
+                                app.player_state.shuffle = new_shuffle;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.toggle_shuffle(new_shuffle).await;
+                                });
+                            }
+                        }
+                        joshify::ui::MouseAction::CycleRepeat => {
+                            // Cycle repeat mode
+                            if let Some(ref client) = client {
+                                app.player_state.repeat_mode = app.player_state.repeat_mode.cycle();
+                                let c = client.clone();
+                                let mode = match app.player_state.repeat_mode {
+                                    joshify::state::player_state::RepeatMode::Off => rspotify::model::RepeatState::Off,
+                                    joshify::state::player_state::RepeatMode::Track => rspotify::model::RepeatState::Track,
+                                    joshify::state::player_state::RepeatMode::Context => rspotify::model::RepeatState::Context,
+                                };
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    let _ = guard.set_repeat(mode).await;
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}

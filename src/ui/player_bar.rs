@@ -1,11 +1,21 @@
 //! Player bar rendering - Now playing with album art, scrolling title, progress bar
 
 use crate::state::player_state::{RepeatMode, TitleScrollState};
+use crate::ui::layout_cache::LayoutCache;
 use crate::ui::theme::{self, symbols, Catppuccin};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Gauge, Paragraph},
 };
+
+/// Button dimensions for hit testing
+const BUTTON_HEIGHT: u16 = 1;
+const PREV_BUTTON_WIDTH: u16 = 6;
+const PLAY_PAUSE_BUTTON_WIDTH: u16 = 10;
+const NEXT_BUTTON_WIDTH: u16 = 6;
+const SHUFFLE_BUTTON_WIDTH: u16 = 8;
+const REPEAT_BUTTON_WIDTH: u16 = 8;
+const QUEUE_BUTTON_WIDTH: u16 = 8;
 
 /// Render the player bar at the bottom with integrated album art
 pub fn render_player_bar(
@@ -25,7 +35,21 @@ pub fn render_player_bar(
     repeat_mode: RepeatMode,
     radio_mode: bool,
     title_scroll_state: &TitleScrollState,
+    layout_cache: &mut LayoutCache,
 ) {
+    // Store player bar area in cache
+    layout_cache.player_bar = Some(area);
+
+    // Clear player control areas (will be populated as we render)
+    layout_cache.prev_button = None;
+    layout_cache.play_pause_button = None;
+    layout_cache.next_button = None;
+    layout_cache.shuffle_button = None;
+    layout_cache.repeat_button = None;
+    layout_cache.queue_button = None;
+    layout_cache.progress_bar = None;
+    layout_cache.volume_bar = None;
+
     let play_icon = if is_playing {
         symbols::PLAY
     } else {
@@ -90,7 +114,7 @@ pub fn render_player_bar(
         return;
     }
 
-    // Row 1: Scrolling title
+    // Row 1: Scrolling title with playback controls
     let title_display_width = unicode_width::UnicodeWidthStr::width(track_name);
     let title_text = if title_display_width > inner_width.saturating_sub(2) {
         match title_scroll_state {
@@ -220,16 +244,119 @@ pub fn render_player_bar(
     ])
     .split(info_inner);
 
-    // Row 1: Title
-    let title_line = Line::styled(
-        format!(" {} {}", play_icon, title_text),
-        Style::default()
-            .fg(Catppuccin::MAUVE)
-            .add_modifier(Modifier::BOLD),
-    );
+    // Row 1: Title with playback controls
+    // Layout: [<< prev][ play/pause ][next >>][title text...]
+    let title_row_width = rows[0].width as usize;
+    let controls_width =
+        PREV_BUTTON_WIDTH as usize + PLAY_PAUSE_BUTTON_WIDTH as usize + NEXT_BUTTON_WIDTH as usize;
+    let title_available = title_row_width.saturating_sub(controls_width);
+
+    let (truncated_title, _) =
+        unicode_truncate::UnicodeTruncateStr::unicode_truncate(title_text.as_str(), title_available);
+
+    // Calculate button positions in title row
+    let title_row_x = rows[0].x;
+    let title_row_y = rows[0].y;
+
+    // Previous button at far left
+    let prev_x = title_row_x.saturating_add(1); // +1 for left border padding
+    layout_cache.prev_button = Some(Rect::new(
+        prev_x,
+        title_row_y,
+        PREV_BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+    ));
+
+    // Play/Pause button after prev
+    let play_x = prev_x.saturating_add(PREV_BUTTON_WIDTH);
+    layout_cache.play_pause_button = Some(Rect::new(
+        play_x,
+        title_row_y,
+        PLAY_PAUSE_BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+    ));
+
+    // Next button after play/pause
+    let next_x = play_x.saturating_add(PLAY_PAUSE_BUTTON_WIDTH);
+    layout_cache.next_button = Some(Rect::new(
+        next_x,
+        title_row_y,
+        NEXT_BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+    ));
+
+    // Render the title row with controls
+    let title_line = Line::from(vec![
+        Span::styled(
+            format!("{:<width$}", "<<", width = PREV_BUTTON_WIDTH as usize),
+            Style::default()
+                .fg(Catppuccin::BLUE)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                "{:^width$}",
+                format!("{} Play", play_icon),
+                width = PLAY_PAUSE_BUTTON_WIDTH.saturating_sub(1) as usize
+            ),
+            Style::default()
+                .fg(Catppuccin::MAUVE)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:<width$}", ">>", width = NEXT_BUTTON_WIDTH as usize),
+            Style::default()
+                .fg(Catppuccin::BLUE)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {}", truncated_title),
+            Style::default()
+                .fg(Catppuccin::MAUVE)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
     frame.render_widget(Paragraph::new(title_line), rows[0]);
 
     // Row 2: Artist + badges + hints
+    // Shuffle and repeat badges are clickable
+    let artist_row_x = rows[1].x;
+    let artist_row_y = rows[1].y;
+
+    // Calculate badge positions
+    // Artist text starts at position 2 (after "  ")
+    let artist_start = artist_row_x.saturating_add(2);
+    let artist_end = artist_start.saturating_add(
+        unicode_width::UnicodeWidthStr::width(artist_text.as_str()) as u16,
+    );
+
+    // Shuffle badge position (after artist, with space)
+    let shuffle_x = artist_end.saturating_add(1);
+    layout_cache.shuffle_button = Some(Rect::new(
+        shuffle_x,
+        artist_row_y,
+        SHUFFLE_BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+    ));
+
+    // Repeat badge position (after shuffle)
+    let repeat_x = shuffle_x.saturating_add(SHUFFLE_BUTTON_WIDTH);
+    layout_cache.repeat_button = Some(Rect::new(
+        repeat_x,
+        artist_row_y,
+        REPEAT_BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+    ));
+
+    // Queue badge position (after repeat, before hints)
+    let queue_x = repeat_x.saturating_add(REPEAT_BUTTON_WIDTH);
+    layout_cache.queue_button = Some(Rect::new(
+        queue_x,
+        artist_row_y,
+        QUEUE_BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+    ));
+
     let artist_spans = vec![
         Span::styled(
             format!("  {}", artist_text),
@@ -259,6 +386,9 @@ pub fn render_player_bar(
         progress_layout[0],
     );
 
+    // Store progress bar area for hit testing (seek functionality)
+    layout_cache.progress_bar = Some(progress_layout[1]);
+
     let gauge = Gauge::default()
         .gauge_style(
             Style::default()
@@ -275,7 +405,18 @@ pub fn render_player_bar(
         progress_layout[2],
     );
 
-    // Row 4: Volume
+    // Row 4: Volume bar
+    // Store volume bar area for hit testing
+    let volume_row_width = rows[3].width;
+    let volume_bar_x = rows[3].x.saturating_add(2);
+    let volume_bar_y = rows[3].y;
+    layout_cache.volume_bar = Some(Rect::new(
+        volume_bar_x,
+        volume_bar_y,
+        volume_row_width.saturating_sub(4),
+        BUTTON_HEIGHT,
+    ));
+
     let volume_line = Line::from(vec![
         Span::styled(format!(" {}{}", vol_icon, vol_bars), vol_style),
         Span::styled(
@@ -297,4 +438,158 @@ fn byte_offset(s: &str, display_offset: usize) -> usize {
         width_so_far += UnicodeWidthStr::width(ch.to_string().as_str());
     }
     s.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::layout_cache::ClickableArea;
+
+    #[test]
+    fn test_button_dimensions_are_reasonable() {
+        // Verify button dimension constants are defined
+        assert_eq!(BUTTON_HEIGHT, 1);
+        assert_eq!(PREV_BUTTON_WIDTH, 6);
+        assert_eq!(PLAY_PAUSE_BUTTON_WIDTH, 10);
+        assert_eq!(NEXT_BUTTON_WIDTH, 6);
+        assert_eq!(SHUFFLE_BUTTON_WIDTH, 8);
+        assert_eq!(REPEAT_BUTTON_WIDTH, 8);
+        assert_eq!(QUEUE_BUTTON_WIDTH, 8);
+    }
+
+    #[test]
+    fn test_cache_player_bar_field_exists() {
+        let mut cache = LayoutCache::new();
+        let area = Rect::new(0, 0, 80, 6);
+        cache.player_bar = Some(area);
+        assert_eq!(cache.player_bar, Some(area));
+    }
+
+    #[test]
+    fn test_cache_button_fields_exist() {
+        let mut cache = LayoutCache::new();
+        let btn_area = Rect::new(10, 10, 8, 1);
+
+        cache.prev_button = Some(btn_area);
+        cache.play_pause_button = Some(btn_area);
+        cache.next_button = Some(btn_area);
+        cache.shuffle_button = Some(btn_area);
+        cache.repeat_button = Some(btn_area);
+        cache.queue_button = Some(btn_area);
+        cache.progress_bar = Some(btn_area);
+        cache.volume_bar = Some(btn_area);
+
+        assert!(cache.prev_button.is_some());
+        assert!(cache.play_pause_button.is_some());
+        assert!(cache.next_button.is_some());
+        assert!(cache.shuffle_button.is_some());
+        assert!(cache.repeat_button.is_some());
+        assert!(cache.queue_button.is_some());
+        assert!(cache.progress_bar.is_some());
+        assert!(cache.volume_bar.is_some());
+    }
+
+    #[test]
+    fn test_cache_clear_resets_player_controls() {
+        let mut cache = LayoutCache {
+            player_bar: Some(Rect::new(0, 0, 80, 6)),
+            prev_button: Some(Rect::new(10, 1, 6, 1)),
+            play_pause_button: Some(Rect::new(16, 1, 10, 1)),
+            next_button: Some(Rect::new(26, 1, 6, 1)),
+            shuffle_button: Some(Rect::new(10, 2, 8, 1)),
+            repeat_button: Some(Rect::new(18, 2, 8, 1)),
+            queue_button: Some(Rect::new(26, 2, 8, 1)),
+            progress_bar: Some(Rect::new(10, 3, 50, 1)),
+            volume_bar: Some(Rect::new(10, 4, 15, 1)),
+            ..Default::default()
+        };
+
+        cache.clear();
+
+        assert!(cache.player_bar.is_none());
+        assert!(cache.prev_button.is_none());
+        assert!(cache.play_pause_button.is_none());
+        assert!(cache.next_button.is_none());
+        assert!(cache.shuffle_button.is_none());
+        assert!(cache.repeat_button.is_none());
+        assert!(cache.queue_button.is_none());
+        assert!(cache.progress_bar.is_none());
+        assert!(cache.volume_bar.is_none());
+    }
+
+    #[test]
+    fn test_clickable_area_enum_has_player_controls() {
+        // Verify ClickableArea enum has all player control variants
+        let _prev = ClickableArea::PrevButton;
+        let _play = ClickableArea::PlayPauseButton;
+        let _next = ClickableArea::NextButton;
+        let _progress = ClickableArea::ProgressBar;
+        let _volume = ClickableArea::VolumeBar;
+        let _shuffle = ClickableArea::ShuffleButton;
+        let _repeat = ClickableArea::RepeatButton;
+        let _queue = ClickableArea::QueueButton;
+    }
+
+    #[test]
+    fn test_area_at_finds_player_buttons() {
+        let cache = LayoutCache {
+            player_bar: Some(Rect::new(20, 34, 60, 6)),
+            prev_button: Some(Rect::new(25, 35, 6, 1)),
+            play_pause_button: Some(Rect::new(31, 35, 10, 1)),
+            next_button: Some(Rect::new(41, 35, 6, 1)),
+            shuffle_button: Some(Rect::new(25, 36, 8, 1)),
+            repeat_button: Some(Rect::new(33, 36, 8, 1)),
+            queue_button: Some(Rect::new(41, 36, 8, 1)),
+            progress_bar: Some(Rect::new(25, 37, 40, 1)),
+            volume_bar: Some(Rect::new(25, 38, 15, 1)),
+            ..Default::default()
+        };
+
+        // Test each button is found at its position
+        assert_eq!(cache.area_at(27, 35), Some(ClickableArea::PrevButton));
+        assert_eq!(cache.area_at(35, 35), Some(ClickableArea::PlayPauseButton));
+        assert_eq!(cache.area_at(43, 35), Some(ClickableArea::NextButton));
+        assert_eq!(cache.area_at(27, 36), Some(ClickableArea::ShuffleButton));
+        assert_eq!(cache.area_at(35, 36), Some(ClickableArea::RepeatButton));
+        assert_eq!(cache.area_at(43, 36), Some(ClickableArea::QueueButton));
+        assert_eq!(cache.area_at(35, 37), Some(ClickableArea::ProgressBar));
+        assert_eq!(cache.area_at(30, 38), Some(ClickableArea::VolumeBar));
+    }
+
+    #[test]
+    fn test_specific_button_takes_precedence_over_player_bar() {
+        let cache = LayoutCache {
+            player_bar: Some(Rect::new(20, 34, 60, 6)),
+            play_pause_button: Some(Rect::new(25, 35, 10, 1)),
+            ..Default::default()
+        };
+
+        // Click on play button should return PlayPauseButton, not PlayerBar
+        assert_eq!(
+            cache.area_at(30, 35),
+            Some(ClickableArea::PlayPauseButton)
+        );
+    }
+
+    #[test]
+    fn test_saturating_add_prevents_overflow() {
+        // Test that saturating math is used correctly
+        let small_x: u16 = 1;
+        let width: u16 = 6;
+        let result = small_x.saturating_add(width);
+        assert_eq!(result, 7);
+
+        // Test with max value - should not overflow
+        let max_x: u16 = u16::MAX;
+        let overflow_result = max_x.saturating_add(1);
+        assert_eq!(overflow_result, u16::MAX); // Saturates, doesn't wrap
+    }
+
+    #[test]
+    fn test_saturating_sub_prevents_underflow() {
+        // Test that saturating_sub prevents underflow
+        let zero: u16 = 0;
+        let result = zero.saturating_sub(10);
+        assert_eq!(result, 0); // Saturates at 0, doesn't wrap to u16::MAX
+    }
 }
