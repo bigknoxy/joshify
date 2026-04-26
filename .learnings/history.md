@@ -38,6 +38,43 @@
 4. Detail Views (album tracks, artist top tracks)
 5. Interactions & Polish
 
+### Phase 1 Complete: Foundation Data Models (2026-04-25)
+**Status**: Complete
+**Commits**:
+- `5334eb4` - feat: mouse interaction fixes and UI redesign planning
+- `9e1b886` - feat(ui): Phase 1 foundation - home state data models
+- `3d8da25` - fix(home_state): correct test expectations for jump back in
+- `bb5a522` - feat(state): Add LoadAction variants for home and library
+- `851b142` - feat(state): Add new ContentState variants for home and library
+
+**What**:
+- HomeState struct with recently played, jump back in tracking
+- 5-minute staleness detection with caching
+- 9 unit tests for home state logic
+- LoadAction variants: HomeData, LibraryAlbums, LibraryArtists, AlbumTracks, ArtistTopTracks
+- ContentState variants: HomeDashboard, Library (with Albums/Artists tabs)
+- AlbumListItem and ArtistListItem structs
+
+**Decisions**:
+- HomeState handles its own staleness checking (not via LoadCoordinator)
+- Progress calculation for Jump Back In: 10-90% range, min 2 tracks
+- Library uses tab-based UI (not separate views)
+- All new code includes comprehensive tests
+
+**Files**:
+- Created: `src/state/home_state.rs`
+- Modified: `src/state/mod.rs`, `src/state/load_coordinator.rs`, `src/state/app_state.rs`, `src/ui/main_view.rs`
+
+**Testing**:
+- All 192 tests passing
+- 9 new tests for home state
+- No test regressions
+
+**Learnings**:
+- Test expectations must match actual algorithm behavior
+- Pattern: State structs can self-manage staleness
+- LoadAction enum needs display text for all variants
+
 ---
 
 ## Template for New Entries
