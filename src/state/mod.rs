@@ -8,6 +8,7 @@
 //! - `search_state` - Search with debounce and caching
 
 pub mod app_state;
+pub mod home_state;
 pub mod library_state;
 pub mod load_coordinator;
 pub mod player_state;
