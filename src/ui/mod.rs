@@ -11,6 +11,7 @@
 
 pub mod device_selector;
 pub mod help;
+pub mod home_view;
 pub mod image_renderer;
 pub mod layout_cache;
 pub mod main_view;
