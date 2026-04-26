@@ -1,6 +1,7 @@
 pub mod album_art;
 pub mod api;
 pub mod auth;
+pub mod config;
 pub mod connect;
 pub mod keyring_store;
 pub mod player;
