@@ -523,7 +523,36 @@ pub fn render_main_view(
         ContentState::DeviceSelector(entries) => {
             crate::ui::render_device_selector(frame, area, entries, selected_index);
         }
-        _ => {}
+        ContentState::HomeDashboard(ref home_state) => {
+            crate::ui::home_view::render_home_dashboard(
+                frame,
+                area,
+                home_state,
+                selected_index,
+                scroll_offset,
+                layout_cache,
+            );
+        }
+        ContentState::Library { .. } => {
+            // TODO: Implement library view rendering
+            let widget = Paragraph::new("Library view coming soon...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Library ")
+                        .border_style(Catppuccin::border()),
+                );
+            frame.render_widget(widget, area);
+        }
+        // These states are handled in main.rs, not rendered directly
+        ContentState::SearchResultsLive(_) |
+        ContentState::SearchErrorLive(_) => {
+            // These are handled by search overlay, not main view
+        }
+        // Loading state is handled at the top of this function
+        ContentState::Loading(_) => {
+            // Already handled above, but match requires this arm
+        }
     }
 }
 
