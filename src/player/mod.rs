@@ -3,6 +3,8 @@
 //! Provides a high-level interface for local Spotify playback
 //! with event-driven updates for the TUI.
 
+pub mod visualization;
+
 use anyhow::{Context, Result};
 use librespot::{
     core::{SpotifyId, SpotifyUri},
