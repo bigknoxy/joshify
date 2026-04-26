@@ -69,6 +69,8 @@ pub enum DeviceEntry {
 pub enum ContentState {
     #[default]
     Home,
+    /// New Home dashboard with recently played and jump back in
+    HomeDashboard(super::home_state::HomeState),
     Loading(LoadAction),
     LoadingInProgress(LoadAction),
     LikedSongs(Vec<TrackListItem>),
@@ -86,6 +88,41 @@ pub enum ContentState {
     SearchResultsLive(Vec<TrackListItem>),
     /// Live search error
     SearchErrorLive(String),
+    /// Library view with tabs
+    Library {
+        albums: Vec<AlbumListItem>,
+        artists: Vec<ArtistListItem>,
+        selected_tab: LibraryTab,
+    },
+}
+
+/// Library tab selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LibraryTab {
+    #[default]
+    Albums,
+    Artists,
+}
+
+/// Album list item for display
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlbumListItem {
+    pub name: String,
+    pub artist: String,
+    pub id: String,
+    pub image_url: Option<String>,
+    pub total_tracks: u32,
+    pub release_year: Option<u32>,
+}
+
+/// Artist list item for display
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtistListItem {
+    pub name: String,
+    pub id: String,
+    pub image_url: Option<String>,
+    pub genres: Vec<String>,
+    pub follower_count: Option<u32>,
 }
 
 /// Focus target for Tab navigation
