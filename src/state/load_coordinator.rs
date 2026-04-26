@@ -17,6 +17,16 @@ pub enum LoadAction {
     PlaylistTracks { name: String, id: String },
     Search { query: String },
     Devices,
+    /// Home dashboard data - recently played and jump back in
+    HomeData,
+    /// User's saved albums
+    LibraryAlbums,
+    /// User's followed artists
+    LibraryArtists,
+    /// Album tracks (for detail view)
+    AlbumTracks { album_id: String, name: String },
+    /// Artist top tracks (for detail view)
+    ArtistTopTracks { artist_id: String, name: String },
 }
 
 /// Result from an async load operation

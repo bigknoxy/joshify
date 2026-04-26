@@ -34,6 +34,11 @@ fn load_action_display_owned(action: &LoadAction) -> String {
         LoadAction::PlaylistTracks { name, .. } => format!("Loading {}...", name),
         LoadAction::Search { query } => format!("Searching: {}", query),
         LoadAction::Devices => "Loading devices...".to_string(),
+        LoadAction::HomeData => "Loading home...".to_string(),
+        LoadAction::LibraryAlbums => "Loading albums...".to_string(),
+        LoadAction::LibraryArtists => "Loading artists...".to_string(),
+        LoadAction::AlbumTracks { name, .. } => format!("Loading {}...", name),
+        LoadAction::ArtistTopTracks { name, .. } => format!("Loading {}...", name),
     }
 }
 
