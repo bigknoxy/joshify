@@ -6,13 +6,14 @@
 //! - Quick Access buttons (Liked Songs, Playlists, Library)
 //! - Empty states for new users
 
-use crate::state::app_state::{AlbumListItem, ArtistListItem, PlaylistListItem};
 use crate::state::home_state::{format_relative_time, ContinueContext, HomeState, RecentlyPlayedItem};
 use crate::ui::layout_cache::LayoutCache;
 use crate::ui::theme::{symbols, Catppuccin};
 use ratatui::{
-    prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph},
+    layout::{Alignment, Constraint, Layout, Rect},
+    style::Modifier,
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
 };
 
 /// Truncate text to fit within display width, adding ellipsis if needed

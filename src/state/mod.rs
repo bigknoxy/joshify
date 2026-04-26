@@ -11,6 +11,7 @@ pub mod app_state;
 pub mod home_state;
 pub mod library_state;
 pub mod load_coordinator;
+pub mod navigation_stack;
 pub mod player_state;
 pub mod queue_state;
 pub mod search_state;

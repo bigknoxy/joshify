@@ -94,6 +94,10 @@ pub enum ContentState {
         artists: Vec<ArtistListItem>,
         selected_tab: LibraryTab,
     },
+    /// Album detail view with tracks
+    AlbumDetail { album: AlbumListItem, tracks: Vec<TrackListItem> },
+    /// Artist detail view with top tracks
+    ArtistDetail { artist: ArtistListItem },
 }
 
 /// Library tab selection
@@ -166,6 +170,8 @@ pub struct AppState {
     pub album_art_cache: AlbumArtCache,
     /// Async task coordinator
     pub load_coordinator: LoadCoordinator,
+    /// Navigation stack for drill-down browsing
+    pub nav_stack: super::navigation_stack::NavigationStack,
 }
 
 impl AppState {
@@ -186,6 +192,97 @@ impl AppState {
             is_searching: false,
             album_art_cache: AlbumArtCache::new(),
             load_coordinator: LoadCoordinator::new(),
+            nav_stack: super::navigation_stack::NavigationStack::new(),
+        }
+    }
+
+    /// Navigate back in the navigation stack (browser back)
+    pub fn navigate_back(&mut self) -> bool {
+        if let Some(entry) = self.nav_stack.back().cloned() {
+            self.restore_from_nav_entry(entry);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Restore state from a navigation entry
+    fn restore_from_nav_entry(&mut self, entry: super::navigation_stack::NavigationEntry) {
+        use super::navigation_stack::NavigationEntry;
+        match entry {
+            NavigationEntry::Home => {
+                self.content_state = ContentState::Home;
+                self.selected_nav = NavItem::Home;
+            }
+            NavigationEntry::Library { albums, artists } => {
+                self.content_state = ContentState::Library { albums, artists, selected_tab: LibraryTab::Albums };
+                self.selected_nav = NavItem::Library;
+            }
+            NavigationEntry::AlbumDetail { album, tracks } => {
+                self.content_state = ContentState::AlbumDetail { album, tracks };
+                self.selected_nav = NavItem::Library;
+            }
+            NavigationEntry::ArtistDetail { artist } => {
+                self.content_state = ContentState::ArtistDetail { artist };
+                self.selected_nav = NavItem::Library;
+            }
+            NavigationEntry::Playlists(playlists) => {
+                self.content_state = ContentState::Playlists(playlists);
+                self.selected_nav = NavItem::Playlists;
+            }
+            NavigationEntry::PlaylistTracks { playlist, tracks } => {
+                self.content_state = ContentState::PlaylistTracks(playlist.name, tracks);
+                self.selected_nav = NavItem::Playlists;
+            }
+            NavigationEntry::LikedSongs(tracks) => {
+                self.content_state = ContentState::LikedSongs(tracks);
+                self.selected_nav = NavItem::LikedSongs;
+            }
+            NavigationEntry::SearchResults { query, tracks } => {
+                self.content_state = ContentState::SearchResults(query, tracks);
+            }
+        }
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+    }
+
+    /// Push current state to navigation stack
+    pub fn push_current_to_nav_stack(&mut self) {
+        use super::navigation_stack::NavigationEntry;
+        let entry = match &self.content_state {
+            ContentState::Home => Some(NavigationEntry::Home),
+            ContentState::Library { albums, artists, .. } => {
+                Some(NavigationEntry::Library { albums: albums.clone(), artists: artists.clone() })
+            }
+            ContentState::AlbumDetail { album, tracks } => {
+                Some(NavigationEntry::AlbumDetail { album: album.clone(), tracks: tracks.clone() })
+            }
+            ContentState::ArtistDetail { artist } => {
+                Some(NavigationEntry::ArtistDetail { artist: artist.clone() })
+            }
+            ContentState::Playlists(playlists) => {
+                Some(NavigationEntry::Playlists(playlists.clone()))
+            }
+            ContentState::PlaylistTracks(name, tracks) => {
+                // Find the playlist in playlists list, or create a dummy one
+                let playlist = PlaylistListItem {
+                    name: name.clone(),
+                    id: "unknown".to_string(),
+                    track_count: tracks.len() as u32,
+                };
+                Some(NavigationEntry::PlaylistTracks { playlist, tracks: tracks.clone() })
+            }
+            ContentState::LikedSongs(tracks) => {
+                Some(NavigationEntry::LikedSongs(tracks.clone()))
+            }
+            ContentState::SearchResults(query, tracks) => {
+                Some(NavigationEntry::SearchResults { query: query.clone(), tracks: tracks.clone() })
+            }
+            _ => None, // Loading states, etc. don't get pushed
+        };
+
+        if let Some(e) = entry {
+            self.nav_stack.push(e);
         }
     }
 
@@ -244,6 +341,24 @@ impl AppState {
     pub fn cancel_search(&mut self) {
         self.is_searching = false;
         self.content_state = ContentState::Home;
+    }
+
+    /// Switch library tab
+    pub fn switch_library_tab(&mut self) {
+        if let ContentState::Library { albums, artists, selected_tab } = &self.content_state {
+            let new_tab = match selected_tab {
+                LibraryTab::Albums => LibraryTab::Artists,
+                LibraryTab::Artists => LibraryTab::Albums,
+            };
+            self.content_state = ContentState::Library {
+                albums: albums.clone(),
+                artists: artists.clone(),
+                selected_tab: new_tab,
+            };
+            // Reset selection when switching tabs
+            self.selected_index = 0;
+            self.scroll_offset = 0;
+        }
     }
 
     /// Select nav item

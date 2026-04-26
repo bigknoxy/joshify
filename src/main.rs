@@ -2,7 +2,7 @@ use anyhow::Result;
 use joshify::auth::OAuthConfig;
 use joshify::player::LocalPlayer;
 use joshify::session::LocalSession;
-use joshify::state::app_state::{PlaylistListItem, TrackListItem};
+use joshify::state::app_state::{AlbumListItem, ArtistListItem, LibraryTab, PlaylistListItem, TrackListItem};
 use joshify::state::player_state::PlayerState;
 use joshify::state::search_state::SearchState;
 use joshify::state::{ContentState, FocusTarget, LoadAction, NavItem};
@@ -83,6 +83,8 @@ struct App {
     layout_cache: joshify::ui::LayoutCache,
     /// Mouse state for tracking double-clicks
     mouse_state: joshify::ui::MouseState,
+    /// Navigation stack for drill-down browsing
+    nav_stack: joshify::state::navigation_stack::NavigationStack,
 }
 
 impl App {
@@ -119,6 +121,7 @@ impl App {
             loading_more_liked_songs: false,
             layout_cache: joshify::ui::LayoutCache::new(),
             mouse_state: joshify::ui::MouseState::new(),
+            nav_stack: joshify::state::navigation_stack::NavigationStack::new(),
         }
     }
 
@@ -981,6 +984,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     },
                     app.player_state.current_track_uri.as_deref(),
                     &mut app.layout_cache,
+                    Some(&app.nav_stack.breadcrumb()),
                 );
 
                 let track_name = app
@@ -1347,6 +1351,175 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.content_state =
                             ContentState::LoadingInProgress(LoadAction::Search { query });
                     }
+                    LoadAction::HomeData => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.get_recently_played(20).await {
+                                Ok(history) => {
+                                    let items: Vec<joshify::state::home_state::RecentlyPlayedItem> = history
+                                        .into_iter()
+                                        .map(|h| {
+                                            let context = h.context.map(|ctx| {
+                                                use rspotify::model::Type;
+                                                let ctx_type = match ctx._type {
+                                                    Type::Album => joshify::state::home_state::ContextType::Album,
+                                                    Type::Playlist => joshify::state::home_state::ContextType::Playlist,
+                                                    _ => joshify::state::home_state::ContextType::Album,
+                                                };
+                                                joshify::state::home_state::PlayContext {
+                                                    context_type: ctx_type,
+                                                    id: ctx.uri,
+                                                    name: String::new(), // Will need to fetch separately
+                                                }
+                                            });
+                                            joshify::state::home_state::RecentlyPlayedItem {
+                                                track: joshify::state::home_state::TrackSummary {
+                                                    name: h.track.name,
+                                                    artist: h.track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+                                                    uri: h.track.id.map(|i| i.to_string()).unwrap_or_default(),
+                                                    duration_ms: h.track.duration.num_milliseconds() as u32,
+                                                },
+                                                played_at: h.played_at,
+                                                context,
+                                            }
+                                        })
+                                        .collect();
+                                    // Calculate jump back in (empty for now, needs saved data)
+                                    let jump_back_in = joshify::state::home_state::calculate_jump_back_in(&items, None, None);
+                                    let _ = tx_clone.send(ContentState::HomeDashboard(
+                                        joshify::state::home_state::HomeState {
+                                            recently_played: items,
+                                            jump_back_in,
+                                            is_loading: false,
+                                            last_updated: Some(std::time::Instant::now()),
+                                        }
+                                    )).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load home data: {}",
+                                            e
+                                        )))
+                                        .await;
+                                }
+                            }
+                        });
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::HomeData);
+                    }
+                    LoadAction::LibraryAlbums => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.get_user_albums(50).await {
+                                Ok(saved_albums) => {
+                                    let albums: Vec<joshify::state::app_state::AlbumListItem> = saved_albums
+                                        .into_iter()
+                                        .map(|sa| {
+                                            let release_year: Option<u32> = Some(&sa.album.release_date)
+                                                .filter(|s| !s.is_empty())
+                                                .and_then(|d| d.split('-').next())
+                                                .and_then(|y: &str| y.parse().ok());
+                                            let artist_name = sa.album.artists.first()
+                                                .map(|a| a.name.clone())
+                                                .unwrap_or_default();
+                                            joshify::state::app_state::AlbumListItem {
+                                                name: sa.album.name,
+                                                artist: artist_name,
+                                                id: sa.album.id.id().to_string(),
+                                                image_url: sa.album.images.first().map(|i| i.url.clone()),
+                                                total_tracks: sa.album.tracks.total as u32,
+                                                release_year,
+                                            }
+                                        })
+                                        .collect();
+                                    let _ = tx_clone.send(ContentState::Library {
+                                        albums,
+                                        artists: vec![], // Load artists separately
+                                        selected_tab: joshify::state::app_state::LibraryTab::Albums,
+                                    }).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load albums: {}",
+                                            e
+                                        )))
+                                        .await;
+                                }
+                            }
+                        });
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::LibraryAlbums);
+                    }
+                    LoadAction::LibraryArtists => {
+                        // TODO: Implement artists loading
+                        app.content_state = ContentState::Error("Library artists not yet implemented".to_string());
+                    }
+                    LoadAction::AlbumTracks { album_id, name } => {
+                        let c = client.clone();
+                        let tx_clone = tx.clone();
+                        let album_id_clone = album_id.clone();
+                        let name_clone = name.clone();
+                        tokio::spawn(async move {
+                            let guard = c.lock().await;
+                            match guard.get_album_tracks(&album_id_clone).await {
+                                Ok(tracks) => {
+                                    let items: Vec<TrackListItem> = tracks
+                                        .into_iter()
+                                        .filter_map(|t| {
+                                            t.id.map(|id| {
+                                                let artist = t
+                                                    .artists
+                                                    .first()
+                                                    .map(|a| a.name.clone())
+                                                    .unwrap_or_default();
+                                                TrackListItem {
+                                                    name: t.name,
+                                                    artist,
+                                                    uri: format!("spotify:track:{}", id.id()),
+                                                }
+                                            })
+                                        })
+                                        .collect();
+                                    let album_item = AlbumListItem {
+                                        name: name_clone.clone(),
+                                        artist: "Unknown".to_string(),
+                                        id: album_id_clone,
+                                        image_url: None,
+                                        total_tracks: items.len() as u32,
+                                        release_year: None,
+                                    };
+                                    let _ = tx_clone.send(ContentState::AlbumDetail { 
+                                        album: album_item, 
+                                        tracks: items 
+                                    }).await;
+                                }
+                                Err(e) => {
+                                    let _ = tx_clone
+                                        .send(ContentState::Error(format!(
+                                            "Failed to load album tracks: {}",
+                                            e
+                                        )))
+                                        .await;
+                                }
+                            }
+                        });
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::AlbumTracks { album_id, name });
+                    }
+                    LoadAction::ArtistTopTracks { artist_id, name } => {
+                        let artist_item = ArtistListItem {
+                            name: name.clone(),
+                            id: artist_id.clone(),
+                            image_url: None,
+                            genres: vec![],
+                            follower_count: None,
+                        };
+                        let _ = tx.send(ContentState::ArtistDetail { artist: artist_item });
+                        app.content_state = ContentState::LoadingInProgress(LoadAction::ArtistTopTracks { artist_id, name });
+                    }
                 }
             }
         }
@@ -1654,6 +1827,26 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 .contains(crossterm::event::KeyModifiers::SHIFT)
                             {
                                 app.focus_previous();
+                            } else if app.focus == FocusTarget::MainContent {
+                                // When main content is focused, Tab switches tabs in Library view
+                                if matches!(app.content_state, ContentState::Library { .. }) {
+                                    // Switch library tab
+                                    if let ContentState::Library { albums, artists, selected_tab } = &app.content_state {
+                                        let new_tab = match selected_tab {
+                                            joshify::state::app_state::LibraryTab::Albums => joshify::state::app_state::LibraryTab::Artists,
+                                            joshify::state::app_state::LibraryTab::Artists => joshify::state::app_state::LibraryTab::Albums,
+                                        };
+                                        app.content_state = ContentState::Library {
+                                            albums: albums.clone(),
+                                            artists: artists.clone(),
+                                            selected_tab: new_tab,
+                                        };
+                                        app.selected_index = 0;
+                                        app.scroll_offset = 0;
+                                    }
+                                } else {
+                                    app.focus_next();
+                                }
                             } else {
                                 app.focus_next();
                             }
@@ -1666,7 +1859,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Enter => {
                             match app.focus {
                                 FocusTarget::Sidebar => {
-                                    // Select current nav item - show content
+                                    // Select current nav item - show content AND transfer focus to main content
                                     app.loading_more_liked_songs = false;
                                     match app.selected_nav {
                                         joshify::ui::NavItem::LikedSongs => {
@@ -1674,21 +1867,27 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 ContentState::Loading(LoadAction::LikedSongs);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
+                                            app.focus = FocusTarget::MainContent;
                                         }
                                         joshify::ui::NavItem::Playlists => {
                                             app.content_state =
                                                 ContentState::Loading(LoadAction::Playlists);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
+                                            app.focus = FocusTarget::MainContent;
                                         }
                                         joshify::ui::NavItem::Home => {
                                             app.content_state = ContentState::Home;
+                                            app.selected_index = 0;
+                                            app.scroll_offset = 0;
+                                            app.focus = FocusTarget::MainContent;
                                         }
                                         joshify::ui::NavItem::Library => {
                                             app.content_state =
                                                 ContentState::Loading(LoadAction::LibraryAlbums);
                                             app.selected_index = 0;
                                             app.scroll_offset = 0;
+                                            app.focus = FocusTarget::MainContent;
                                         }
                                     }
                                 }
@@ -1869,6 +2068,48 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 app.scroll_offset = 0;
                                             }
                                         }
+                                        ContentState::Library { albums, artists, selected_tab } => {
+                                            match selected_tab {
+                                                LibraryTab::Albums => {
+                                                    if !albums.is_empty() && app.selected_index < albums.len() {
+                                                        let album = &albums[app.selected_index];
+                                                        // Push current state to nav stack before navigating
+                                                        app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::Library { 
+                                                            albums: albums.clone(), 
+                                                            artists: artists.clone() 
+                                                        });
+                                                        // Load album tracks
+                                                        app.content_state = ContentState::Loading(
+                                                            LoadAction::AlbumTracks { 
+                                                                album_id: album.id.clone(), 
+                                                                name: album.name.clone() 
+                                                            }
+                                                        );
+                                                        app.selected_index = 0;
+                                                        app.scroll_offset = 0;
+                                                    }
+                                                }
+                                                LibraryTab::Artists => {
+                                                    if !artists.is_empty() && app.selected_index < artists.len() {
+                                                        let artist = &artists[app.selected_index];
+                                                        // Push current state to nav stack before navigating
+                                                        app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::Library { 
+                                                            albums: albums.clone(), 
+                                                            artists: artists.clone() 
+                                                        });
+                                                        // Load artist detail
+                                                        app.content_state = ContentState::Loading(
+                                                            LoadAction::ArtistTopTracks { 
+                                                                artist_id: artist.id.clone(), 
+                                                                name: artist.name.clone() 
+                                                            }
+                                                        );
+                                                        app.selected_index = 0;
+                                                        app.scroll_offset = 0;
+                                                    }
+                                                }
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1898,6 +2139,20 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                         }
 
+                        // h - Navigate left / back to sidebar
+                        crossterm::event::KeyCode::Char('h') => {
+                            if app.focus == FocusTarget::MainContent {
+                                app.focus = FocusTarget::Sidebar;
+                            }
+                        }
+
+                        // l - Navigate right / into main content
+                        crossterm::event::KeyCode::Char('l') => {
+                            if app.focus == FocusTarget::Sidebar {
+                                app.focus = FocusTarget::MainContent;
+                            }
+                        }
+
                         // Sidebar navigation (when sidebar focused)
                         crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
                             if app.focus == FocusTarget::Sidebar {
@@ -1912,6 +2167,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
+                                    ContentState::Library { albums, artists, selected_tab } => {
+                                        match selected_tab {
+                                            joshify::state::app_state::LibraryTab::Albums => albums.len(),
+                                            joshify::state::app_state::LibraryTab::Artists => artists.len(),
+                                        }
+                                    }
                                     _ => 0,
                                 };
                                 if len > 0 {
@@ -1996,6 +2257,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
+                                    ContentState::Library { albums, artists, selected_tab } => {
+                                        match selected_tab {
+                                            joshify::state::app_state::LibraryTab::Albums => albums.len(),
+                                            joshify::state::app_state::LibraryTab::Artists => artists.len(),
+                                        }
+                                    }
                                     _ => 0,
                                 };
                                 if len > 0 && app.selected_index > 0 {
@@ -2207,6 +2474,50 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else {
                                 app.help_content = Some(joshify::ui::HelpContent::joshify_help());
                                 app.help_state = Some(joshify::ui::HelpOverlayState::default());
+                            }
+                        }
+                        // Backspace - browser back navigation
+                        crossterm::event::KeyCode::Backspace => {
+                            if app.nav_stack.can_go_back() {
+                                app.nav_stack.back();
+                                if let Some(entry) = app.nav_stack.current().cloned() {
+                                    use joshify::state::navigation_stack::NavigationEntry;
+                                    match entry {
+                                        NavigationEntry::Home => {
+                                            app.content_state = ContentState::Home;
+                                            app.selected_nav = NavItem::Home;
+                                        }
+                                        NavigationEntry::Library { albums, artists } => {
+                                            app.content_state = ContentState::Library { albums, artists, selected_tab: LibraryTab::Albums };
+                                            app.selected_nav = NavItem::Library;
+                                        }
+                                        NavigationEntry::AlbumDetail { album, tracks } => {
+                                            app.content_state = ContentState::AlbumDetail { album, tracks };
+                                            app.selected_nav = NavItem::Library;
+                                        }
+                                        NavigationEntry::ArtistDetail { artist } => {
+                                            app.content_state = ContentState::ArtistDetail { artist };
+                                            app.selected_nav = NavItem::Library;
+                                        }
+                                        NavigationEntry::Playlists(playlists) => {
+                                            app.content_state = ContentState::Playlists(playlists);
+                                            app.selected_nav = NavItem::Playlists;
+                                        }
+                                        NavigationEntry::PlaylistTracks { playlist, tracks } => {
+                                            app.content_state = ContentState::PlaylistTracks(playlist.name, tracks);
+                                            app.selected_nav = NavItem::Playlists;
+                                        }
+                                        NavigationEntry::LikedSongs(tracks) => {
+                                            app.content_state = ContentState::LikedSongs(tracks);
+                                            app.selected_nav = NavItem::LikedSongs;
+                                        }
+                                        NavigationEntry::SearchResults { query, tracks } => {
+                                            app.content_state = ContentState::SearchResults(query, tracks);
+                                        }
+                                    }
+                                    app.selected_index = 0;
+                                    app.scroll_offset = 0;
+                                }
                             }
                         }
                         crossterm::event::KeyCode::Esc => {
