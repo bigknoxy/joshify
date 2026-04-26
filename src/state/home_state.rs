@@ -135,9 +135,12 @@ impl ContinueContext {
 /// 
 /// Groups recently played tracks by context and identifies
 /// contexts that are unfinished (not all tracks played)
+/// 
+/// TODO: Use saved_albums and saved_playlists to get actual track counts
+/// for more accurate progress calculations
 pub fn calculate_jump_back_in(
     recent_tracks: &[RecentlyPlayedItem],
-    _saved_albums: Option<&[crate::state::app_state::AlbumListItem]>,
+    _saved_albums: Option<&[crate::state::app_state::PlaylistListItem]>,
     _saved_playlists: Option<&[crate::state::app_state::PlaylistListItem]>,
 ) -> Vec<ContinueContext> {
     use std::collections::HashMap;
@@ -436,9 +439,12 @@ mod tests {
         let result = calculate_jump_back_in(&tracks, None, None);
         
         // Should have 2 contexts: album1 and playlist1
-        // Album: 2 tracks (would estimate 20% progress - filtered out for < 10%)
-        // Playlist: 3 tracks (would estimate 23% progress - included)
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "playlist1");
+        // Album: 2 tracks (would estimate 20% progress)
+        // Playlist: 3 tracks (would estimate 23% progress)
+        // Both should be included now (progress between 10% and 90%)
+        assert_eq!(result.len(), 2);
+        // Playlist should be first (more recent last_played)
+        assert_eq!(result[0].id, "album1");
+        assert_eq!(result[1].id, "playlist1");
     }
 }
