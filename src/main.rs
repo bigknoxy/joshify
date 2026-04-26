@@ -1684,17 +1684,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         joshify::ui::NavItem::Home => {
                                             app.content_state = ContentState::Home;
                                         }
-                                        joshify::ui::NavItem::Search => {
-                                            app.content_state =
-                                                ContentState::Loading(LoadAction::Search {
-                                                    query: "Type to search...".to_string(),
-                                                });
-                                        }
                                         joshify::ui::NavItem::Library => {
                                             app.content_state =
-                                                ContentState::Loading(LoadAction::Search {
-                                                    query: "Loading library...".to_string(),
-                                                });
+                                                ContentState::Loading(LoadAction::LibraryAlbums);
+                                            app.selected_index = 0;
+                                            app.scroll_offset = 0;
                                         }
                                     }
                                 }
@@ -2247,15 +2241,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 NavItem::Home => {
                                     app.content_state = ContentState::Home;
                                 }
-                                NavItem::Search => {
-                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::Search {
-                                        query: "Type to search...".to_string(),
-                                    });
-                                }
                                 NavItem::Library => {
-                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::Search {
-                                        query: "Loading library...".to_string(),
-                                    });
+                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::LibraryAlbums);
+                                    app.selected_index = 0;
+                                    app.scroll_offset = 0;
                                 }
                             }
                         }

@@ -8,10 +8,12 @@ use crate::album_art::AlbumArtCache;
 use ratatui::layout::Rect;
 
 /// Navigation items for the sidebar
+/// 
+/// Note: Search is intentionally omitted from the sidebar navigation.
+/// Users can access search globally by pressing '/' from any screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NavItem {
     Home,
-    Search,
     Library,
     Playlists,
     LikedSongs,
@@ -21,7 +23,6 @@ impl NavItem {
     pub fn all() -> &'static [NavItem] {
         &[
             NavItem::Home,
-            NavItem::Search,
             NavItem::Library,
             NavItem::Playlists,
             NavItem::LikedSongs,
@@ -31,7 +32,6 @@ impl NavItem {
     pub fn label(&self) -> &'static str {
         match self {
             NavItem::Home => "Home",
-            NavItem::Search => "Search",
             NavItem::Library => "Library",
             NavItem::Playlists => "Playlists",
             NavItem::LikedSongs => "Liked Songs",
@@ -263,15 +263,10 @@ impl AppState {
             NavItem::Home => {
                 self.content_state = ContentState::Home;
             }
-            NavItem::Search => {
-                self.content_state = ContentState::Loading(LoadAction::Search {
-                    query: "Type to search...".to_string(),
-                });
-            }
             NavItem::Library => {
-                self.content_state = ContentState::Loading(LoadAction::Search {
-                    query: "Loading library...".to_string(),
-                });
+                self.content_state = ContentState::Loading(LoadAction::LibraryAlbums);
+                self.selected_index = 0;
+                self.scroll_offset = 0;
             }
         }
     }

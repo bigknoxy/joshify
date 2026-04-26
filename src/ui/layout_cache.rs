@@ -425,19 +425,18 @@ mod tests {
             sidebar: Some(Rect::new(0, 0, 20, 40)),
             nav_items: vec![
                 Rect::new(0, 16, 20, 1),  // Home
-                Rect::new(0, 17, 20, 1),  // Search
-                Rect::new(0, 18, 20, 1),  // Library
-                Rect::new(0, 19, 20, 1),  // Playlists
-                Rect::new(0, 20, 20, 1),  // Liked Songs
+                Rect::new(0, 17, 20, 1),  // Library (Search removed - accessible via '/')
+                Rect::new(0, 18, 20, 1),  // Playlists
+                Rect::new(0, 19, 20, 1),  // Liked Songs
             ],
             ..Default::default()
         };
 
         assert_eq!(cache.area_at(5, 16), Some(ClickableArea::NavItem(NavItem::Home)));
-        assert_eq!(cache.area_at(5, 17), Some(ClickableArea::NavItem(NavItem::Search)));
-        assert_eq!(cache.area_at(5, 18), Some(ClickableArea::NavItem(NavItem::Library)));
-        assert_eq!(cache.area_at(5, 19), Some(ClickableArea::NavItem(NavItem::Playlists)));
-        assert_eq!(cache.area_at(5, 20), Some(ClickableArea::NavItem(NavItem::LikedSongs)));
+        // Search removed from sidebar - accessible via '/' key
+        assert_eq!(cache.area_at(5, 17), Some(ClickableArea::NavItem(NavItem::Library)));
+        assert_eq!(cache.area_at(5, 18), Some(ClickableArea::NavItem(NavItem::Playlists)));
+        assert_eq!(cache.area_at(5, 19), Some(ClickableArea::NavItem(NavItem::LikedSongs)));
     }
 
     #[test]

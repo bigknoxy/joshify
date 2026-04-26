@@ -217,11 +217,11 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         let mut layout_cache = LayoutCache::new();
 
-        // Test with Search selected
+        // Test with Library selected
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, 20, 40);
-                render_sidebar(frame, area, NavItem::Search, true, &mut layout_cache);
+                render_sidebar(frame, area, NavItem::Library, true, &mut layout_cache);
             })
             .unwrap();
 
