@@ -37,6 +37,38 @@ Each entry should include:
 
 ---
 
+## 2026-04-26
+
+### Category: Pattern
+**Learned**: Navigation stack pattern enables browser-like back/forward navigation in TUI
+**Context**: Implemented NavigationStack with push/pop/peek methods, storing (ContentState, selected_index) tuples
+**Prevention**: When drilling down (Enter on item), push current state BEFORE loading new view. On back, restore saved state.
+**File**: `src/state/navigation_stack.rs`
+
+### Category: Pattern
+**Learned**: ContentState enum extension requires careful handling of all match arms
+**Context**: Added AlbumDetail and ArtistDetail variants; had to update render_content() to handle all cases
+**Prevention**: When adding enum variants, use exhaustive match to find all locations needing updates
+**File**: `src/state/app_state.rs`, `src/ui/main_view.rs`
+
+### Category: Gotcha
+**Learned**: Focus transfer from sidebar to main content requires explicit state change
+**Context**: Enter key on sidebar items was loading content but not changing focus target
+**Prevention**: Always set `app.focus = FocusTarget::MainContent` when user navigates to content from sidebar
+**File**: `src/main.rs`
+
+### Category: Decision
+**Learned**: Spotify deprecated artist_top_tracks endpoint; using simplified approach
+**Context**: API call was returning 404, decided to stub rather than implement workaround
+**Prevention**: Check API changelog before implementing features; stub first, verify endpoint availability
+**File**: `src/api/library.rs`
+
+### Category: Pattern
+**Learned**: Vim-style navigation (h/j/k/l) integrates well with existing arrow key handlers
+**Context**: Added 'h' for sidebar focus, 'l' for main content, 'j'/'k' for up/down
+**Prevention**: Keep navigation intuitive - h=left (sidebar is left), l=right (content is right)
+**File**: `src/main.rs`
+
 ## Future Learning Sources
 - Test failures
 - Code review feedback

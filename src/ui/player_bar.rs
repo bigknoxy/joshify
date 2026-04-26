@@ -50,10 +50,10 @@ pub fn render_player_bar(
     layout_cache.progress_bar = None;
     layout_cache.volume_bar = None;
 
-    let play_icon = if is_playing {
-        symbols::PLAY
+    let (play_icon, play_text) = if is_playing {
+        (symbols::PAUSE, "Pause")
     } else {
-        symbols::PAUSE
+        (symbols::PLAY, "Play")
     };
 
     let album_art_width = 12u16;
@@ -296,7 +296,7 @@ pub fn render_player_bar(
         Span::styled(
             format!(
                 "{:^width$}",
-                format!("{} Play", play_icon),
+                format!("{} {}", play_icon, play_text),
                 width = PLAY_PAUSE_BUTTON_WIDTH.saturating_sub(1) as usize
             ),
             Style::default()
