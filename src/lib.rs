@@ -7,6 +7,7 @@ pub mod keyring_store;
 pub mod media_control;
 pub mod notifications;
 pub mod player;
+pub mod search;
 pub mod session;
 pub mod setup;
 pub mod state;
