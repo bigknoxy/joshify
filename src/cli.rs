@@ -107,7 +107,10 @@ impl CliHandler {
     }
 
     /// Create with custom output
-    pub fn with_output<W: Write + 'static>(output: W) -> Self {
+    pub fn with_output<W: Write>(output: W) -> Self
+    where
+        W: 'static,
+    {
         Self {
             output: Box::new(output),
         }
@@ -747,10 +750,15 @@ mod tests {
 
     #[test]
     fn test_cli_handler_with_output() {
-        let mut buf: Vec<u8> = Vec::new();
-        let mut handler = CliHandler::with_output(&mut buf);
-        let cmd = CliCommand::Pause;
-        handler.execute(cmd).unwrap();
+        use std::io::Cursor;
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut handler = CliHandler::with_output(cursor.clone());
+            let cmd = CliCommand::Pause;
+            handler.execute(cmd).unwrap();
+        }
+        // Verify output was written
+        let buf = cursor.into_inner();
         assert!(!buf.is_empty());
     }
 }

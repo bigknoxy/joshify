@@ -6,6 +6,7 @@ pub mod config;
 pub mod connect;
 pub mod keyring_store;
 pub mod logging;
+pub mod lyrics;
 pub mod media_control;
 pub mod notifications;
 pub mod player;
