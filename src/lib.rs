@@ -4,6 +4,7 @@ pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod connect;
+pub mod daemon;
 pub mod keyring_store;
 pub mod logging;
 pub mod lyrics;
@@ -14,6 +15,7 @@ pub mod search;
 pub mod session;
 pub mod setup;
 pub mod state;
+pub mod themes;
 pub mod ui;
 
 /// CLI arguments for non-interactive mode
