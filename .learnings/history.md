@@ -77,6 +77,55 @@
 
 ---
 
+### 2026-04-26: Drill-Down Navigation System
+**Branch**: feature/drill-down-navigation
+**Status**: Complete, awaiting PR
+**Owner**: AI Agent
+
+**What**:
+- Created NavigationStack with push/pop/peek and history tracking
+- Extended ContentState with AlbumDetail and ArtistDetail variants
+- Implemented browser-like back navigation with Backspace key
+- Added Enter key handlers for all sidebar items (Home, Library, Playlists, LikedSongs)
+- Added h/j/k/l vim-style navigation shortcuts
+- Implemented Tab key to switch Library tabs (Albums/Artists)
+- Created Album Detail view with header (name, artist, year, tracks) + track list
+- Created Artist Detail view with header (name, genres, followers)
+- Fixed play/pause button to show correct state text ("Play" vs "Pause")
+- Cleaned up unused imports in home_view.rs
+- Added API methods: get_top_artists, get_top_tracks, get_album_tracks
+- Added 8 unit tests for NavigationStack
+
+**Decisions**:
+- Navigation stack stores (ContentState, selected_index) tuples for full state restoration
+- Album/Artist detail views reuse existing track list rendering logic
+- Spotify deprecated artist_top_tracks - stubbed with documentation
+- 'h' goes to sidebar, 'l' goes to main content (mnemonic: h=left, l=right)
+- Backspace mirrors browser back behavior
+
+**Files**:
+- Created: `src/state/navigation_stack.rs` (NEW module with 8 tests)
+- Modified: `src/state/app_state.rs`, `src/state/mod.rs`
+- Modified: `src/ui/main_view.rs` (detail view rendering)
+- Modified: `src/ui/player_bar.rs` (play/pause text fix)
+- Modified: `src/ui/home_view.rs` (cleanup imports)
+- Modified: `src/api/library.rs` (new API methods)
+- Modified: `src/main.rs` (navigation handlers, vim keys)
+
+**Testing**:
+- All 203+ tests passing
+- Navigation stack: 8 new tests
+- Release build compiles with 3 minor warnings
+- No test regressions
+
+**Learnings**:
+- Navigation stack pattern works well for TUI drill-down
+- Focus transfer requires explicit state change
+- API endpoint deprecation happens - stub first, verify later
+- Vim-style shortcuts integrate cleanly with existing handlers
+
+---
+
 ## Template for New Entries
 
 ```markdown

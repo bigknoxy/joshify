@@ -1,6 +1,6 @@
 //! Main content view rendering
 
-use crate::state::app_state::{ContentState, PlaylistListItem, TrackListItem};
+use crate::state::app_state::{AlbumListItem, ArtistListItem, ContentState, LibraryTab, PlaylistListItem, TrackListItem};
 use crate::state::load_coordinator::LoadAction;
 use crate::ui::layout_cache::LayoutCache;
 use crate::ui::theme::{self, symbols, Catppuccin};
@@ -191,6 +191,167 @@ fn render_track_list(
     }
 }
 
+/// Render library view with albums grid and artists list
+fn render_library(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    albums: &[AlbumListItem],
+    artists: &[crate::state::app_state::ArtistListItem],
+    selected_tab: &LibraryTab,
+    selected_index: usize,
+    scroll_offset: usize,
+    _border_color: Color,
+    layout_cache: &mut LayoutCache,
+) {
+    use crate::state::app_state::ArtistListItem;
+
+    // Store main view area
+    layout_cache.main_view = Some(area);
+    layout_cache.track_items.clear();
+    layout_cache.playlist_items.clear();
+
+    // Split into header and content
+    let header_height = 3u16;
+    let content_area = Rect::new(
+        area.x,
+        area.y + header_height,
+        area.width,
+        area.height.saturating_sub(header_height),
+    );
+
+    // Calculate available content width
+    let content_width = area.width.saturating_sub(2) as usize;
+
+    // Tab bar
+    let albums_tab = format!("[{}] Albums", if *selected_tab == LibraryTab::Albums { "x" } else { " " });
+    let artists_tab = format!("[{}] Artists", if *selected_tab == LibraryTab::Artists { "x" } else { " " });
+    let tab_text = format!("{}    {}", albums_tab, artists_tab);
+
+    let header_text = if content_width >= 50 {
+        format!("{} {}  │  {}", symbols::MUSIC_NOTE, tab_text, "Tab to switch")
+    } else {
+        tab_text
+    };
+
+    let header = Paragraph::new(truncate(&header_text, content_width))
+        .style(Catppuccin::dim())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Library ")
+                .border_style(Catppuccin::primary().add_modifier(Modifier::BOLD))
+                .title_style(Catppuccin::primary()),
+        );
+    frame.render_widget(header, area);
+
+    match selected_tab {
+        LibraryTab::Albums => {
+            if albums.is_empty() {
+                let widget = Paragraph::new("No saved albums. Save albums to see them here.")
+                    .style(Catppuccin::dim())
+                    .block(
+                        Block::default()
+                            .borders(Borders::NONE),
+                    );
+                frame.render_widget(widget, content_area);
+                return;
+            }
+
+            // Simple list view for albums (grid can be added later)
+            let visible_count = content_area.height as usize;
+            let end = (scroll_offset + visible_count).min(albums.len());
+
+            let items: Vec<ListItem> = (scroll_offset..end)
+                .map(|i| {
+                    let album = &albums[i];
+                    let is_selected = i == selected_index;
+                    let (prefix, style) = if is_selected {
+                        (
+                            format!("{} ", symbols::ARROW_RIGHT),
+                            Catppuccin::track_item_selected(),
+                        )
+                    } else {
+                        ("  ".to_string(), Catppuccin::track_item())
+                    };
+
+                    let year_str = album.release_year.map(|y| format!(" ({})", y)).unwrap_or_default();
+                    let line_text = format!("{}{}{}", album.name, year_str, album.artist);
+                    let truncated = truncate(&line_text, content_width.saturating_sub(prefix.len()));
+
+                    let line = Line::from(vec![
+                        Span::styled(prefix, Catppuccin::secondary()),
+                        Span::styled(symbols::DISC.to_string(), Catppuccin::secondary()),
+                        Span::styled(" ", style),
+                        Span::styled(truncated, style),
+                    ]);
+                    ListItem::new(line)
+                })
+                .collect();
+
+            let list = List::new(items);
+            frame.render_widget(list, content_area);
+
+            // Populate item rectangles for hit testing
+            for (i, _) in (scroll_offset..end).enumerate() {
+                let item_y = content_area.y + i as u16;
+                let item_area = Rect::new(content_area.x, item_y, content_area.width, 1);
+                layout_cache.track_items.push(item_area);
+            }
+        }
+        LibraryTab::Artists => {
+            if artists.is_empty() {
+                let widget = Paragraph::new("No followed artists. Follow artists to see them here.")
+                    .style(Catppuccin::dim())
+                    .block(
+                        Block::default()
+                            .borders(Borders::NONE),
+                    );
+                frame.render_widget(widget, content_area);
+                return;
+            }
+
+            let visible_count = content_area.height as usize;
+            let end = (scroll_offset + visible_count).min(artists.len());
+
+            let items: Vec<ListItem> = (scroll_offset..end)
+                .map(|i| {
+                    let artist: &ArtistListItem = &artists[i];
+                    let is_selected = i == selected_index;
+                    let (prefix, style) = if is_selected {
+                        (
+                            format!("{} ", symbols::ARROW_RIGHT),
+                            Catppuccin::track_item_selected(),
+                        )
+                    } else {
+                        ("  ".to_string(), Catppuccin::track_item())
+                    };
+
+                    let line_text = &artist.name;
+                    let truncated = truncate(line_text, content_width.saturating_sub(prefix.len() + 2));
+
+                    let line = Line::from(vec![
+                        Span::styled(prefix, Catppuccin::secondary()),
+                        Span::styled(symbols::MUSIC_NOTE.to_string(), Catppuccin::secondary()),
+                        Span::styled(" ", style),
+                        Span::styled(truncated, style),
+                    ]);
+                    ListItem::new(line)
+                })
+                .collect();
+
+            let list = List::new(items);
+            frame.render_widget(list, content_area);
+
+            // Populate item rectangles for hit testing
+            for (i, _) in (scroll_offset..end).enumerate() {
+                let item_y = content_area.y + i as u16;
+                let item_area = Rect::new(content_area.x, item_y, content_area.width, 1);
+                layout_cache.track_items.push(item_area);
+            }
+        }
+    }
+}
+
 /// Render a list of playlists
 fn render_playlist_list(
     frame: &mut ratatui::Frame,
@@ -309,6 +470,192 @@ fn render_playlist_list(
     }
 }
 
+/// Render breadcrumb trail at top of main view
+fn render_breadcrumb(frame: &mut ratatui::Frame, area: Rect, trail: &[String]) {
+    if trail.is_empty() {
+        return;
+    }
+    
+    let breadcrumb_text = trail.join(" > ");
+    let truncated = if breadcrumb_text.len() > area.width as usize - 4 {
+        format!("...{}", &breadcrumb_text[breadcrumb_text.len() - area.width as usize + 7..])
+    } else {
+        breadcrumb_text
+    };
+    
+    let breadcrumb = Paragraph::new(format!("  {} ", truncated))
+        .style(Catppuccin::dim().add_modifier(Modifier::ITALIC));
+    frame.render_widget(breadcrumb, area);
+}
+
+/// Render album detail view
+fn render_album_detail(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    album: &AlbumListItem,
+    tracks: &[TrackListItem],
+    selected_index: usize,
+    scroll_offset: usize,
+    _border_color: Color,
+    playing_uri: Option<&str>,
+    layout_cache: &mut LayoutCache,
+) {
+    use crate::ui::theme::symbols;
+    
+    layout_cache.main_view = Some(area);
+    layout_cache.track_items.clear();
+
+    // Split area into header (album info) and track list
+    let header_height = 5u16;
+    let [header_area, list_area] = Layout::vertical([
+        Constraint::Length(header_height),
+        Constraint::Min(0),
+    ]).areas(area);
+
+    let content_width = area.width.saturating_sub(2) as usize;
+
+    // Header with album info
+    let year_str = album.release_year.map(|y| format!(" ({})", y)).unwrap_or_default();
+    let header_text = vec![
+        Line::from(vec![
+            Span::styled(format!("{} ", symbols::DISC), Catppuccin::secondary()),
+            Span::styled(&album.name, Catppuccin::primary().add_modifier(Modifier::BOLD)),
+            Span::styled(&year_str, Catppuccin::dim()),
+        ]),
+        Line::from(vec![
+            Span::styled("  by ", Catppuccin::dim()),
+            Span::styled(&album.artist, Catppuccin::text()),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {} {} tracks  •  Press Enter to play", symbols::MUSIC_NOTE, album.total_tracks), Catppuccin::dim()),
+        ]),
+    ];
+
+    let header = Paragraph::new(header_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Album "))
+                .border_style(Catppuccin::primary().add_modifier(Modifier::BOLD))
+                .title_style(Catppuccin::primary()),
+        );
+    frame.render_widget(header, header_area);
+
+    // Track list
+    if tracks.is_empty() {
+        let empty = Paragraph::new("  Loading tracks...")
+            .style(Catppuccin::dim());
+        frame.render_widget(empty, list_area);
+        return;
+    }
+
+    let visible_count = list_area.height as usize;
+    let end = (scroll_offset + visible_count).min(tracks.len());
+
+    let items: Vec<ListItem> = (scroll_offset..end)
+        .map(|i| {
+            let track = &tracks[i];
+            let is_selected = i == selected_index;
+            let is_playing = playing_uri == Some(track.uri.as_str());
+            
+            let (prefix_str, style) = if is_playing {
+                (symbols::SPEAKER.to_string(), Catppuccin::success().add_modifier(Modifier::BOLD))
+            } else if is_selected {
+                (symbols::ARROW_RIGHT.to_string(), Catppuccin::track_item_selected())
+            } else {
+                (" ".to_string(), Catppuccin::track_item())
+            };
+
+            let line = Line::from(vec![
+                Span::styled(format!("{:2}. ", i + 1), Catppuccin::track_number()),
+                Span::styled(format!("{} ", prefix_str), style),
+                Span::styled(&track.name, style),
+                Span::styled(" - ", Catppuccin::dim()),
+                Span::styled(&track.artist, Catppuccin::artist_name()),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items);
+    frame.render_widget(list, list_area);
+
+    // Populate track item rectangles for hit testing
+    for (i, _) in (scroll_offset..end).enumerate() {
+        let item_y = list_area.y + i as u16;
+        let item_area = Rect::new(list_area.x, item_y, list_area.width, 1);
+        layout_cache.track_items.push(item_area);
+    }
+}
+
+/// Render artist detail view
+fn render_artist_detail(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    artist: &ArtistListItem,
+    _selected_index: usize,
+    _scroll_offset: usize,
+    _border_color: Color,
+    layout_cache: &mut LayoutCache,
+) {
+    use crate::ui::theme::symbols;
+    
+    layout_cache.main_view = Some(area);
+    layout_cache.track_items.clear();
+
+    let content_width = area.width.saturating_sub(2) as usize;
+
+    // Build artist info display
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("{} ", symbols::HEADPHONES), Catppuccin::secondary()),
+            Span::styled(&artist.name, Catppuccin::primary().add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+    ];
+
+    // Add genres if available
+    if !artist.genres.is_empty() {
+        let genres = artist.genres.join(", ");
+        lines.push(Line::from(vec![
+            Span::styled("  Genres: ", Catppuccin::dim()),
+            Span::styled(truncate(&genres, content_width.saturating_sub(10)), Catppuccin::text()),
+        ]));
+    }
+
+    // Add follower count if available
+    if let Some(count) = artist.follower_count {
+        let formatted = if count >= 1_000_000 {
+            format!("{:.1}M", count as f64 / 1_000_000.0)
+        } else if count >= 1_000 {
+            format!("{:.1}K", count as f64 / 1_000.0)
+        } else {
+            count.to_string()
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  Followers: ", Catppuccin::dim()),
+            Span::styled(formatted, Catppuccin::text()),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "  Artist detail view - tracks coming soon!",
+        Catppuccin::dim().add_modifier(Modifier::ITALIC),
+    ));
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Artist "))
+                .border_style(Catppuccin::secondary().add_modifier(Modifier::BOLD))
+                .title_style(Catppuccin::secondary()),
+        );
+    frame.render_widget(widget, area);
+}
+
 /// Render the main view
 pub fn render_main_view(
     frame: &mut ratatui::Frame,
@@ -320,6 +667,7 @@ pub fn render_main_view(
     border_color: Color,
     playing_uri: Option<&str>,
     layout_cache: &mut LayoutCache,
+    breadcrumb_trail: Option<&[String]>,
 ) {
     // Determine layout mode for responsive design
     let _layout_mode = if theme::Layout::is_compact(area.width) {
@@ -533,16 +881,42 @@ pub fn render_main_view(
                 layout_cache,
             );
         }
-        ContentState::Library { .. } => {
-            // TODO: Implement library view rendering
-            let widget = Paragraph::new("Library view coming soon...")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Library ")
-                        .border_style(Catppuccin::border()),
-                );
-            frame.render_widget(widget, area);
+        ContentState::Library { albums, artists, selected_tab } => {
+            render_library(
+                frame,
+                area,
+                albums,
+                artists,
+                selected_tab,
+                selected_index,
+                scroll_offset,
+                border_color,
+                layout_cache,
+            );
+        }
+        ContentState::AlbumDetail { album, tracks } => {
+            render_album_detail(
+                frame,
+                area,
+                album,
+                tracks,
+                selected_index,
+                scroll_offset,
+                border_color,
+                playing_uri,
+                layout_cache,
+            );
+        }
+        ContentState::ArtistDetail { artist } => {
+            render_artist_detail(
+                frame,
+                area,
+                artist,
+                selected_index,
+                scroll_offset,
+                border_color,
+                layout_cache,
+            );
         }
         // These states are handled in main.rs, not rendered directly
         ContentState::SearchResultsLive(_) |
