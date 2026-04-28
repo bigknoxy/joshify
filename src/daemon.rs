@@ -165,9 +165,7 @@ impl DaemonService {
                     #[cfg(unix)]
                     {
                         use std::process::Command;
-                        let output = Command::new("kill")
-                            .args(["-0", &pid.to_string()])
-                            .output();
+                        let output = Command::new("kill").args(["-0", &pid.to_string()]).output();
                         return output.map(|o| o.status.success()).unwrap_or(false);
                     }
                 }
@@ -186,7 +184,9 @@ impl DaemonService {
         let config = DaemonConfig::default();
         let pid_str = std::fs::read_to_string(&config.pid_path)
             .context("No PID file found - daemon not running")?;
-        let pid = pid_str.trim().parse::<u32>()
+        let pid = pid_str
+            .trim()
+            .parse::<u32>()
             .context("Invalid PID in PID file")?;
         Ok(pid)
     }
@@ -206,9 +206,9 @@ impl DaemonService {
         }
 
         // Spawn daemon process
-        let current_exe = std::env::current_exe()
-            .context("Failed to get current executable path")?;
-        
+        let current_exe =
+            std::env::current_exe().context("Failed to get current executable path")?;
+
         let child = std::process::Command::new(current_exe)
             .arg("--daemon")
             .stdin(std::process::Stdio::null())
@@ -218,10 +218,10 @@ impl DaemonService {
             .context("Failed to spawn daemon process")?;
 
         let pid = child.id();
-        
+
         // Wait a moment for daemon to start
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        
+
         // Verify daemon started
         if !Self::is_running() {
             anyhow::bail!("Daemon failed to start");
@@ -258,9 +258,7 @@ impl DaemonService {
                     #[cfg(unix)]
                     {
                         use std::process::Command;
-                        let _ = Command::new("kill")
-                            .args(["-9", &pid.to_string()])
-                            .output();
+                        let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
                     }
                 }
                 // Clean up socket and PID file
@@ -274,7 +272,7 @@ impl DaemonService {
     /// Send a command to the daemon and wait for response
     pub async fn send_command(command: DaemonCommand) -> Result<DaemonResponse> {
         let config = DaemonConfig::default();
-        
+
         if !config.socket_path.exists() {
             anyhow::bail!("Daemon socket not found - is the daemon running?");
         }
@@ -285,8 +283,8 @@ impl DaemonService {
             .context("Failed to connect to daemon socket")?;
 
         // Serialize command
-        let command_json = serde_json::to_string(&command)
-            .context("Failed to serialize command")?;
+        let command_json =
+            serde_json::to_string(&command).context("Failed to serialize command")?;
         let command_bytes = command_json.as_bytes();
         let length = command_bytes.len() as u32;
 
@@ -297,7 +295,9 @@ impl DaemonService {
 
         // Read response
         let mut length_buf = [0u8; 4];
-        stream.read_exact(&mut length_buf).await
+        stream
+            .read_exact(&mut length_buf)
+            .await
             .context("Failed to read response length")?;
         let response_length = u32::from_be_bytes(length_buf) as usize;
 
@@ -306,11 +306,13 @@ impl DaemonService {
         }
 
         let mut response_buf = vec![0u8; response_length];
-        stream.read_exact(&mut response_buf).await
+        stream
+            .read_exact(&mut response_buf)
+            .await
             .context("Failed to read response")?;
 
-        let response: DaemonResponse = serde_json::from_slice(&response_buf)
-            .context("Failed to deserialize response")?;
+        let response: DaemonResponse =
+            serde_json::from_slice(&response_buf).context("Failed to deserialize response")?;
 
         Ok(response)
     }
@@ -319,7 +321,8 @@ impl DaemonService {
     pub async fn run(&mut self) -> Result<()> {
         // Write PID file
         let pid = std::process::id();
-        tokio::fs::write(&self.config.pid_path, pid.to_string()).await
+        tokio::fs::write(&self.config.pid_path, pid.to_string())
+            .await
             .context("Failed to write PID file")?;
 
         // Clean up old socket
@@ -328,8 +331,8 @@ impl DaemonService {
         }
 
         // Create socket
-        let listener = UnixListener::bind(&self.config.socket_path)
-            .context("Failed to bind to socket")?;
+        let listener =
+            UnixListener::bind(&self.config.socket_path).context("Failed to bind to socket")?;
 
         info!("Daemon listening on {:?}", self.config.socket_path);
 
@@ -380,7 +383,9 @@ impl DaemonService {
     ) -> Result<()> {
         // Read command length
         let mut length_buf = [0u8; 4];
-        stream.read_exact(&mut length_buf).await
+        stream
+            .read_exact(&mut length_buf)
+            .await
             .context("Failed to read command length")?;
         let command_length = u32::from_be_bytes(length_buf) as usize;
 
@@ -390,11 +395,13 @@ impl DaemonService {
 
         // Read command
         let mut command_buf = vec![0u8; command_length];
-        stream.read_exact(&mut command_buf).await
+        stream
+            .read_exact(&mut command_buf)
+            .await
             .context("Failed to read command")?;
 
-        let command: DaemonCommand = serde_json::from_slice(&command_buf)
-            .context("Failed to deserialize command")?;
+        let command: DaemonCommand =
+            serde_json::from_slice(&command_buf).context("Failed to deserialize command")?;
 
         debug!("Received command: {:?}", command);
 
@@ -432,7 +439,10 @@ impl DaemonService {
                         duration_ms: 180000,
                     });
                     DaemonResponse::Ok {
-                        message: format!("Playing: {}", daemon_state.current_track.as_ref().unwrap().name),
+                        message: format!(
+                            "Playing: {}",
+                            daemon_state.current_track.as_ref().unwrap().name
+                        ),
                     }
                 } else {
                     if daemon_state.current_track.is_some() {
@@ -524,7 +534,11 @@ impl DaemonService {
                     is_paused: daemon_state.is_paused,
                     track: daemon_state.current_track.clone(),
                     progress_ms: daemon_state.progress_ms,
-                    duration_ms: daemon_state.current_track.as_ref().map(|t| t.duration_ms).unwrap_or(0),
+                    duration_ms: daemon_state
+                        .current_track
+                        .as_ref()
+                        .map(|t| t.duration_ms)
+                        .unwrap_or(0),
                     shuffle: daemon_state.shuffle,
                     repeat: daemon_state.repeat.clone(),
                     volume_percent: daemon_state.volume,
@@ -532,29 +546,35 @@ impl DaemonService {
                 };
                 DaemonResponse::Status { data: status }
             }
-            DaemonCommand::Volume { value } => {
-                match value {
-                    Some(v) => {
-                        daemon_state.volume = v.min(100);
-                        DaemonResponse::Ok {
-                            message: format!("Volume set to {}%", daemon_state.volume),
-                        }
-                    }
-                    None => {
-                        DaemonResponse::Ok {
-                            message: format!("Volume: {}%", daemon_state.volume),
-                        }
+            DaemonCommand::Volume { value } => match value {
+                Some(v) => {
+                    daemon_state.volume = v.min(100);
+                    DaemonResponse::Ok {
+                        message: format!("Volume set to {}%", daemon_state.volume),
                     }
                 }
-            }
+                None => DaemonResponse::Ok {
+                    message: format!("Volume: {}%", daemon_state.volume),
+                },
+            },
             DaemonCommand::Seek { position_ms } => {
-                daemon_state.progress_ms = position_ms.min(daemon_state.current_track.as_ref().map(|t| t.duration_ms).unwrap_or(position_ms));
+                daemon_state.progress_ms = position_ms.min(
+                    daemon_state
+                        .current_track
+                        .as_ref()
+                        .map(|t| t.duration_ms)
+                        .unwrap_or(position_ms),
+                );
                 DaemonResponse::Ok {
                     message: format!("Seeked to {}ms", daemon_state.progress_ms),
                 }
             }
             DaemonCommand::SeekForward { duration_ms } => {
-                let max_ms = daemon_state.current_track.as_ref().map(|t| t.duration_ms).unwrap_or(0);
+                let max_ms = daemon_state
+                    .current_track
+                    .as_ref()
+                    .map(|t| t.duration_ms)
+                    .unwrap_or(0);
                 daemon_state.progress_ms = (daemon_state.progress_ms + duration_ms).min(max_ms);
                 DaemonResponse::Ok {
                     message: format!("Seeked forward {}ms", duration_ms),
@@ -566,44 +586,37 @@ impl DaemonService {
                     message: format!("Seeked backward {}ms", duration_ms),
                 }
             }
-            DaemonCommand::Shuffle { enabled } => {
-                match enabled {
-                    Some(e) => {
-                        daemon_state.shuffle = e;
-                        DaemonResponse::Ok {
-                            message: format!("Shuffle: {}", if e { "on" } else { "off" }),
-                        }
-                    }
-                    None => {
-                        DaemonResponse::Ok {
-                            message: format!("Shuffle: {}", if daemon_state.shuffle { "on" } else { "off" }),
-                        }
+            DaemonCommand::Shuffle { enabled } => match enabled {
+                Some(e) => {
+                    daemon_state.shuffle = e;
+                    DaemonResponse::Ok {
+                        message: format!("Shuffle: {}", if e { "on" } else { "off" }),
                     }
                 }
-            }
-            DaemonCommand::Repeat { mode } => {
-                match mode {
-                    Some(m) => {
-                        daemon_state.repeat = m;
-                        DaemonResponse::Ok {
-                            message: format!("Repeat: {}", daemon_state.repeat),
-                        }
-                    }
-                    None => {
-                        DaemonResponse::Ok {
-                            message: format!("Repeat: {}", daemon_state.repeat),
-                        }
+                None => DaemonResponse::Ok {
+                    message: format!(
+                        "Shuffle: {}",
+                        if daemon_state.shuffle { "on" } else { "off" }
+                    ),
+                },
+            },
+            DaemonCommand::Repeat { mode } => match mode {
+                Some(m) => {
+                    daemon_state.repeat = m;
+                    DaemonResponse::Ok {
+                        message: format!("Repeat: {}", daemon_state.repeat),
                     }
                 }
-            }
-            DaemonCommand::Current => {
-                match daemon_state.current_track.clone() {
-                    Some(track) => DaemonResponse::Track { data: track },
-                    None => DaemonResponse::Error {
-                        message: "No track playing".to_string(),
-                    },
-                }
-            }
+                None => DaemonResponse::Ok {
+                    message: format!("Repeat: {}", daemon_state.repeat),
+                },
+            },
+            DaemonCommand::Current => match daemon_state.current_track.clone() {
+                Some(track) => DaemonResponse::Track { data: track },
+                None => DaemonResponse::Error {
+                    message: "No track playing".to_string(),
+                },
+            },
             DaemonCommand::QueueAdd { uri } => {
                 daemon_state.queue.push(uri.clone());
                 DaemonResponse::Ok {
@@ -616,9 +629,7 @@ impl DaemonService {
                     message: "Queue cleared".to_string(),
                 }
             }
-            DaemonCommand::Ping => {
-                DaemonResponse::Pong
-            }
+            DaemonCommand::Ping => DaemonResponse::Pong,
             DaemonCommand::Shutdown => {
                 // Signal shutdown
                 if let Some(tx) = &self.shutdown_tx {
@@ -657,7 +668,7 @@ impl DaemonState {
         if let Some(ref track) = self.current_track {
             self.track_history.push(track.uri.clone());
         }
-        
+
         if !self.queue.is_empty() {
             let next_uri = self.queue.remove(0);
             self.current_track = Some(TrackInfo {
@@ -709,7 +720,9 @@ mod tests {
 
     #[test]
     fn test_daemon_command_serialization() {
-        let cmd = DaemonCommand::Play { uri: Some("spotify:track:abc".to_string()) };
+        let cmd = DaemonCommand::Play {
+            uri: Some("spotify:track:abc".to_string()),
+        };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("Play"));
         assert!(json.contains("spotify:track:abc"));
@@ -720,7 +733,9 @@ mod tests {
 
     #[test]
     fn test_daemon_response_serialization() {
-        let response = DaemonResponse::Ok { message: "Success".to_string() };
+        let response = DaemonResponse::Ok {
+            message: "Success".to_string(),
+        };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("ok"));
         assert!(json.contains("Success"));
@@ -773,7 +788,7 @@ mod tests {
         assert_eq!(DaemonCommand::Previous, DaemonCommand::Previous);
         assert_eq!(DaemonCommand::Ping, DaemonCommand::Ping);
         assert_eq!(DaemonCommand::Shutdown, DaemonCommand::Shutdown);
-        
+
         let cmd1 = DaemonCommand::Volume { value: Some(50) };
         let cmd2 = DaemonCommand::Volume { value: Some(50) };
         assert_eq!(cmd1, cmd2);
@@ -785,8 +800,12 @@ mod tests {
         let resp2 = DaemonResponse::Pong;
         assert_eq!(resp1, resp2);
 
-        let resp3 = DaemonResponse::Error { message: "test".to_string() };
-        let resp4 = DaemonResponse::Error { message: "test".to_string() };
+        let resp3 = DaemonResponse::Error {
+            message: "test".to_string(),
+        };
+        let resp4 = DaemonResponse::Error {
+            message: "test".to_string(),
+        };
         assert_eq!(resp3, resp4);
     }
 
@@ -813,12 +832,15 @@ mod tests {
             duration_ms: 180000,
         });
         state.queue.push("spotify:track:next".to_string());
-        
+
         state.advance_track();
-        
+
         assert!(state.is_playing);
         assert!(!state.is_paused);
-        assert_eq!(state.current_track.as_ref().unwrap().uri, "spotify:track:next");
+        assert_eq!(
+            state.current_track.as_ref().unwrap().uri,
+            "spotify:track:next"
+        );
         assert_eq!(state.progress_ms, 0);
         assert!(state.queue.is_empty());
     }
@@ -835,16 +857,19 @@ mod tests {
         });
         state.progress_ms = 10000; // 10 seconds in
         state.track_history.push("spotify:track:prev".to_string());
-        
+
         // Should go to start of current track since > 5s in
         state.rewind_track();
         assert_eq!(state.progress_ms, 0);
         assert_eq!(state.current_track.as_ref().unwrap().name, "Current");
-        
+
         // Should go to previous track if at start
         state.progress_ms = 1000;
         state.rewind_track();
-        assert_eq!(state.current_track.as_ref().unwrap().uri, "spotify:track:prev");
+        assert_eq!(
+            state.current_track.as_ref().unwrap().uri,
+            "spotify:track:prev"
+        );
     }
 
     #[tokio::test]
@@ -864,7 +889,9 @@ mod tests {
     fn test_command_serialization_roundtrip() {
         let commands = vec![
             DaemonCommand::Play { uri: None },
-            DaemonCommand::Play { uri: Some("test".to_string()) },
+            DaemonCommand::Play {
+                uri: Some("test".to_string()),
+            },
             DaemonCommand::Pause,
             DaemonCommand::Resume,
             DaemonCommand::PlayPause,
@@ -878,11 +905,17 @@ mod tests {
             DaemonCommand::SeekForward { duration_ms: 5000 },
             DaemonCommand::SeekBackward { duration_ms: 5000 },
             DaemonCommand::Shuffle { enabled: None },
-            DaemonCommand::Shuffle { enabled: Some(true) },
+            DaemonCommand::Shuffle {
+                enabled: Some(true),
+            },
             DaemonCommand::Repeat { mode: None },
-            DaemonCommand::Repeat { mode: Some("track".to_string()) },
+            DaemonCommand::Repeat {
+                mode: Some("track".to_string()),
+            },
             DaemonCommand::Current,
-            DaemonCommand::QueueAdd { uri: "test".to_string() },
+            DaemonCommand::QueueAdd {
+                uri: "test".to_string(),
+            },
             DaemonCommand::QueueClear,
             DaemonCommand::Ping,
             DaemonCommand::Shutdown,
@@ -898,8 +931,12 @@ mod tests {
     #[test]
     fn test_response_serialization_roundtrip() {
         let responses = vec![
-            DaemonResponse::Ok { message: "ok".to_string() },
-            DaemonResponse::Error { message: "error".to_string() },
+            DaemonResponse::Ok {
+                message: "ok".to_string(),
+            },
+            DaemonResponse::Error {
+                message: "error".to_string(),
+            },
             DaemonResponse::Pong,
             DaemonResponse::Status {
                 data: PlaybackStatus {
@@ -912,7 +949,7 @@ mod tests {
                     repeat: "off".to_string(),
                     volume_percent: 50,
                     queue_length: 0,
-                }
+                },
             },
             DaemonResponse::Track {
                 data: TrackInfo {
@@ -921,7 +958,7 @@ mod tests {
                     album: "Album".to_string(),
                     uri: "uri".to_string(),
                     duration_ms: 1000,
-                }
+                },
             },
         ];
 

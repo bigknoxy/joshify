@@ -33,7 +33,11 @@ impl SpotifyClient {
         offset: u32,
     ) -> Result<(Vec<rspotify::model::SavedTrack>, u32, Option<u32>)> {
         let effective_limit = limit.min(50);
-        tracing::info!("Fetching liked tracks page (limit={}, offset={})", effective_limit, offset);
+        tracing::info!(
+            "Fetching liked tracks page (limit={}, offset={})",
+            effective_limit,
+            offset
+        );
         let result = self
             .oauth
             .current_user_saved_tracks_manual(
@@ -49,7 +53,12 @@ impl SpotifyClient {
         } else {
             None
         };
-        tracing::info!("Got {} liked tracks (total={}, next_offset={:?})", result.items.len(), total, next_offset);
+        tracing::info!(
+            "Got {} liked tracks (total={}, next_offset={:?})",
+            result.items.len(),
+            total,
+            next_offset
+        );
         Ok((result.items, total, next_offset))
     }
 
@@ -198,9 +207,15 @@ impl SpotifyClient {
     }
 
     /// Get recently played tracks
-    pub async fn get_recently_played(&self, limit: u32) -> Result<Vec<rspotify::model::PlayHistory>> {
+    pub async fn get_recently_played(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<rspotify::model::PlayHistory>> {
         let effective_limit = limit.min(50);
-        tracing::info!("Fetching recently played tracks (limit={})", effective_limit);
+        tracing::info!(
+            "Fetching recently played tracks (limit={})",
+            effective_limit
+        );
         let result = self
             .oauth
             .current_user_recently_played(
@@ -244,10 +259,18 @@ impl SpotifyClient {
     }
 
     /// Get user's top artists
-    pub async fn get_top_artists(&self, limit: u32, time_range: &str) -> Result<Vec<rspotify::model::FullArtist>> {
+    pub async fn get_top_artists(
+        &self,
+        limit: u32,
+        time_range: &str,
+    ) -> Result<Vec<rspotify::model::FullArtist>> {
         let effective_limit = limit.min(50);
-        tracing::info!("Fetching top artists (limit={}, time_range={})", effective_limit, time_range);
-        
+        tracing::info!(
+            "Fetching top artists (limit={}, time_range={})",
+            effective_limit,
+            time_range
+        );
+
         // Map string time_range to rspotify TimeRange
         let range = match time_range {
             "short" => rspotify::model::TimeRange::ShortTerm,
@@ -255,24 +278,28 @@ impl SpotifyClient {
             "long" => rspotify::model::TimeRange::LongTerm,
             _ => rspotify::model::TimeRange::MediumTerm,
         };
-        
+
         let result = self
             .oauth
-            .current_user_top_artists_manual(
-                Some(range),
-                Some(effective_limit),
-                Some(0),
-            )
+            .current_user_top_artists_manual(Some(range), Some(effective_limit), Some(0))
             .await
             .context("Failed to get top artists")?;
         Ok(result.items)
     }
 
     /// Get user's top tracks
-    pub async fn get_top_tracks(&self, limit: u32, time_range: &str) -> Result<Vec<rspotify::model::FullTrack>> {
+    pub async fn get_top_tracks(
+        &self,
+        limit: u32,
+        time_range: &str,
+    ) -> Result<Vec<rspotify::model::FullTrack>> {
         let effective_limit = limit.min(50);
-        tracing::info!("Fetching top tracks (limit={}, time_range={})", effective_limit, time_range);
-        
+        tracing::info!(
+            "Fetching top tracks (limit={}, time_range={})",
+            effective_limit,
+            time_range
+        );
+
         // Map string time_range to rspotify TimeRange
         let range = match time_range {
             "short" => rspotify::model::TimeRange::ShortTerm,
@@ -280,24 +307,22 @@ impl SpotifyClient {
             "long" => rspotify::model::TimeRange::LongTerm,
             _ => rspotify::model::TimeRange::MediumTerm,
         };
-        
+
         let result = self
             .oauth
-            .current_user_top_tracks_manual(
-                Some(range),
-                Some(effective_limit),
-                Some(0),
-            )
+            .current_user_top_tracks_manual(Some(range), Some(effective_limit), Some(0))
             .await
             .context("Failed to get top tracks")?;
         Ok(result.items)
     }
 
     /// Get album tracks
-    pub async fn get_album_tracks(&self, album_id: &str) -> Result<Vec<rspotify::model::SimplifiedTrack>> {
+    pub async fn get_album_tracks(
+        &self,
+        album_id: &str,
+    ) -> Result<Vec<rspotify::model::SimplifiedTrack>> {
         tracing::debug!("Loading album tracks for {}", album_id);
-        let aid = rspotify::model::AlbumId::from_id(album_id)
-            .context("Invalid album ID")?;
+        let aid = rspotify::model::AlbumId::from_id(album_id).context("Invalid album ID")?;
         let result = self
             .oauth
             .album_track_manual(
@@ -313,12 +338,15 @@ impl SpotifyClient {
 
     /// Get artist top tracks
     /// Get artist's top tracks
-    /// 
+    ///
     /// Note: The `artist_top_tracks` endpoint was deprecated by Spotify.
     /// This method now returns an empty vec as a placeholder.
     /// Use `get_related_artists` and `get_artist_albums` for discovery instead.
     #[allow(deprecated)]
-    pub async fn get_artist_top_tracks(&self, _artist_id: &str) -> Result<Vec<rspotify::model::FullTrack>> {
+    pub async fn get_artist_top_tracks(
+        &self,
+        _artist_id: &str,
+    ) -> Result<Vec<rspotify::model::FullTrack>> {
         tracing::warn!("artist_top_tracks endpoint is deprecated by Spotify - returning empty");
         Ok(vec![])
     }

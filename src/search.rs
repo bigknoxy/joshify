@@ -58,16 +58,20 @@ impl SimpleFuzzySearch {
     /// Search and return matching items sorted by relevance
     pub fn search(&self, limit: usize) -> Vec<(String, u32, Vec<usize>)> {
         if self.pattern.is_empty() {
-            return self.items.iter()
+            return self
+                .items
+                .iter()
                 .take(limit)
                 .map(|s| (s.clone(), 0, vec![]))
                 .collect();
         }
 
-        let mut results: Vec<(String, u32, Vec<usize>)> = self.items
+        let mut results: Vec<(String, u32, Vec<usize>)> = self
+            .items
             .iter()
             .filter_map(|item| {
-                self.calculate_score(item).map(|(score, indices)| (item.clone(), score, indices))
+                self.calculate_score(item)
+                    .map(|(score, indices)| (item.clone(), score, indices))
             })
             .collect();
 
@@ -148,7 +152,10 @@ impl SimpleFuzzySearch {
             score -= bonus;
         }
 
-        Some((score.saturating_sub(match_indices.len() as u32), match_indices))
+        Some((
+            score.saturating_sub(match_indices.len() as u32),
+            match_indices,
+        ))
     }
 
     /// Clear all items
@@ -274,8 +281,7 @@ pub mod utils {
                 patterns.iter().all(|pat| {
                     let pat_lower = pat.to_lowercase();
                     // Check exact, starts with, contains, or fuzzy
-                    item_lower.contains(&pat_lower) ||
-                    fuzzy_match(&item_lower, &pat_lower)
+                    item_lower.contains(&pat_lower) || fuzzy_match(&item_lower, &pat_lower)
                 })
             })
             .cloned()
@@ -314,10 +320,7 @@ mod tests {
     #[test]
     fn test_simple_fuzzy_search_exact_match() {
         let mut search = SimpleFuzzySearch::new();
-        search.add_items(vec![
-            "Taylor Swift".to_string(),
-            "Test Artist".to_string(),
-        ]);
+        search.add_items(vec!["Taylor Swift".to_string(), "Test Artist".to_string()]);
 
         search.set_pattern("taylor swift");
         let results = search.search(10);
@@ -363,10 +366,7 @@ mod tests {
     #[test]
     fn test_simple_fuzzy_search_fuzzy() {
         let mut search = SimpleFuzzySearch::new();
-        search.add_items(vec![
-            "Taylor Swift".to_string(),
-            "Test Artist".to_string(),
-        ]);
+        search.add_items(vec!["Taylor Swift".to_string(), "Test Artist".to_string()]);
 
         // Fuzzy match: "tylr" should match "Taylor"
         search.set_pattern("tylr");
@@ -437,8 +437,14 @@ mod tests {
 
         let mut engine = SearchEngine::new();
         engine.add_items(vec![
-            Track { name: "Love Story".to_string(), artist: "Taylor Swift".to_string() },
-            Track { name: "Test Track".to_string(), artist: "Test Artist".to_string() },
+            Track {
+                name: "Love Story".to_string(),
+                artist: "Taylor Swift".to_string(),
+            },
+            Track {
+                name: "Test Track".to_string(),
+                artist: "Test Artist".to_string(),
+            },
         ]);
 
         engine.set_pattern("love taylor");
@@ -478,10 +484,7 @@ mod tests {
     #[test]
     fn test_fuzzy_search_acronym() {
         let mut search = SimpleFuzzySearch::new();
-        search.add_items(vec![
-            "Taylor Swift".to_string(),
-            "Tame Impala".to_string(),
-        ]);
+        search.add_items(vec!["Taylor Swift".to_string(), "Tame Impala".to_string()]);
 
         // Acronym search: "ts" should find "Taylor Swift"
         search.set_pattern("ts");
@@ -523,10 +526,7 @@ mod tests {
     #[test]
     fn test_fuzzy_match_consecutive_bonus() {
         let mut search = SimpleFuzzySearch::new();
-        search.add_items(vec![
-            "TaylorSwift".to_string(),
-            "Taylor Swift".to_string(),
-        ]);
+        search.add_items(vec!["TaylorSwift".to_string(), "Taylor Swift".to_string()]);
 
         // "ts" matching "TaylorSwift" (camelCase) should get consecutive bonus
         search.set_pattern("ts");

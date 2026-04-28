@@ -42,3 +42,9 @@ oauth_tokens.json
 
 # Cache
 .cache/
+
+# VHS generated files
+screenshots/current/
+screenshots/diffs/
+*.gif
+vhs_test/

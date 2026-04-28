@@ -8,7 +8,7 @@ use crate::album_art::AlbumArtCache;
 use ratatui::layout::Rect;
 
 /// Navigation items for the sidebar
-/// 
+///
 /// Note: Search is intentionally omitted from the sidebar navigation.
 /// Users can access search globally by pressing '/' from any screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,9 +95,14 @@ pub enum ContentState {
         selected_tab: LibraryTab,
     },
     /// Album detail view with tracks
-    AlbumDetail { album: AlbumListItem, tracks: Vec<TrackListItem> },
+    AlbumDetail {
+        album: AlbumListItem,
+        tracks: Vec<TrackListItem>,
+    },
     /// Artist detail view with top tracks
-    ArtistDetail { artist: ArtistListItem },
+    ArtistDetail {
+        artist: ArtistListItem,
+    },
 }
 
 /// Library tab selection
@@ -215,7 +220,11 @@ impl AppState {
                 self.selected_nav = NavItem::Home;
             }
             NavigationEntry::Library { albums, artists } => {
-                self.content_state = ContentState::Library { albums, artists, selected_tab: LibraryTab::Albums };
+                self.content_state = ContentState::Library {
+                    albums,
+                    artists,
+                    selected_tab: LibraryTab::Albums,
+                };
                 self.selected_nav = NavItem::Library;
             }
             NavigationEntry::AlbumDetail { album, tracks } => {
@@ -251,15 +260,19 @@ impl AppState {
         use super::navigation_stack::NavigationEntry;
         let entry = match &self.content_state {
             ContentState::Home => Some(NavigationEntry::Home),
-            ContentState::Library { albums, artists, .. } => {
-                Some(NavigationEntry::Library { albums: albums.clone(), artists: artists.clone() })
-            }
-            ContentState::AlbumDetail { album, tracks } => {
-                Some(NavigationEntry::AlbumDetail { album: album.clone(), tracks: tracks.clone() })
-            }
-            ContentState::ArtistDetail { artist } => {
-                Some(NavigationEntry::ArtistDetail { artist: artist.clone() })
-            }
+            ContentState::Library {
+                albums, artists, ..
+            } => Some(NavigationEntry::Library {
+                albums: albums.clone(),
+                artists: artists.clone(),
+            }),
+            ContentState::AlbumDetail { album, tracks } => Some(NavigationEntry::AlbumDetail {
+                album: album.clone(),
+                tracks: tracks.clone(),
+            }),
+            ContentState::ArtistDetail { artist } => Some(NavigationEntry::ArtistDetail {
+                artist: artist.clone(),
+            }),
             ContentState::Playlists(playlists) => {
                 Some(NavigationEntry::Playlists(playlists.clone()))
             }
@@ -270,14 +283,16 @@ impl AppState {
                     id: "unknown".to_string(),
                     track_count: tracks.len() as u32,
                 };
-                Some(NavigationEntry::PlaylistTracks { playlist, tracks: tracks.clone() })
+                Some(NavigationEntry::PlaylistTracks {
+                    playlist,
+                    tracks: tracks.clone(),
+                })
             }
-            ContentState::LikedSongs(tracks) => {
-                Some(NavigationEntry::LikedSongs(tracks.clone()))
-            }
-            ContentState::SearchResults(query, tracks) => {
-                Some(NavigationEntry::SearchResults { query: query.clone(), tracks: tracks.clone() })
-            }
+            ContentState::LikedSongs(tracks) => Some(NavigationEntry::LikedSongs(tracks.clone())),
+            ContentState::SearchResults(query, tracks) => Some(NavigationEntry::SearchResults {
+                query: query.clone(),
+                tracks: tracks.clone(),
+            }),
             _ => None, // Loading states, etc. don't get pushed
         };
 
@@ -345,7 +360,12 @@ impl AppState {
 
     /// Switch library tab
     pub fn switch_library_tab(&mut self) {
-        if let ContentState::Library { albums, artists, selected_tab } = &self.content_state {
+        if let ContentState::Library {
+            albums,
+            artists,
+            selected_tab,
+        } = &self.content_state
+        {
             let new_tab = match selected_tab {
                 LibraryTab::Albums => LibraryTab::Artists,
                 LibraryTab::Artists => LibraryTab::Albums,

@@ -11,7 +11,9 @@ use ratatui::{
 // Re-export UI module for convenience in tests
 use joshify::ui::{
     layout_cache::{ClickableArea, LayoutCache},
-    mouse_handler::{handle_left_click, handle_scroll_down, handle_scroll_up, MouseAction, MouseState},
+    mouse_handler::{
+        handle_left_click, handle_scroll_down, handle_scroll_up, MouseAction, MouseState,
+    },
 };
 
 /// Navigation items (mirroring src/state/app_state.rs)
@@ -294,7 +296,7 @@ fn test_help_overlay() {
 #[test]
 fn test_mouse_nav_to_playlist_to_track() {
     use ratatui::layout::Rect;
-    
+
     // Simulate layout cache state after rendering
     // Note: playlist_items and track_items have different y positions
     let cache = LayoutCache {
@@ -347,12 +349,9 @@ fn test_mouse_nav_to_playlist_to_track() {
 #[test]
 fn test_double_click_playlist_opens() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
-        playlist_items: vec![
-            Rect::new(25, 5, 50, 1),
-            Rect::new(25, 6, 50, 1),
-        ],
+        playlist_items: vec![Rect::new(25, 5, 50, 1), Rect::new(25, 6, 50, 1)],
         ..Default::default()
     };
 
@@ -372,7 +371,7 @@ fn test_double_click_playlist_opens() {
 #[test]
 fn test_double_click_track_plays() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         track_items: vec![
             Rect::new(25, 5, 50, 1),
@@ -398,7 +397,7 @@ fn test_double_click_track_plays() {
 #[test]
 fn test_volume_scroll_local() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         volume_bar: Some(Rect::new(60, 36, 15, 2)),
         player_bar: Some(Rect::new(20, 34, 60, 6)),
@@ -422,7 +421,7 @@ fn test_volume_scroll_local() {
 #[test]
 fn test_volume_scroll_remote() {
     use ratatui::layout::Rect;
-    
+
     // Same behavior for remote mode - volume bar is in player bar
     let cache = LayoutCache {
         volume_bar: Some(Rect::new(60, 36, 15, 2)),
@@ -443,7 +442,7 @@ fn test_volume_scroll_remote() {
 #[test]
 fn test_click_play_pause_toggles() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         player_bar: Some(Rect::new(20, 34, 60, 6)),
         play_pause_button: Some(Rect::new(30, 36, 3, 2)),
@@ -460,7 +459,7 @@ fn test_click_play_pause_toggles() {
 #[test]
 fn test_click_skip_buttons() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         player_bar: Some(Rect::new(20, 34, 60, 6)),
         prev_button: Some(Rect::new(25, 36, 3, 2)),
@@ -482,7 +481,7 @@ fn test_click_skip_buttons() {
 #[test]
 fn test_click_shuffle_repeat_buttons() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         player_bar: Some(Rect::new(20, 34, 60, 6)),
         shuffle_button: Some(Rect::new(40, 36, 3, 2)),
@@ -504,7 +503,7 @@ fn test_click_shuffle_repeat_buttons() {
 #[test]
 fn test_click_queue_button() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         player_bar: Some(Rect::new(20, 34, 60, 6)),
         queue_button: Some(Rect::new(50, 36, 3, 2)),
@@ -520,14 +519,14 @@ fn test_click_queue_button() {
 #[test]
 fn test_click_overlay_closes() {
     use ratatui::layout::Rect;
-    
+
     // Test help overlay
     let cache_help = LayoutCache {
         help_overlay: Some(Rect::new(10, 10, 60, 20)),
         ..Default::default()
     };
     let mut mouse_state = MouseState::new();
-    
+
     let action_help = handle_left_click(15, 15, &cache_help, &mut mouse_state);
     assert_eq!(action_help, MouseAction::CloseOverlay);
 
@@ -537,7 +536,7 @@ fn test_click_overlay_closes() {
         ..Default::default()
     };
     let mut mouse_state2 = MouseState::new();
-    
+
     let action_queue = handle_left_click(25, 25, &cache_queue, &mut mouse_state2);
     assert_eq!(action_queue, MouseAction::CloseOverlay);
 }
@@ -546,7 +545,7 @@ fn test_click_overlay_closes() {
 #[test]
 fn test_click_progress_bar_seeks() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         player_bar: Some(Rect::new(20, 34, 60, 6)),
         progress_bar: Some(Rect::new(25, 34, 50, 1)),
@@ -569,7 +568,7 @@ fn test_click_progress_bar_seeks() {
 #[test]
 fn test_click_volume_bar_sets_volume() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         player_bar: Some(Rect::new(20, 34, 60, 6)),
         volume_bar: Some(Rect::new(60, 36, 15, 2)),
@@ -589,13 +588,10 @@ fn test_click_volume_bar_sets_volume() {
 #[test]
 fn test_scroll_main_content() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         main_view: Some(Rect::new(20, 0, 60, 34)),
-        track_items: vec![
-            Rect::new(25, 5, 50, 1),
-            Rect::new(25, 6, 50, 1),
-        ],
+        track_items: vec![Rect::new(25, 5, 50, 1), Rect::new(25, 6, 50, 1)],
         ..Default::default()
     };
 
@@ -616,13 +612,10 @@ fn test_scroll_main_content() {
 #[test]
 fn test_scroll_sidebar() {
     use ratatui::layout::Rect;
-    
+
     let cache = LayoutCache {
         sidebar: Some(Rect::new(0, 0, 20, 40)),
-        nav_items: vec![
-            Rect::new(0, 16, 20, 1),
-            Rect::new(0, 17, 20, 1),
-        ],
+        nav_items: vec![Rect::new(0, 16, 20, 1), Rect::new(0, 17, 20, 1)],
         ..Default::default()
     };
 
@@ -650,7 +643,7 @@ fn test_mouse_action_none_for_invalid_clicks() {
 #[test]
 fn test_complete_mouse_flow() {
     use ratatui::layout::Rect;
-    
+
     // Simulate a complete UI state
     let cache = LayoutCache {
         sidebar: Some(Rect::new(0, 0, 20, 40)),

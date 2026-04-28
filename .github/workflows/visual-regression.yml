@@ -1,0 +1,93 @@
+name: Visual Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/ui/**'
+      - 'src/main.rs'
+      - 'tapes/**'
+      - '.github/workflows/visual-regression.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compare-screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev ffmpeg imagemagick
+
+      - name: Install VHS
+        run: |
+          VHS_VERSION="0.11.0"
+          TTYD_VERSION="1.7.7"
+          
+          wget -q "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_linux_amd64.deb" -O vhs.deb
+          sudo dpkg -i vhs.deb || sudo apt-get install -f -y
+          
+          wget -q "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" -O ttyd
+          chmod +x ttyd
+          sudo mv ttyd /usr/local/bin/
+          
+          vhs version
+          ttyd --version
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Checkout reference screenshots
+        run: |
+          mkdir -p screenshots/reference
+          # Try to extract reference screenshots from main branch
+          git checkout main -- screenshots/reference/ 2>/dev/null || echo "No reference in main"
+
+      - name: Generate current screenshots
+        run: |
+          mkdir -p screenshots/current
+          export PATH="/usr/local/bin:$PATH"
+          for tape in tapes/*.tape; do
+            echo "Running: $tape"
+            vhs "$tape" 2>&1 || echo "Warning: $tape had issues"
+          done
+
+      - name: Compare screenshots
+        id: compare
+        run: |
+          if [ ! -d "screenshots/reference" ] || [ ! "$(ls -A screenshots/reference)" ]; then
+            echo "No reference screenshots to compare"
+            echo "diff_detected=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          ./scripts/compare-screenshots.sh || true
+          
+          if [ -d "screenshots/diffs" ] && [ "$(ls -A screenshots/diffs/*.png 2>/dev/null)" ]; then
+            echo "diff_detected=true" >> $GITHUB_OUTPUT
+          else
+            echo "diff_detected=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload comparison results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-regression-results
+          path: |
+            screenshots/current/
+            screenshots/diffs/
+          retention-days: 7

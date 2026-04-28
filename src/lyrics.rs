@@ -125,8 +125,11 @@ impl LyricsClient {
         _duration_ms: Option<u32>,
     ) -> Result<TrackLyrics> {
         let url = format!("{}/get", LRCLIB_API);
-        
-        debug!("Fetching lyrics from: {} for {} - {}", url, artist_name, track_name);
+
+        debug!(
+            "Fetching lyrics from: {} for {} - {}",
+            url, artist_name, track_name
+        );
 
         let response = self
             .http_client
@@ -147,7 +150,10 @@ impl LyricsClient {
                 .context("Failed to parse LRCLIB response")?;
 
             let lyrics = self.parse_lrclib_response(lrclib_response)?;
-            info!("Successfully fetched lyrics for {} - {}", artist_name, track_name);
+            info!(
+                "Successfully fetched lyrics for {} - {}",
+                artist_name, track_name
+            );
             Ok(lyrics)
         } else if response.status() == reqwest::StatusCode::NOT_FOUND {
             warn!("Lyrics not found for {} - {}", artist_name, track_name);
@@ -160,7 +166,7 @@ impl LyricsClient {
     /// Search for lyrics
     pub async fn search_lyrics(&self, query: &str) -> Result<Vec<TrackLyrics>> {
         let url = format!("{}/search", LRCLIB_API);
-        
+
         debug!("Searching lyrics with query: {}", query);
 
         let response = self
@@ -182,7 +188,11 @@ impl LyricsClient {
                 .filter_map(|resp| self.parse_lrclib_response(resp).ok())
                 .collect();
 
-            info!("Found {} lyric results for query: {}", lyrics_list.len(), query);
+            info!(
+                "Found {} lyric results for query: {}",
+                lyrics_list.len(),
+                query
+            );
             Ok(lyrics_list)
         } else {
             anyhow::bail!("LRCLIB search error: {}", response.status())
@@ -333,10 +343,12 @@ pub fn render_lyrics(
     let current_idx = lyrics.get_line_index(position_ms);
 
     for (i, entry) in context.iter().enumerate() {
-        let is_current = current_idx.map(|idx| {
-            let start = idx.saturating_sub(config.context_lines);
-            i == idx - start
-        }).unwrap_or(false);
+        let is_current = current_idx
+            .map(|idx| {
+                let start = idx.saturating_sub(config.context_lines);
+                i == idx - start
+            })
+            .unwrap_or(false);
 
         let line = if config.show_timestamps {
             format!("{} {}", entry.formatted_timestamp(), entry.text)
@@ -389,8 +401,14 @@ mod tests {
         };
 
         assert!(lyrics.has_lyrics());
-        assert_eq!(lyrics.get_current_line(0).map(|l| l.text.clone()), Some("Line 1".to_string()));
-        assert_eq!(lyrics.get_current_line(6000).map(|l| l.text.clone()), Some("Line 2".to_string()));
+        assert_eq!(
+            lyrics.get_current_line(0).map(|l| l.text.clone()),
+            Some("Line 1".to_string())
+        );
+        assert_eq!(
+            lyrics.get_current_line(6000).map(|l| l.text.clone()),
+            Some("Line 2".to_string())
+        );
         assert_eq!(lyrics.get_line_index(6000), Some(1));
     }
 
@@ -415,7 +433,7 @@ mod tests {
     #[test]
     fn test_lyrics_client_parse_timestamp() {
         let client = LyricsClient::new().unwrap();
-        
+
         assert_eq!(client.parse_timestamp("01:30.500"), Some(90500));
         assert_eq!(client.parse_timestamp("00:45.250"), Some(45250));
         assert_eq!(client.parse_timestamp("02:00"), Some(120000));

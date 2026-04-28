@@ -2,7 +2,9 @@ use anyhow::Result;
 use joshify::auth::OAuthConfig;
 use joshify::player::LocalPlayer;
 use joshify::session::LocalSession;
-use joshify::state::app_state::{AlbumListItem, ArtistListItem, LibraryTab, PlaylistListItem, TrackListItem};
+use joshify::state::app_state::{
+    AlbumListItem, ArtistListItem, LibraryTab, PlaylistListItem, TrackListItem,
+};
 use joshify::state::player_state::PlayerState;
 use joshify::state::search_state::SearchState;
 use joshify::state::{ContentState, FocusTarget, LoadAction, NavItem};
@@ -143,7 +145,9 @@ impl App {
 
     fn update_highlighted_item(&mut self) {
         let tracks = match &self.content_state {
-            ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => Some((t.as_slice(), None::<&str>)),
+            ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => {
+                Some((t.as_slice(), None::<&str>))
+            }
             ContentState::PlaylistTracks(name, t) => Some((t.as_slice(), Some(name.as_str()))),
             ContentState::SearchResults(_, t) => Some((t.as_slice(), None::<&str>)),
             _ => None,
@@ -593,7 +597,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 }
                 other => {
                     app.loading_more_liked_songs = false;
-                    if let ContentState::LikedSongsPage { tracks: new_tracks, total, next_offset } = other {
+                    if let ContentState::LikedSongsPage {
+                        tracks: new_tracks,
+                        total,
+                        next_offset,
+                    } = other
+                    {
                         match &app.content_state {
                             ContentState::LikedSongsPage { tracks, .. } => {
                                 let mut combined = tracks.clone();
@@ -969,7 +978,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 let main_focused = app.focus == FocusTarget::MainContent;
                 let player_focused = app.focus == FocusTarget::PlayerBar;
 
-                joshify::ui::render_sidebar(frame, sidebar, app.selected_nav, sidebar_focused, &mut app.layout_cache);
+                joshify::ui::render_sidebar(
+                    frame,
+                    sidebar,
+                    app.selected_nav,
+                    sidebar_focused,
+                    &mut app.layout_cache,
+                );
                 joshify::ui::render_main_view(
                     frame,
                     main_content,
@@ -1022,7 +1037,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 if app.show_queue {
                     joshify::ui::render_queue_overlay(frame, area, &app.queue_state);
                 }
-                if let (Some(ref content), Some(ref mut state)) = (&app.help_content, &mut app.help_state) {
+                if let (Some(ref content), Some(ref mut state)) =
+                    (&app.help_content, &mut app.help_state)
+                {
                     joshify::ui::render_help_overlay(frame, area, content, state);
                 }
 
@@ -1145,11 +1162,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             })
                                         })
                                         .collect();
-                                    let _ = tx_clone.send(ContentState::LikedSongsPage {
-                                        tracks: items,
-                                        total,
-                                        next_offset,
-                                    }).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::LikedSongsPage {
+                                            tracks: items,
+                                            total,
+                                            next_offset,
+                                        })
+                                        .await;
                                 }
                                 Err(e) => {
                                     let _ = tx_clone
@@ -1188,11 +1207,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             })
                                         })
                                         .collect();
-                                    let _ = tx_clone.send(ContentState::LikedSongsPage {
-                                        tracks: items,
-                                        total,
-                                        next_offset,
-                                    }).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::LikedSongsPage {
+                                            tracks: items,
+                                            total,
+                                            next_offset,
+                                        })
+                                        .await;
                                 }
                                 Err(e) => {
                                     let _ = tx_clone
@@ -1387,15 +1408,20 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         })
                                         .collect();
                                     // Calculate jump back in (empty for now, needs saved data)
-                                    let jump_back_in = joshify::state::home_state::calculate_jump_back_in(&items, None, None);
-                                    let _ = tx_clone.send(ContentState::HomeDashboard(
-                                        joshify::state::home_state::HomeState {
-                                            recently_played: items,
-                                            jump_back_in,
-                                            is_loading: false,
-                                            last_updated: Some(std::time::Instant::now()),
-                                        }
-                                    )).await;
+                                    let jump_back_in =
+                                        joshify::state::home_state::calculate_jump_back_in(
+                                            &items, None, None,
+                                        );
+                                    let _ = tx_clone
+                                        .send(ContentState::HomeDashboard(
+                                            joshify::state::home_state::HomeState {
+                                                recently_played: items,
+                                                jump_back_in,
+                                                is_loading: false,
+                                                last_updated: Some(std::time::Instant::now()),
+                                            },
+                                        ))
+                                        .await;
                                 }
                                 Err(e) => {
                                     let _ = tx_clone
@@ -1416,31 +1442,43 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             let guard = c.lock().await;
                             match guard.get_user_albums(50).await {
                                 Ok(saved_albums) => {
-                                    let albums: Vec<joshify::state::app_state::AlbumListItem> = saved_albums
-                                        .into_iter()
-                                        .map(|sa| {
-                                            let release_year: Option<u32> = Some(&sa.album.release_date)
-                                                .filter(|s| !s.is_empty())
-                                                .and_then(|d| d.split('-').next())
-                                                .and_then(|y: &str| y.parse().ok());
-                                            let artist_name = sa.album.artists.first()
-                                                .map(|a| a.name.clone())
-                                                .unwrap_or_default();
-                                            joshify::state::app_state::AlbumListItem {
-                                                name: sa.album.name,
-                                                artist: artist_name,
-                                                id: sa.album.id.id().to_string(),
-                                                image_url: sa.album.images.first().map(|i| i.url.clone()),
-                                                total_tracks: sa.album.tracks.total as u32,
-                                                release_year,
-                                            }
+                                    let albums: Vec<joshify::state::app_state::AlbumListItem> =
+                                        saved_albums
+                                            .into_iter()
+                                            .map(|sa| {
+                                                let release_year: Option<u32> =
+                                                    Some(&sa.album.release_date)
+                                                        .filter(|s| !s.is_empty())
+                                                        .and_then(|d| d.split('-').next())
+                                                        .and_then(|y: &str| y.parse().ok());
+                                                let artist_name = sa
+                                                    .album
+                                                    .artists
+                                                    .first()
+                                                    .map(|a| a.name.clone())
+                                                    .unwrap_or_default();
+                                                joshify::state::app_state::AlbumListItem {
+                                                    name: sa.album.name,
+                                                    artist: artist_name,
+                                                    id: sa.album.id.id().to_string(),
+                                                    image_url: sa
+                                                        .album
+                                                        .images
+                                                        .first()
+                                                        .map(|i| i.url.clone()),
+                                                    total_tracks: sa.album.tracks.total as u32,
+                                                    release_year,
+                                                }
+                                            })
+                                            .collect();
+                                    let _ = tx_clone
+                                        .send(ContentState::Library {
+                                            albums,
+                                            artists: vec![], // Load artists separately
+                                            selected_tab:
+                                                joshify::state::app_state::LibraryTab::Albums,
                                         })
-                                        .collect();
-                                    let _ = tx_clone.send(ContentState::Library {
-                                        albums,
-                                        artists: vec![], // Load artists separately
-                                        selected_tab: joshify::state::app_state::LibraryTab::Albums,
-                                    }).await;
+                                        .await;
                                 }
                                 Err(e) => {
                                     let _ = tx_clone
@@ -1452,11 +1490,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             }
                         });
-                        app.content_state = ContentState::LoadingInProgress(LoadAction::LibraryAlbums);
+                        app.content_state =
+                            ContentState::LoadingInProgress(LoadAction::LibraryAlbums);
                     }
                     LoadAction::LibraryArtists => {
                         // TODO: Implement artists loading
-                        app.content_state = ContentState::Error("Library artists not yet implemented".to_string());
+                        app.content_state =
+                            ContentState::Error("Library artists not yet implemented".to_string());
                     }
                     LoadAction::AlbumTracks { album_id, name } => {
                         let c = client.clone();
@@ -1492,10 +1532,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         total_tracks: items.len() as u32,
                                         release_year: None,
                                     };
-                                    let _ = tx_clone.send(ContentState::AlbumDetail { 
-                                        album: album_item, 
-                                        tracks: items 
-                                    }).await;
+                                    let _ = tx_clone
+                                        .send(ContentState::AlbumDetail {
+                                            album: album_item,
+                                            tracks: items,
+                                        })
+                                        .await;
                                 }
                                 Err(e) => {
                                     let _ = tx_clone
@@ -1507,7 +1549,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             }
                         });
-                        app.content_state = ContentState::LoadingInProgress(LoadAction::AlbumTracks { album_id, name });
+                        app.content_state =
+                            ContentState::LoadingInProgress(LoadAction::AlbumTracks {
+                                album_id,
+                                name,
+                            });
                     }
                     LoadAction::ArtistTopTracks { artist_id, name } => {
                         let artist_item = ArtistListItem {
@@ -1517,8 +1563,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             genres: vec![],
                             follower_count: None,
                         };
-                        let _ = tx.send(ContentState::ArtistDetail { artist: artist_item });
-                        app.content_state = ContentState::LoadingInProgress(LoadAction::ArtistTopTracks { artist_id, name });
+                        let _ = tx.send(ContentState::ArtistDetail {
+                            artist: artist_item,
+                        });
+                        app.content_state =
+                            ContentState::LoadingInProgress(LoadAction::ArtistTopTracks {
+                                artist_id,
+                                name,
+                            });
                     }
                 }
             }
@@ -1831,10 +1883,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 // When main content is focused, Tab switches tabs in Library view
                                 if matches!(app.content_state, ContentState::Library { .. }) {
                                     // Switch library tab
-                                    if let ContentState::Library { albums, artists, selected_tab } = &app.content_state {
+                                    if let ContentState::Library {
+                                        albums,
+                                        artists,
+                                        selected_tab,
+                                    } = &app.content_state
+                                    {
                                         let new_tab = match selected_tab {
-                                            joshify::state::app_state::LibraryTab::Albums => joshify::state::app_state::LibraryTab::Artists,
-                                            joshify::state::app_state::LibraryTab::Artists => joshify::state::app_state::LibraryTab::Albums,
+                                            joshify::state::app_state::LibraryTab::Albums => {
+                                                joshify::state::app_state::LibraryTab::Artists
+                                            }
+                                            joshify::state::app_state::LibraryTab::Artists => {
+                                                joshify::state::app_state::LibraryTab::Albums
+                                            }
                                         };
                                         app.content_state = ContentState::Library {
                                             albums: albums.clone(),
@@ -1892,8 +1953,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                 }
                                 FocusTarget::MainContent => {
-                                    if let ContentState::LikedSongsPage { tracks, next_offset: Some(offset), .. } = &app.content_state {
-                                        if !app.loading_more_liked_songs && app.selected_index >= tracks.len().saturating_sub(3) {
+                                    if let ContentState::LikedSongsPage {
+                                        tracks,
+                                        next_offset: Some(offset),
+                                        ..
+                                    } = &app.content_state
+                                    {
+                                        if !app.loading_more_liked_songs
+                                            && app.selected_index >= tracks.len().saturating_sub(3)
+                                        {
                                             let load_offset = *offset;
                                             app.loading_more_liked_songs = true;
                                             if let Some(ref client) = client {
@@ -1901,26 +1969,44 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 let tx_clone = tx.clone();
                                                 tokio::spawn(async move {
                                                     let guard = c.lock().await;
-                                                    match guard.current_user_saved_tracks_paginated(50, load_offset).await {
+                                                    match guard
+                                                        .current_user_saved_tracks_paginated(
+                                                            50,
+                                                            load_offset,
+                                                        )
+                                                        .await
+                                                    {
                                                         Ok((tracks, total, next_offset)) => {
                                                             let items: Vec<TrackListItem> = tracks
                                                                 .into_iter()
                                                                 .filter_map(|t| {
                                                                     t.track.id.map(|id| {
-                                                                        let artist = t.track.artists.first().map(|a| a.name.clone()).unwrap_or_default();
+                                                                        let artist = t
+                                                                            .track
+                                                                            .artists
+                                                                            .first()
+                                                                            .map(|a| a.name.clone())
+                                                                            .unwrap_or_default();
                                                                         TrackListItem {
                                                                             name: t.track.name,
                                                                             artist,
-                                                                            uri: format!("spotify:track:{}", id.id()),
+                                                                            uri: format!(
+                                                                                "spotify:track:{}",
+                                                                                id.id()
+                                                                            ),
                                                                         }
                                                                     })
                                                                 })
                                                                 .collect();
-                                                            let _ = tx_clone.send(ContentState::LikedSongsPage {
-                                                                tracks: items,
-                                                                total,
-                                                                next_offset,
-                                                            }).await;
+                                                            let _ = tx_clone
+                                                                .send(
+                                                                    ContentState::LikedSongsPage {
+                                                                        tracks: items,
+                                                                        total,
+                                                                        next_offset,
+                                                                    },
+                                                                )
+                                                                .await;
                                                         }
                                                         Err(e) => {
                                                             tracing::warn!("Failed to load more liked songs on Enter: {}", e);
@@ -2068,41 +2154,49 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 app.scroll_offset = 0;
                                             }
                                         }
-                                        ContentState::Library { albums, artists, selected_tab } => {
+                                        ContentState::Library {
+                                            albums,
+                                            artists,
+                                            selected_tab,
+                                        } => {
                                             match selected_tab {
                                                 LibraryTab::Albums => {
-                                                    if !albums.is_empty() && app.selected_index < albums.len() {
+                                                    if !albums.is_empty()
+                                                        && app.selected_index < albums.len()
+                                                    {
                                                         let album = &albums[app.selected_index];
                                                         // Push current state to nav stack before navigating
-                                                        app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::Library { 
-                                                            albums: albums.clone(), 
-                                                            artists: artists.clone() 
+                                                        app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::Library {
+                                                            albums: albums.clone(),
+                                                            artists: artists.clone()
                                                         });
                                                         // Load album tracks
                                                         app.content_state = ContentState::Loading(
-                                                            LoadAction::AlbumTracks { 
-                                                                album_id: album.id.clone(), 
-                                                                name: album.name.clone() 
-                                                            }
+                                                            LoadAction::AlbumTracks {
+                                                                album_id: album.id.clone(),
+                                                                name: album.name.clone(),
+                                                            },
                                                         );
                                                         app.selected_index = 0;
                                                         app.scroll_offset = 0;
                                                     }
                                                 }
                                                 LibraryTab::Artists => {
-                                                    if !artists.is_empty() && app.selected_index < artists.len() {
+                                                    if !artists.is_empty()
+                                                        && app.selected_index < artists.len()
+                                                    {
                                                         let artist = &artists[app.selected_index];
                                                         // Push current state to nav stack before navigating
-                                                        app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::Library { 
-                                                            albums: albums.clone(), 
-                                                            artists: artists.clone() 
+                                                        app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::Library {
+                                                            albums: albums.clone(),
+                                                            artists: artists.clone()
                                                         });
                                                         // Load artist detail
                                                         app.content_state = ContentState::Loading(
-                                                            LoadAction::ArtistTopTracks { 
-                                                                artist_id: artist.id.clone(), 
-                                                                name: artist.name.clone() 
-                                                            }
+                                                            LoadAction::ArtistTopTracks {
+                                                                artist_id: artist.id.clone(),
+                                                                name: artist.name.clone(),
+                                                            },
                                                         );
                                                         app.selected_index = 0;
                                                         app.scroll_offset = 0;
@@ -2112,14 +2206,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         }
                                         ContentState::AlbumDetail { album, tracks } => {
                                             // Push current state to nav stack before navigating
-                                            app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::AlbumDetail { 
-                                                album: album.clone(), 
-                                                tracks: tracks.clone() 
+                                            app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::AlbumDetail {
+                                                album: album.clone(),
+                                                tracks: tracks.clone()
                                             });
                                             // Play selected track from album
-                                            if !tracks.is_empty() && app.selected_index < tracks.len() {
+                                            if !tracks.is_empty()
+                                                && app.selected_index < tracks.len()
+                                            {
                                                 let track = &tracks[app.selected_index];
-                                                
+
                                                 // Track the highlighted item for queue operations
                                                 app.highlighted_item = Some(HighlightedItem {
                                                     uri: track.uri.clone(),
@@ -2132,15 +2228,27 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     if let Some(ref player) = app.local_player {
                                                         match player.load_uri(&track.uri, true, 0) {
                                                             Ok(_) => {
-                                                                app.player_state.current_track_name = Some(track.name.clone());
-                                                                app.player_state.current_artist_name = Some(track.artist.clone());
-                                                                app.player_state.current_track_uri = Some(track.uri.clone());
+                                                                app.player_state
+                                                                    .current_track_name =
+                                                                    Some(track.name.clone());
+                                                                app.player_state
+                                                                    .current_artist_name =
+                                                                    Some(track.artist.clone());
+                                                                app.player_state
+                                                                    .current_track_uri =
+                                                                    Some(track.uri.clone());
                                                                 app.player_state.is_playing = true;
                                                                 app.player_state.progress_ms = 0;
-                                                                app.status_message = Some(format!("Playing locally: {}", track.name));
+                                                                app.status_message = Some(format!(
+                                                                    "Playing locally: {}",
+                                                                    track.name
+                                                                ));
                                                             }
                                                             Err(e) => {
-                                                                app.status_message = Some(format!("Local playback error: {}", e));
+                                                                app.status_message = Some(format!(
+                                                                    "Local playback error: {}",
+                                                                    e
+                                                                ));
                                                             }
                                                         }
                                                     }
@@ -2150,16 +2258,27 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     let track_name = track.name.clone();
                                                     tokio::spawn(async move {
                                                         let guard = c.lock().await;
-                                                        if let Ok(devices) = guard.available_devices().await {
+                                                        if let Ok(devices) =
+                                                            guard.available_devices().await
+                                                        {
                                                             if let Some(device) = devices.first() {
-                                                                if let Some(ref device_id) = device.id {
-                                                                    let _ = guard.transfer_playback(device_id).await;
+                                                                if let Some(ref device_id) =
+                                                                    device.id
+                                                                {
+                                                                    let _ = guard
+                                                                        .transfer_playback(
+                                                                            device_id,
+                                                                        )
+                                                                        .await;
                                                                 }
                                                             }
                                                         }
-                                                        let _ = guard.start_playback(vec![track_uri], None).await;
+                                                        let _ = guard
+                                                            .start_playback(vec![track_uri], None)
+                                                            .await;
                                                     });
-                                                    app.status_message = Some(format!("Playing: {}", track_name));
+                                                    app.status_message =
+                                                        Some(format!("Playing: {}", track_name));
                                                 }
                                             }
                                         }
@@ -2216,17 +2335,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list down based on current content
                                 let len = match &app.content_state {
-                                    ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => t.len(),
+                                    ContentState::LikedSongs(t)
+                                    | ContentState::LikedSongsPage { tracks: t, .. } => t.len(),
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
                                     ContentState::AlbumDetail { tracks, .. } => tracks.len(),
-                                    ContentState::Library { albums, artists, selected_tab } => {
-                                        match selected_tab {
-                                            joshify::state::app_state::LibraryTab::Albums => albums.len(),
-                                            joshify::state::app_state::LibraryTab::Artists => artists.len(),
+                                    ContentState::Library {
+                                        albums,
+                                        artists,
+                                        selected_tab,
+                                    } => match selected_tab {
+                                        joshify::state::app_state::LibraryTab::Albums => {
+                                            albums.len()
                                         }
-                                    }
+                                        joshify::state::app_state::LibraryTab::Artists => {
+                                            artists.len()
+                                        }
+                                    },
                                     _ => 0,
                                 };
                                 if len > 0 {
@@ -2237,8 +2363,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                     // Update highlighted item
                                     app.update_highlighted_item();
-                                    if let ContentState::LikedSongsPage { next_offset: Some(offset), .. } = &app.content_state {
-                                        if !app.loading_more_liked_songs && app.selected_index >= len.saturating_sub(5) {
+                                    if let ContentState::LikedSongsPage {
+                                        next_offset: Some(offset),
+                                        ..
+                                    } = &app.content_state
+                                    {
+                                        if !app.loading_more_liked_songs
+                                            && app.selected_index >= len.saturating_sub(5)
+                                        {
                                             let load_offset = *offset;
                                             app.loading_more_liked_songs = true;
                                             if let Some(ref client) = client {
@@ -2246,26 +2378,44 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 let tx_clone = tx.clone();
                                                 tokio::spawn(async move {
                                                     let guard = c.lock().await;
-                                                    match guard.current_user_saved_tracks_paginated(50, load_offset).await {
+                                                    match guard
+                                                        .current_user_saved_tracks_paginated(
+                                                            50,
+                                                            load_offset,
+                                                        )
+                                                        .await
+                                                    {
                                                         Ok((tracks, total, next_offset)) => {
                                                             let items: Vec<TrackListItem> = tracks
                                                                 .into_iter()
                                                                 .filter_map(|t| {
                                                                     t.track.id.map(|id| {
-                                                                        let artist = t.track.artists.first().map(|a| a.name.clone()).unwrap_or_default();
+                                                                        let artist = t
+                                                                            .track
+                                                                            .artists
+                                                                            .first()
+                                                                            .map(|a| a.name.clone())
+                                                                            .unwrap_or_default();
                                                                         TrackListItem {
                                                                             name: t.track.name,
                                                                             artist,
-                                                                            uri: format!("spotify:track:{}", id.id()),
+                                                                            uri: format!(
+                                                                                "spotify:track:{}",
+                                                                                id.id()
+                                                                            ),
                                                                         }
                                                                     })
                                                                 })
                                                                 .collect();
-                                                            let _ = tx_clone.send(ContentState::LikedSongsPage {
-                                                                tracks: items,
-                                                                total,
-                                                                next_offset,
-                                                            }).await;
+                                                            let _ = tx_clone
+                                                                .send(
+                                                                    ContentState::LikedSongsPage {
+                                                                        tracks: items,
+                                                                        total,
+                                                                        next_offset,
+                                                                    },
+                                                                )
+                                                                .await;
                                                         }
                                                         Err(e) => {
                                                             tracing::warn!("Failed to load more liked songs: {}", e);
@@ -2307,17 +2457,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             } else if app.focus == FocusTarget::MainContent {
                                 // Scroll list up based on current content
                                 let len = match &app.content_state {
-                                    ContentState::LikedSongs(t) | ContentState::LikedSongsPage { tracks: t, .. } => t.len(),
+                                    ContentState::LikedSongs(t)
+                                    | ContentState::LikedSongsPage { tracks: t, .. } => t.len(),
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
                                     ContentState::AlbumDetail { tracks, .. } => tracks.len(),
-                                    ContentState::Library { albums, artists, selected_tab } => {
-                                        match selected_tab {
-                                            joshify::state::app_state::LibraryTab::Albums => albums.len(),
-                                            joshify::state::app_state::LibraryTab::Artists => artists.len(),
+                                    ContentState::Library {
+                                        albums,
+                                        artists,
+                                        selected_tab,
+                                    } => match selected_tab {
+                                        joshify::state::app_state::LibraryTab::Albums => {
+                                            albums.len()
                                         }
-                                    }
+                                        joshify::state::app_state::LibraryTab::Artists => {
+                                            artists.len()
+                                        }
+                                    },
                                     _ => 0,
                                 };
                                 if len > 0 && app.selected_index > 0 {
@@ -2380,15 +2537,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         app.player_state.progress_ms.saturating_sub(10000);
                                     player.seek(new_pos);
                                 }
-                                 } else if let Some(ref client) = client {
-                                        let new_vol = app.player_state.volume;
-                                        let c = client.clone();
-                                        tokio::spawn(async move {
-                                            let guard = c.lock().await;
-                                            if let Err(e) = guard.set_volume(new_vol).await {
-                                                tracing::error!("Volume down failed: {}", e);
-                                            }
-                                        });
+                            } else if let Some(ref client) = client {
+                                let new_vol = app.player_state.volume;
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    if let Err(e) = guard.set_volume(new_vol).await {
+                                        tracing::error!("Volume down failed: {}", e);
+                                    }
+                                });
                             }
                         }
                         crossterm::event::KeyCode::Right => {
@@ -2543,15 +2700,21 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             app.selected_nav = NavItem::Home;
                                         }
                                         NavigationEntry::Library { albums, artists } => {
-                                            app.content_state = ContentState::Library { albums, artists, selected_tab: LibraryTab::Albums };
+                                            app.content_state = ContentState::Library {
+                                                albums,
+                                                artists,
+                                                selected_tab: LibraryTab::Albums,
+                                            };
                                             app.selected_nav = NavItem::Library;
                                         }
                                         NavigationEntry::AlbumDetail { album, tracks } => {
-                                            app.content_state = ContentState::AlbumDetail { album, tracks };
+                                            app.content_state =
+                                                ContentState::AlbumDetail { album, tracks };
                                             app.selected_nav = NavItem::Library;
                                         }
                                         NavigationEntry::ArtistDetail { artist } => {
-                                            app.content_state = ContentState::ArtistDetail { artist };
+                                            app.content_state =
+                                                ContentState::ArtistDetail { artist };
                                             app.selected_nav = NavItem::Library;
                                         }
                                         NavigationEntry::Playlists(playlists) => {
@@ -2559,7 +2722,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             app.selected_nav = NavItem::Playlists;
                                         }
                                         NavigationEntry::PlaylistTracks { playlist, tracks } => {
-                                            app.content_state = ContentState::PlaylistTracks(playlist.name, tracks);
+                                            app.content_state =
+                                                ContentState::PlaylistTracks(playlist.name, tracks);
                                             app.selected_nav = NavItem::Playlists;
                                         }
                                         NavigationEntry::LikedSongs(tracks) => {
@@ -2567,7 +2731,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             app.selected_nav = NavItem::LikedSongs;
                                         }
                                         NavigationEntry::SearchResults { query, tracks } => {
-                                            app.content_state = ContentState::SearchResults(query, tracks);
+                                            app.content_state =
+                                                ContentState::SearchResults(query, tracks);
                                         }
                                     }
                                     app.selected_index = 0;
@@ -2595,12 +2760,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             app.selected_nav = nav;
                             match nav {
                                 NavItem::LikedSongs => {
-                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::LikedSongs);
+                                    app.content_state = ContentState::Loading(
+                                        joshify::state::LoadAction::LikedSongs,
+                                    );
                                     app.selected_index = 0;
                                     app.scroll_offset = 0;
                                 }
                                 NavItem::Playlists => {
-                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::Playlists);
+                                    app.content_state = ContentState::Loading(
+                                        joshify::state::LoadAction::Playlists,
+                                    );
                                     app.selected_index = 0;
                                     app.scroll_offset = 0;
                                 }
@@ -2608,7 +2777,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     app.content_state = ContentState::Home;
                                 }
                                 NavItem::Library => {
-                                    app.content_state = ContentState::Loading(joshify::state::LoadAction::LibraryAlbums);
+                                    app.content_state = ContentState::Loading(
+                                        joshify::state::LoadAction::LibraryAlbums,
+                                    );
                                     app.selected_index = 0;
                                     app.scroll_offset = 0;
                                 }
@@ -2658,8 +2829,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     app.selected_index = index;
 
                                     // Set up playlist context if viewing a playlist
-                                    if let ContentState::PlaylistTracks(playlist_id, _) = &app.content_state {
-                                        let playlist_uri = format!("spotify:playlist:{}", playlist_id);
+                                    if let ContentState::PlaylistTracks(playlist_id, _) =
+                                        &app.content_state
+                                    {
+                                        let playlist_uri =
+                                            format!("spotify:playlist:{}", playlist_id);
                                         app.current_context = Some(PlaybackContext::Playlist {
                                             uri: playlist_uri,
                                             name: playlist_id.clone(),
@@ -2680,9 +2854,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         if let Some(ref player) = app.local_player {
                                             match player.load_uri(&track.uri, true, 0) {
                                                 Ok(_) => {
-                                                    app.player_state.current_track_name = Some(track.name.clone());
-                                                    app.player_state.current_artist_name = Some(track.artist.clone());
-                                                    app.player_state.current_track_uri = Some(track.uri.clone());
+                                                    app.player_state.current_track_name =
+                                                        Some(track.name.clone());
+                                                    app.player_state.current_artist_name =
+                                                        Some(track.artist.clone());
+                                                    app.player_state.current_track_uri =
+                                                        Some(track.uri.clone());
                                                     app.player_state.is_playing = true;
                                                     app.player_state.progress_ms = 0;
                                                     app.status_message = Some(format!(
@@ -2698,9 +2875,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 }
                                             }
                                         } else {
-                                            app.status_message = Some(
-                                                "Local player not initialized".to_string(),
-                                            );
+                                            app.status_message =
+                                                Some("Local player not initialized".to_string());
                                         }
                                     } else {
                                         // Remote playback via Spotify API
@@ -2709,26 +2885,35 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             let track_uri = track.uri.clone();
                                             let track_name = track.name.clone();
                                             let context = app.current_context.clone();
-                                            let playlist_id_for_context = if let ContentState::PlaylistTracks(pid, _) = &app.content_state {
-                                                Some(pid.clone())
-                                            } else {
-                                                None
-                                            };
+                                            let playlist_id_for_context =
+                                                if let ContentState::PlaylistTracks(pid, _) =
+                                                    &app.content_state
+                                                {
+                                                    Some(pid.clone())
+                                                } else {
+                                                    None
+                                                };
 
                                             tokio::spawn(async move {
                                                 let guard = c.lock().await;
-                                                if let Ok(devices) = guard.available_devices().await {
+                                                if let Ok(devices) = guard.available_devices().await
+                                                {
                                                     if let Some(device) = devices.first() {
                                                         if let Some(ref device_id) = device.id {
-                                                            let _ = guard.transfer_playback(device_id).await;
+                                                            let _ = guard
+                                                                .transfer_playback(device_id)
+                                                                .await;
                                                         }
                                                     }
                                                 }
 
                                                 // Use playlist context if available
                                                 if let Some(pid) = playlist_id_for_context {
-                                                    let _playlist_uri = format!("spotify:playlist:{}", pid);
-                                                    if let Ok(playlist_id) = rspotify::model::PlaylistId::from_id(&pid) {
+                                                    let _playlist_uri =
+                                                        format!("spotify:playlist:{}", pid);
+                                                    if let Ok(playlist_id) =
+                                                        rspotify::model::PlaylistId::from_id(&pid)
+                                                    {
                                                         let _ = guard.oauth.start_context_playback(
                                                             rspotify::model::PlayContextId::from(playlist_id),
                                                             None,
@@ -2737,12 +2922,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         ).await;
                                                     } else {
                                                         // Fallback to direct track playback
-                                                        let _ = guard.start_playback(vec![track_uri], None).await;
+                                                        let _ = guard
+                                                            .start_playback(vec![track_uri], None)
+                                                            .await;
                                                     }
-                                                } else if let Some(PlaybackContext::Playlist { uri, .. }) = &context {
+                                                } else if let Some(PlaybackContext::Playlist {
+                                                    uri,
+                                                    ..
+                                                }) = &context
+                                                {
                                                     // Use existing context if available
-                                                    let playlist_id_str = uri.strip_prefix("spotify:playlist:").unwrap_or(uri);
-                                                    if let Ok(playlist_id) = rspotify::model::PlaylistId::from_id(playlist_id_str) {
+                                                    let playlist_id_str = uri
+                                                        .strip_prefix("spotify:playlist:")
+                                                        .unwrap_or(uri);
+                                                    if let Ok(playlist_id) =
+                                                        rspotify::model::PlaylistId::from_id(
+                                                            playlist_id_str,
+                                                        )
+                                                    {
                                                         let _ = guard.oauth.start_context_playback(
                                                             rspotify::model::PlayContextId::from(playlist_id),
                                                             None,
@@ -2750,14 +2947,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                             None,
                                                         ).await;
                                                     } else {
-                                                        let _ = guard.start_playback(vec![track_uri], None).await;
+                                                        let _ = guard
+                                                            .start_playback(vec![track_uri], None)
+                                                            .await;
                                                     }
                                                 } else {
                                                     // No context - play track directly
-                                                    let _ = guard.start_playback(vec![track_uri], None).await;
+                                                    let _ = guard
+                                                        .start_playback(vec![track_uri], None)
+                                                        .await;
                                                 }
                                             });
-                                            app.status_message = Some(format!("Playing: {}", track_name));
+                                            app.status_message =
+                                                Some(format!("Playing: {}", track_name));
                                         }
                                     }
                                 }
@@ -2823,7 +3025,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 FocusTarget::Sidebar => {
                                     // Navigate sidebar up
                                     let nav_items = NavItem::all();
-                                    let current_idx = nav_items.iter().position(|&n| n == app.selected_nav).unwrap_or(0);
+                                    let current_idx = nav_items
+                                        .iter()
+                                        .position(|&n| n == app.selected_nav)
+                                        .unwrap_or(0);
                                     if current_idx > 0 {
                                         app.selected_nav = nav_items[current_idx - 1];
                                     }
@@ -2846,7 +3051,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 FocusTarget::Sidebar => {
                                     // Navigate sidebar down
                                     let nav_items = NavItem::all();
-                                    let current_idx = nav_items.iter().position(|&n| n == app.selected_nav).unwrap_or(0);
+                                    let current_idx = nav_items
+                                        .iter()
+                                        .position(|&n| n == app.selected_nav)
+                                        .unwrap_or(0);
                                     if current_idx < nav_items.len() - 1 {
                                         app.selected_nav = nav_items[current_idx + 1];
                                     }
@@ -2872,9 +3080,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                         joshify::ui::MouseAction::AdjustVolume(delta) => {
                             // Adjust volume
-                            let new_volume = (app.player_state.volume as i32 + delta).clamp(0, 100) as u32;
+                            let new_volume =
+                                (app.player_state.volume as i32 + delta).clamp(0, 100) as u32;
                             app.player_state.volume = new_volume;
-                            
+
                             if app.playback_mode == PlaybackMode::Local {
                                 // Use local player for volume control
                                 if let Some(ref player) = app.local_player {
@@ -2911,9 +3120,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.player_state.repeat_mode = app.player_state.repeat_mode.cycle();
                                 let c = client.clone();
                                 let mode = match app.player_state.repeat_mode {
-                                    joshify::state::player_state::RepeatMode::Off => rspotify::model::RepeatState::Off,
-                                    joshify::state::player_state::RepeatMode::Track => rspotify::model::RepeatState::Track,
-                                    joshify::state::player_state::RepeatMode::Context => rspotify::model::RepeatState::Context,
+                                    joshify::state::player_state::RepeatMode::Off => {
+                                        rspotify::model::RepeatState::Off
+                                    }
+                                    joshify::state::player_state::RepeatMode::Track => {
+                                        rspotify::model::RepeatState::Track
+                                    }
+                                    joshify::state::player_state::RepeatMode::Context => {
+                                        rspotify::model::RepeatState::Context
+                                    }
                                 };
                                 tokio::spawn(async move {
                                     let guard = c.lock().await;

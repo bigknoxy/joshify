@@ -55,14 +55,14 @@ pub enum LogFormat {
 }
 
 /// Initialize the logging system
-/// 
+///
 /// Note: This is a simplified implementation. In a full implementation,
 /// you would use tracing-subscriber with proper layer composition.
 /// For now, we use the default subscriber setup.
 pub fn init(config: LogConfig) -> Result<()> {
     // For this simplified version, we'll use the default subscriber
     // The actual tracing setup would require more complex layer composition
-    
+
     let log_dir = config
         .custom_dir
         .clone()
@@ -209,11 +209,7 @@ pub fn log_api_request(endpoint: &str, status: u16, duration_ms: u64) {
 }
 
 /// Log playback state change
-pub fn log_playback_change(
-    track_name: Option<&str>,
-    artist_name: Option<&str>,
-    is_playing: bool,
-) {
+pub fn log_playback_change(track_name: Option<&str>, artist_name: Option<&str>, is_playing: bool) {
     let state = if is_playing { "playing" } else { "paused" };
     match (track_name, artist_name) {
         (Some(t), Some(a)) => info!(
@@ -230,7 +226,7 @@ pub fn log_playback_change(
 /// Get log directory size in bytes
 pub fn get_log_dir_size() -> Result<u64> {
     let log_dir = default_log_dir();
-    
+
     if !log_dir.exists() {
         return Ok(0);
     }

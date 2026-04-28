@@ -49,7 +49,11 @@ impl HomeState {
     }
 
     /// Update with new data
-    pub fn update(&mut self, recently_played: Vec<RecentlyPlayedItem>, jump_back_in: Vec<ContinueContext>) {
+    pub fn update(
+        &mut self,
+        recently_played: Vec<RecentlyPlayedItem>,
+        jump_back_in: Vec<ContinueContext>,
+    ) {
         self.recently_played = recently_played;
         self.jump_back_in = jump_back_in;
         self.is_loading = false;
@@ -132,10 +136,10 @@ impl ContinueContext {
 }
 
 /// Calculate "Jump Back In" items from recently played tracks
-/// 
+///
 /// Groups recently played tracks by context and identifies
 /// contexts that are unfinished (not all tracks played)
-/// 
+///
 /// TODO: Use saved_albums and saved_playlists to get actual track counts
 /// for more accurate progress calculations
 pub fn calculate_jump_back_in(
@@ -341,22 +345,20 @@ mod tests {
     #[test]
     fn test_calculate_jump_back_in_insufficient_tracks() {
         let now = Utc::now();
-        let tracks = vec![
-            RecentlyPlayedItem {
-                track: TrackSummary {
-                    name: "Track 1".to_string(),
-                    artist: "Artist".to_string(),
-                    uri: "spotify:track:1".to_string(),
-                    duration_ms: 180000,
-                },
-                played_at: now,
-                context: Some(PlayContext {
-                    context_type: ContextType::Album,
-                    id: "album1".to_string(),
-                    name: "Album One".to_string(),
-                }),
+        let tracks = vec![RecentlyPlayedItem {
+            track: TrackSummary {
+                name: "Track 1".to_string(),
+                artist: "Artist".to_string(),
+                uri: "spotify:track:1".to_string(),
+                duration_ms: 180000,
             },
-        ];
+            played_at: now,
+            context: Some(PlayContext {
+                context_type: ContextType::Album,
+                id: "album1".to_string(),
+                name: "Album One".to_string(),
+            }),
+        }];
         let result = calculate_jump_back_in(&tracks, None, None);
         assert!(result.is_empty()); // Only 1 track = not enough
     }
@@ -437,7 +439,7 @@ mod tests {
             },
         ];
         let result = calculate_jump_back_in(&tracks, None, None);
-        
+
         // Should have 2 contexts: album1 and playlist1
         // Album: 2 tracks (would estimate 20% progress)
         // Playlist: 3 tracks (would estimate 23% progress)

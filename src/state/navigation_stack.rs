@@ -13,19 +13,31 @@ pub enum NavigationEntry {
     /// Home dashboard
     Home,
     /// Library view with albums/artists
-    Library { albums: Vec<AlbumListItem>, artists: Vec<ArtistListItem> },
+    Library {
+        albums: Vec<AlbumListItem>,
+        artists: Vec<ArtistListItem>,
+    },
     /// Album detail with tracks
-    AlbumDetail { album: AlbumListItem, tracks: Vec<TrackListItem> },
+    AlbumDetail {
+        album: AlbumListItem,
+        tracks: Vec<TrackListItem>,
+    },
     /// Artist detail with top tracks/albums
     ArtistDetail { artist: ArtistListItem },
     /// Playlists list
     Playlists(Vec<PlaylistListItem>),
     /// Playlist tracks
-    PlaylistTracks { playlist: PlaylistListItem, tracks: Vec<TrackListItem> },
+    PlaylistTracks {
+        playlist: PlaylistListItem,
+        tracks: Vec<TrackListItem>,
+    },
     /// Liked songs
     LikedSongs(Vec<TrackListItem>),
     /// Search results
-    SearchResults { query: String, tracks: Vec<TrackListItem> },
+    SearchResults {
+        query: String,
+        tracks: Vec<TrackListItem>,
+    },
 }
 
 /// Navigation stack for drill-down browsing
@@ -185,7 +197,7 @@ mod tests {
     fn test_push_and_current() {
         let mut stack = NavigationStack::new();
         stack.push(NavigationEntry::Home);
-        
+
         assert_eq!(stack.current_index, 1);
         assert!(matches!(stack.current(), Some(NavigationEntry::Home)));
     }
@@ -193,31 +205,31 @@ mod tests {
     #[test]
     fn test_back_navigation() {
         let mut stack = NavigationStack::new();
-        
+
         // Navigate: Home -> Library -> Album
         stack.push(NavigationEntry::Home);
-        stack.push(NavigationEntry::Library { 
-            albums: vec![], 
-            artists: vec![] 
+        stack.push(NavigationEntry::Library {
+            albums: vec![],
+            artists: vec![],
         });
-        stack.push(NavigationEntry::AlbumDetail { 
-            album: make_album("Test Album"), 
-            tracks: vec![] 
+        stack.push(NavigationEntry::AlbumDetail {
+            album: make_album("Test Album"),
+            tracks: vec![],
         });
 
         assert_eq!(stack.current_index, 3);
         assert!(stack.can_go_back());
-        
+
         // Go back
         let prev = stack.back();
         assert!(prev.is_some());
         assert_eq!(stack.current_index, 2);
-        
+
         // Go back again
         let prev2 = stack.back();
         assert!(prev2.is_some());
         assert_eq!(stack.current_index, 1);
-        
+
         // Can't go back further
         assert!(!stack.can_go_back());
     }
@@ -225,14 +237,17 @@ mod tests {
     #[test]
     fn test_forward_navigation() {
         let mut stack = NavigationStack::new();
-        
+
         stack.push(NavigationEntry::Home);
-        stack.push(NavigationEntry::Library { albums: vec![], artists: vec![] });
-        
+        stack.push(NavigationEntry::Library {
+            albums: vec![],
+            artists: vec![],
+        });
+
         // Go back
         stack.back();
         assert_eq!(stack.current_index, 1);
-        
+
         // Go forward
         assert!(stack.can_go_forward());
         let next = stack.forward();
@@ -243,12 +258,15 @@ mod tests {
     #[test]
     fn test_breadcrumb() {
         let mut stack = NavigationStack::new();
-        
+
         stack.push(NavigationEntry::Home);
-        stack.push(NavigationEntry::Library { albums: vec![], artists: vec![] });
-        stack.push(NavigationEntry::AlbumDetail { 
-            album: make_album("My Album"), 
-            tracks: vec![] 
+        stack.push(NavigationEntry::Library {
+            albums: vec![],
+            artists: vec![],
+        });
+        stack.push(NavigationEntry::AlbumDetail {
+            album: make_album("My Album"),
+            tracks: vec![],
         });
 
         let breadcrumb = stack.breadcrumb();
@@ -258,19 +276,28 @@ mod tests {
     #[test]
     fn test_push_clears_forward_history() {
         let mut stack = NavigationStack::new();
-        
+
         // Navigate: Home -> Library -> Album
         stack.push(NavigationEntry::Home);
-        stack.push(NavigationEntry::Library { albums: vec![], artists: vec![] });
-        stack.push(NavigationEntry::AlbumDetail { album: make_album("Old Album"), tracks: vec![] });
-        
+        stack.push(NavigationEntry::Library {
+            albums: vec![],
+            artists: vec![],
+        });
+        stack.push(NavigationEntry::AlbumDetail {
+            album: make_album("Old Album"),
+            tracks: vec![],
+        });
+
         // Go back to Library
         stack.back();
         assert_eq!(stack.current_index, 2);
-        
+
         // Push new entry - should clear forward history
-        stack.push(NavigationEntry::AlbumDetail { album: make_album("New Album"), tracks: vec![] });
-        
+        stack.push(NavigationEntry::AlbumDetail {
+            album: make_album("New Album"),
+            tracks: vec![],
+        });
+
         // Can't go forward anymore
         assert!(!stack.can_go_forward());
         assert_eq!(stack.depth(), 3);
@@ -280,12 +307,15 @@ mod tests {
     fn test_max_size_limit() {
         let mut stack = NavigationStack::new();
         stack.max_size = 3;
-        
+
         stack.push(NavigationEntry::Home);
-        stack.push(NavigationEntry::Library { albums: vec![], artists: vec![] });
+        stack.push(NavigationEntry::Library {
+            albums: vec![],
+            artists: vec![],
+        });
         stack.push(NavigationEntry::LikedSongs(vec![]));
         stack.push(NavigationEntry::Playlists(vec![]));
-        
+
         // Should have removed Home
         assert_eq!(stack.depth(), 3);
         let breadcrumb = stack.breadcrumb();
@@ -295,13 +325,31 @@ mod tests {
     #[test]
     fn test_entry_names() {
         assert_eq!(entry_name(&NavigationEntry::Home), "Home");
-        
+
         let album = make_album("Test Album");
-        assert_eq!(entry_name(&NavigationEntry::AlbumDetail { album, tracks: vec![] }), "Test Album");
-        
+        assert_eq!(
+            entry_name(&NavigationEntry::AlbumDetail {
+                album,
+                tracks: vec![]
+            }),
+            "Test Album"
+        );
+
         let playlist = make_playlist("My Playlist");
-        assert_eq!(entry_name(&NavigationEntry::PlaylistTracks { playlist, tracks: vec![] }), "My Playlist");
-        
-        assert_eq!(entry_name(&NavigationEntry::SearchResults { query: "foo".to_string(), tracks: vec![] }), "Search: foo");
+        assert_eq!(
+            entry_name(&NavigationEntry::PlaylistTracks {
+                playlist,
+                tracks: vec![]
+            }),
+            "My Playlist"
+        );
+
+        assert_eq!(
+            entry_name(&NavigationEntry::SearchResults {
+                query: "foo".to_string(),
+                tracks: vec![]
+            }),
+            "Search: foo"
+        );
     }
 }

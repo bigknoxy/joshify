@@ -79,7 +79,9 @@ impl TrackInfo {
 
     /// Get display title for notification
     pub fn title(&self) -> String {
-        self.name.clone().unwrap_or_else(|| "Unknown Track".to_string())
+        self.name
+            .clone()
+            .unwrap_or_else(|| "Unknown Track".to_string())
     }
 
     /// Get display body for notification
@@ -183,17 +185,17 @@ impl NotificationService {
             Some(n) => n,
             None => {
                 // Log but don't fail
-                info!("Would show notification: {} — {}", track.title(), track.body());
+                info!(
+                    "Would show notification: {} — {}",
+                    track.title(),
+                    track.body()
+                );
                 return Ok(());
             }
         };
 
         // Show the notification
-        notifier.notify(
-            &track.title(),
-            &track.body(),
-            track.album_art.as_deref(),
-        )?;
+        notifier.notify(&track.title(), &track.body(), track.album_art.as_deref())?;
 
         // Update rate limiting state
         self.last_notification = Some(Instant::now());
@@ -375,22 +377,14 @@ mod tests {
 
     #[test]
     fn test_track_info_no_album() {
-        let track = TrackInfo::new(
-            "Test Track",
-            vec!["Artist 1".to_string()],
-            None,
-        );
+        let track = TrackInfo::new("Test Track", vec!["Artist 1".to_string()], None);
 
         assert_eq!(track.body(), "Artist 1");
     }
 
     #[test]
     fn test_track_info_no_artists() {
-        let track = TrackInfo::new(
-            "Test Track",
-            vec![],
-            Some("Test Album"),
-        );
+        let track = TrackInfo::new("Test Track", vec![], Some("Test Album"));
 
         assert_eq!(track.body(), "Unknown Artist — Test Album");
     }

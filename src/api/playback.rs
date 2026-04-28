@@ -166,10 +166,14 @@ impl SpotifyClient {
                 Ok(())
             }
             Err(e) => {
-                tracing::warn!("Direct volume set failed ({}), trying with device transfer", e);
-                let devices = self.oauth.device().await.map_err(|de| {
-                    anyhow::anyhow!("Failed to get devices for volume: {}", de)
-                })?;
+                tracing::warn!(
+                    "Direct volume set failed ({}), trying with device transfer",
+                    e
+                );
+                let devices =
+                    self.oauth.device().await.map_err(|de| {
+                        anyhow::anyhow!("Failed to get devices for volume: {}", de)
+                    })?;
                 if let Some(device) = devices.first() {
                     if let Some(ref device_id) = device.id {
                         tracing::info!("Transferring playback to {} for volume", device.name);

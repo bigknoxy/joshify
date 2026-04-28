@@ -337,7 +337,11 @@ pub fn render_help_overlay(
     ));
     all_lines.push(Line::from(""));
     all_lines.push(Line::styled(
-        format!("Use {} / {} to scroll, Esc to close", symbols::ARROW_UP, symbols::ARROW_DOWN),
+        format!(
+            "Use {} / {} to scroll, Esc to close",
+            symbols::ARROW_UP,
+            symbols::ARROW_DOWN
+        ),
         Catppuccin::dim(),
     ));
     all_lines.push(Line::from(""));
@@ -390,7 +394,10 @@ pub fn render_help_overlay(
     ));
     all_lines.push(Line::from(""));
     all_lines.push(Line::styled(
-        format!("{} Tip: Use mouse for quick navigation and keyboard for precise control", symbols::STAR),
+        format!(
+            "{} Tip: Use mouse for quick navigation and keyboard for precise control",
+            symbols::STAR
+        ),
         Catppuccin::info(),
     ));
 

@@ -118,9 +118,7 @@ impl CliHandler {
 
     /// Create with a static writer reference for testing
     pub fn with_static_output(output: Box<dyn Write>) -> Self {
-        Self {
-            output,
-        }
+        Self { output }
     }
 
     /// Execute a CLI command
@@ -236,7 +234,15 @@ impl CliHandler {
                 }
             }
             OutputFormat::Text => {
-                writeln!(self.output, "Status: {}", if status.is_playing { "Playing" } else { "Paused" })?;
+                writeln!(
+                    self.output,
+                    "Status: {}",
+                    if status.is_playing {
+                        "Playing"
+                    } else {
+                        "Paused"
+                    }
+                )?;
                 if let Some(track) = status.track {
                     writeln!(self.output, "Track: {}", track.name)?;
                     writeln!(self.output, "Artists: {}", track.artists.join(", "))?;
@@ -249,7 +255,11 @@ impl CliHandler {
                     )?;
                 }
                 writeln!(self.output, "Volume: {}%", status.volume_percent)?;
-                writeln!(self.output, "Shuffle: {}", if status.shuffle { "on" } else { "off" })?;
+                writeln!(
+                    self.output,
+                    "Shuffle: {}",
+                    if status.shuffle { "on" } else { "off" }
+                )?;
                 writeln!(self.output, "Repeat: {}", status.repeat)?;
             }
         }
@@ -396,7 +406,10 @@ ENVIRONMENT:
     fn cmd_version(&mut self) -> Result<()> {
         let version = env!("CARGO_PKG_VERSION");
         writeln!(self.output, "Joshify {}", version)?;
-        writeln!(self.output, "A beautiful terminal Spotify client built with Rust.")?;
+        writeln!(
+            self.output,
+            "A beautiful terminal Spotify client built with Rust."
+        )?;
         Ok(())
     }
 }
@@ -484,7 +497,8 @@ pub fn parse_args(args: &[String]) -> Result<CliCommand> {
             }
             let limit = parse_limit_flag(rest).unwrap_or(20);
             // Filter out the --limit and its value from the query
-            let query_parts: Vec<&str> = rest.iter()
+            let query_parts: Vec<&str> = rest
+                .iter()
                 .enumerate()
                 .filter(|(i, arg)| {
                     // Skip --limit/-l and the value that follows it
@@ -503,10 +517,7 @@ pub fn parse_args(args: &[String]) -> Result<CliCommand> {
             Ok(CliCommand::Search { query, limit })
         }
         "queue-add" => {
-            let uri = rest
-                .first()
-                .context("URI required")?
-                .to_string();
+            let uri = rest.first().context("URI required")?.to_string();
             Ok(CliCommand::QueueAdd { uri })
         }
         "queue-clear" => Ok(CliCommand::QueueClear),
@@ -553,7 +564,10 @@ mod tests {
 
     #[test]
     fn test_cli_command_variants() {
-        assert_eq!(CliCommand::Play { uri: None }, CliCommand::Play { uri: None });
+        assert_eq!(
+            CliCommand::Play { uri: None },
+            CliCommand::Play { uri: None }
+        );
         assert_eq!(CliCommand::Pause, CliCommand::Pause);
         assert_eq!(CliCommand::Next, CliCommand::Next);
     }
@@ -583,7 +597,12 @@ mod tests {
     fn test_parse_args_play_with_uri() {
         let args = vec!["play".to_string(), "spotify:track:abc".to_string()];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Play { uri: Some("spotify:track:abc".to_string()) });
+        assert_eq!(
+            cmd,
+            CliCommand::Play {
+                uri: Some("spotify:track:abc".to_string())
+            }
+        );
     }
 
     #[test]
@@ -597,14 +616,28 @@ mod tests {
     fn test_parse_args_status() {
         let args = vec!["status".to_string()];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Status { format: OutputFormat::Text });
+        assert_eq!(
+            cmd,
+            CliCommand::Status {
+                format: OutputFormat::Text
+            }
+        );
     }
 
     #[test]
     fn test_parse_args_status_json() {
-        let args = vec!["status".to_string(), "--format".to_string(), "json".to_string()];
+        let args = vec![
+            "status".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Status { format: OutputFormat::Json });
+        assert_eq!(
+            cmd,
+            CliCommand::Status {
+                format: OutputFormat::Json
+            }
+        );
     }
 
     #[test]
@@ -632,28 +665,59 @@ mod tests {
     fn test_parse_args_shuffle_on() {
         let args = vec!["shuffle".to_string(), "on".to_string()];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Shuffle { enabled: Some(true) });
+        assert_eq!(
+            cmd,
+            CliCommand::Shuffle {
+                enabled: Some(true)
+            }
+        );
     }
 
     #[test]
     fn test_parse_args_shuffle_off() {
         let args = vec!["shuffle".to_string(), "off".to_string()];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Shuffle { enabled: Some(false) });
+        assert_eq!(
+            cmd,
+            CliCommand::Shuffle {
+                enabled: Some(false)
+            }
+        );
     }
 
     #[test]
     fn test_parse_args_search() {
-        let args = vec!["search".to_string(), "taylor".to_string(), "swift".to_string()];
+        let args = vec![
+            "search".to_string(),
+            "taylor".to_string(),
+            "swift".to_string(),
+        ];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Search { query: "taylor swift".to_string(), limit: 20 });
+        assert_eq!(
+            cmd,
+            CliCommand::Search {
+                query: "taylor swift".to_string(),
+                limit: 20
+            }
+        );
     }
 
     #[test]
     fn test_parse_args_search_with_limit() {
-        let args = vec!["search".to_string(), "test".to_string(), "--limit".to_string(), "10".to_string()];
+        let args = vec![
+            "search".to_string(),
+            "test".to_string(),
+            "--limit".to_string(),
+            "10".to_string(),
+        ];
         let cmd = parse_args(&args).unwrap();
-        assert_eq!(cmd, CliCommand::Search { query: "test".to_string(), limit: 10 });
+        assert_eq!(
+            cmd,
+            CliCommand::Search {
+                query: "test".to_string(),
+                limit: 10
+            }
+        );
     }
 
     #[test]

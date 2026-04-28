@@ -172,11 +172,7 @@ pub fn handle_left_click(
 }
 
 /// Handle scroll up event
-pub fn handle_scroll_up(
-    x: u16,
-    y: u16,
-    layout_cache: &LayoutCache,
-) -> MouseAction {
+pub fn handle_scroll_up(x: u16, y: u16, layout_cache: &LayoutCache) -> MouseAction {
     match layout_cache.area_at(x, y) {
         Some(ClickableArea::Sidebar)
         | Some(ClickableArea::NavItem(_))
@@ -191,11 +187,7 @@ pub fn handle_scroll_up(
 }
 
 /// Handle scroll down event
-pub fn handle_scroll_down(
-    x: u16,
-    y: u16,
-    layout_cache: &LayoutCache,
-) -> MouseAction {
+pub fn handle_scroll_down(x: u16, y: u16, layout_cache: &LayoutCache) -> MouseAction {
     match layout_cache.area_at(x, y) {
         Some(ClickableArea::Sidebar)
         | Some(ClickableArea::NavItem(_))
@@ -293,7 +285,10 @@ mod tests {
 
         let action = handle_left_click(5, 5, &cache, &mut mouse_state);
         assert!(
-            matches!(action, MouseAction::SetFocus(crate::state::app_state::FocusTarget::Sidebar)),
+            matches!(
+                action,
+                MouseAction::SetFocus(crate::state::app_state::FocusTarget::Sidebar)
+            ),
             "Expected SetFocus(Sidebar), got {:?}",
             action
         );
@@ -458,7 +453,10 @@ mod tests {
 
         // Second click at same position within threshold - should be double-click
         let is_double_2 = state.is_double_click(10, 10);
-        assert!(is_double_2, "Second click at same position should be double-click");
+        assert!(
+            is_double_2,
+            "Second click at same position should be double-click"
+        );
 
         // Third click immediately - should also be double-click
         let is_double_3 = state.is_double_click(10, 10);
@@ -474,7 +472,10 @@ mod tests {
         state.is_double_click(10, 10);
 
         // Click within tolerance (±2 pixels)
-        assert!(state.is_double_click(11, 11), "Should be double-click within tolerance");
+        assert!(
+            state.is_double_click(11, 11),
+            "Should be double-click within tolerance"
+        );
 
         // Reset state
         let mut state2 = MouseState::new();
@@ -482,9 +483,18 @@ mod tests {
         state2.is_double_click(10, 10);
 
         // Click outside tolerance (>2 pixels away)
-        assert!(!state2.is_double_click(13, 13), "Should not be double-click outside tolerance");
-        assert!(!state2.is_double_click(10, 13), "Should not be double-click with y outside tolerance");
-        assert!(!state2.is_double_click(13, 10), "Should not be double-click with x outside tolerance");
+        assert!(
+            !state2.is_double_click(13, 13),
+            "Should not be double-click outside tolerance"
+        );
+        assert!(
+            !state2.is_double_click(10, 13),
+            "Should not be double-click with y outside tolerance"
+        );
+        assert!(
+            !state2.is_double_click(13, 10),
+            "Should not be double-click with x outside tolerance"
+        );
     }
 
     #[test]
@@ -519,7 +529,10 @@ mod tests {
         state.last_click_time = Some(Instant::now() - Duration::from_millis(150));
 
         // Click after threshold - should not be double-click
-        assert!(!state.is_double_click(10, 10), "Click after threshold should not be double");
+        assert!(
+            !state.is_double_click(10, 10),
+            "Click after threshold should not be double"
+        );
     }
 
     #[test]

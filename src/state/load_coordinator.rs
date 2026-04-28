@@ -12,10 +12,17 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LoadAction {
     LikedSongs,
-    LikedSongsPage { offset: u32 },
+    LikedSongsPage {
+        offset: u32,
+    },
     Playlists,
-    PlaylistTracks { name: String, id: String },
-    Search { query: String },
+    PlaylistTracks {
+        name: String,
+        id: String,
+    },
+    Search {
+        query: String,
+    },
     Devices,
     /// Home dashboard data - recently played and jump back in
     HomeData,
@@ -24,9 +31,15 @@ pub enum LoadAction {
     /// User's followed artists
     LibraryArtists,
     /// Album tracks (for detail view)
-    AlbumTracks { album_id: String, name: String },
+    AlbumTracks {
+        album_id: String,
+        name: String,
+    },
     /// Artist top tracks (for detail view)
-    ArtistTopTracks { artist_id: String, name: String },
+    ArtistTopTracks {
+        artist_id: String,
+        name: String,
+    },
 }
 
 /// Result from an async load operation

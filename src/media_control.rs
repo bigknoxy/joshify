@@ -281,9 +281,7 @@ pub mod macos {
     use super::*;
 
     /// Initialize media key monitoring
-    pub fn init_media_keys(
-        _command_tx: mpsc::UnboundedSender<MediaCommand>,
-    ) -> Result<()> {
+    pub fn init_media_keys(_command_tx: mpsc::UnboundedSender<MediaCommand>) -> Result<()> {
         info!("macOS: Would initialize media key monitoring here");
         Ok(())
     }
@@ -295,9 +293,7 @@ pub mod windows {
     use super::*;
 
     /// Initialize Windows media transport controls
-    pub fn init_media_transport(
-        _command_tx: mpsc::UnboundedSender<MediaCommand>,
-    ) -> Result<()> {
+    pub fn init_media_transport(_command_tx: mpsc::UnboundedSender<MediaCommand>) -> Result<()> {
         info!("Windows: Would initialize media transport controls here");
         Ok(())
     }
@@ -313,10 +309,12 @@ static COMMAND_TX: OnceLock<mpsc::UnboundedSender<MediaCommand>> = OnceLock::new
 pub fn init() -> Result<mpsc::UnboundedSender<MediaCommand>> {
     let (mut service, tx) = MediaControlService::new();
     service.start()?;
-    
-    MEDIA_CONTROL.set(std::sync::Mutex::new(service))
+
+    MEDIA_CONTROL
+        .set(std::sync::Mutex::new(service))
         .map_err(|_| anyhow::anyhow!("Media control already initialized"))?;
-    COMMAND_TX.set(tx.clone())
+    COMMAND_TX
+        .set(tx.clone())
         .map_err(|_| anyhow::anyhow!("Media control already initialized"))?;
 
     Ok(tx)
@@ -403,11 +401,17 @@ mod tests {
         };
 
         let dict = metadata.to_mpris_dict();
-        assert_eq!(dict.get("mpris:trackid"), Some(&"spotify:track:abc123".to_string()));
+        assert_eq!(
+            dict.get("mpris:trackid"),
+            Some(&"spotify:track:abc123".to_string())
+        );
         assert_eq!(dict.get("xesam:title"), Some(&"Test Track".to_string()));
         assert_eq!(dict.get("xesam:artist"), Some(&"Test Artist".to_string()));
         assert_eq!(dict.get("xesam:album"), Some(&"Test Album".to_string()));
-        assert_eq!(dict.get("mpris:artUrl"), Some(&"https://example.com/art.jpg".to_string()));
+        assert_eq!(
+            dict.get("mpris:artUrl"),
+            Some(&"https://example.com/art.jpg".to_string())
+        );
         assert_eq!(dict.get("mpris:length"), Some(&"180000000".to_string()));
     }
 

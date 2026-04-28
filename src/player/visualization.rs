@@ -185,10 +185,7 @@ impl SampleBuffer {
         }
 
         // Compute magnitude spectrum
-        let magnitudes: Vec<f32> = output
-            .iter()
-            .map(|c| c.norm())
-            .collect();
+        let magnitudes: Vec<f32> = output.iter().map(|c| c.norm()).collect();
 
         Some(magnitudes)
     }
@@ -233,11 +230,8 @@ impl FrequencyAnalyzer {
         let bin_width = self.sample_rate as f32 / self.fft_size as f32;
         let mut bands = vec![0.0; self.num_bands];
 
-        for (band_idx, (start_freq, end_freq)) in self
-            .band_edges
-            .windows(2)
-            .map(|w| (w[0], w[1]))
-            .enumerate()
+        for (band_idx, (start_freq, end_freq)) in
+            self.band_edges.windows(2).map(|w| (w[0], w[1])).enumerate()
         {
             // Find which FFT bins fall into this frequency band
             let start_bin = (start_freq / bin_width) as usize;
@@ -377,8 +371,7 @@ impl SimpleVisualizer {
         for (i, band) in state.bands.iter_mut().enumerate() {
             let freq = i as f32 / num_bands as f32;
             // Bass-heavy simulation
-            let target = (1.0 - freq).powf(2.0)
-                * (0.5 + 0.5 * (self.phase + i as f32 * 0.2).sin());
+            let target = (1.0 - freq).powf(2.0) * (0.5 + 0.5 * (self.phase + i as f32 * 0.2).sin());
 
             // Smooth transition
             *band = *band * smoothing + target * (1.0 - smoothing);
@@ -448,7 +441,11 @@ mod tests {
 
         // Test render produces output (don't assert specific lengths due to complex calculation)
         let horizontal = renderer.render_horizontal(&bands, 40);
-        assert!(!horizontal.is_empty(), "Expected non-empty output, got: '{}'", horizontal);
+        assert!(
+            !horizontal.is_empty(),
+            "Expected non-empty output, got: '{}'",
+            horizontal
+        );
 
         // Test that we can render at different widths
         let narrow = renderer.render_horizontal(&bands, 20);
@@ -457,7 +454,11 @@ mod tests {
         assert!(!wide.is_empty(), "Wide render should produce output");
 
         // Output should only contain valid block characters
-        let valid_chars: std::collections::HashSet<char> = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'].iter().copied().collect();
+        let valid_chars: std::collections::HashSet<char> =
+            [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+                .iter()
+                .copied()
+                .collect();
         for ch in horizontal.chars() {
             assert!(valid_chars.contains(&ch), "Invalid char '{}' in output", ch);
         }

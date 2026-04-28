@@ -25,7 +25,10 @@ pub use device_selector::render_device_selector;
 pub use help::{render_help_overlay, HelpContent, HelpOverlayState};
 pub use layout_cache::{ClickableArea, LayoutCache};
 pub use main_view::render_main_view;
-pub use mouse_handler::{handle_left_click, handle_mouse_event, handle_scroll_down, handle_scroll_up, MouseAction, MouseState};
+pub use mouse_handler::{
+    handle_left_click, handle_mouse_event, handle_scroll_down, handle_scroll_up, MouseAction,
+    MouseState,
+};
 pub use overlays::{render_queue_overlay, render_search_overlay};
 pub use player_bar::render_player_bar;
 pub use sidebar::render_sidebar;

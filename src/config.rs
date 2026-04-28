@@ -74,8 +74,8 @@ impl Config {
 
     /// Get config directory path
     pub fn config_dir() -> Result<PathBuf> {
-        let home = dirs_next::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
+        let home =
+            dirs_next::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
         Ok(home.join(DEFAULT_CONFIG_FOLDER))
     }
 
@@ -220,13 +220,17 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 /// Initialize global config
 pub fn init() -> Result<()> {
     let config = Config::load().unwrap_or_default();
-    CONFIG.set(config).map_err(|_| anyhow::anyhow!("Config already initialized"))?;
+    CONFIG
+        .set(config)
+        .map_err(|_| anyhow::anyhow!("Config already initialized"))?;
     Ok(())
 }
 
 /// Get global config instance
 pub fn get() -> &'static Config {
-    CONFIG.get().expect("Config not initialized. Call config::init() first.")
+    CONFIG
+        .get()
+        .expect("Config not initialized. Call config::init() first.")
 }
 
 #[cfg(test)]
@@ -251,7 +255,10 @@ mod tests {
 
         // Should be valid TOML
         let parsed: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.audio.visualization_bands, config.audio.visualization_bands);
+        assert_eq!(
+            parsed.audio.visualization_bands,
+            config.audio.visualization_bands
+        );
     }
 
     #[test]

@@ -383,13 +383,11 @@ fn test_liked_songs_initial_load_from_loading_in_progress() {
 #[test]
 fn test_liked_songs_pagination_appends_to_existing() {
     // Start with existing tracks
-    let existing_tracks = vec![
-        TrackItem {
-            name: "Existing 1".to_string(),
-            artist: "Artist 1".to_string(),
-            uri: "spotify:track:existing1".to_string(),
-        },
-    ];
+    let existing_tracks = vec![TrackItem {
+        name: "Existing 1".to_string(),
+        artist: "Artist 1".to_string(),
+        uri: "spotify:track:existing1".to_string(),
+    }];
     let mut state = TestContentStateWithPagination::LikedSongsPage {
         tracks: existing_tracks,
         total: 100,
@@ -397,13 +395,11 @@ fn test_liked_songs_pagination_appends_to_existing() {
     };
 
     // Simulate receiving more tracks (pagination)
-    let new_tracks = vec![
-        TrackItem {
-            name: "New Track".to_string(),
-            artist: "New Artist".to_string(),
-            uri: "spotify:track:new".to_string(),
-        },
-    ];
+    let new_tracks = vec![TrackItem {
+        name: "New Track".to_string(),
+        artist: "New Artist".to_string(),
+        uri: "spotify:track:new".to_string(),
+    }];
 
     // Pagination logic: append to existing
     match &state {
@@ -460,5 +456,8 @@ fn test_liked_songs_results_discarded_on_navigation() {
         }
     }
 
-    assert!(discarded, "Results should be discarded when user navigated away");
+    assert!(
+        discarded,
+        "Results should be discarded when user navigated away"
+    );
 }

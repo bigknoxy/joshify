@@ -340,3 +340,61 @@ pub fn play_state_icon(is_playing: bool) -> &'static str {
         symbols::PAUSE
     }
 }
+
+/// Get visual bars for volume level (0-100)
+pub fn volume_bars(volume: u32) -> String {
+    let filled = (volume as f32 / 100.0 * 10.0) as usize;
+    let empty = 10 - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+/// Get visual bars for progress (0-100)
+pub fn progress_bars(percent: u32) -> String {
+    let filled = (percent as f32 / 100.0 * 20.0) as usize;
+    let empty = 20 - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+/// Create a styled progress bar
+pub fn styled_progress_bar(percent: u32, width: usize) -> String {
+    let filled = (percent as f32 / 100.0 * width as f32) as usize;
+    let empty = width.saturating_sub(filled);
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+/// Get gradient color for progress (blue to green)
+pub fn progress_gradient_color(percent: u32) -> Color {
+    // Interpolate between blue and green
+    let t = percent as f32 / 100.0;
+    Color::Rgb(
+        (137.0 + (166.0 - 137.0) * t) as u8, // R: blue(137) to green(166)
+        (180.0 + (227.0 - 180.0) * t) as u8, // G: blue(180) to green(227)
+        (250.0 + (161.0 - 250.0) * t) as u8, // B: blue(250) to green(161)
+    )
+}
+
+/// Format duration as mm:ss
+pub fn format_duration(ms: u32) -> String {
+    let seconds = ms / 1000;
+    let minutes = seconds / 60;
+    let secs = seconds % 60;
+    format!("{}:{:02}", minutes, secs)
+}
+
+/// Create a horizontal separator line
+pub fn separator(width: u16) -> String {
+    "─".repeat(width as usize)
+}
+
+/// Create a styled separator with corner characters
+pub fn styled_separator(width: u16) -> String {
+    format!("╭{}╮", "─".repeat((width as usize).saturating_sub(2)))
+}
+
+/// Check if terminal supports true color
+pub fn supports_true_color() -> bool {
+    // Check COLORTERM environment variable
+    std::env::var("COLORTERM")
+        .map(|v| v == "truecolor" || v == "24bit")
+        .unwrap_or(false)
+}

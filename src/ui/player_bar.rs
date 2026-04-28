@@ -197,15 +197,7 @@ pub fn render_player_bar(
 
     // Volume bar
     let (vol_icon, vol_style) = theme::volume_indicator(volume);
-    let vol_bars = match volume {
-        0 => "░░░░░░",
-        1..=16 => "█░░░░░",
-        17..=33 => "██░░░░",
-        34..=50 => "███░░░",
-        51..=66 => "████░░",
-        67..=83 => "█████░",
-        _ => "██████",
-    };
+    // vol_bars is now computed in the rendering section below
 
     // Time labels for progress bar
     let elapsed_text = crate::state::player_state::format_duration(progress_ms);
@@ -251,8 +243,10 @@ pub fn render_player_bar(
         PREV_BUTTON_WIDTH as usize + PLAY_PAUSE_BUTTON_WIDTH as usize + NEXT_BUTTON_WIDTH as usize;
     let title_available = title_row_width.saturating_sub(controls_width);
 
-    let (truncated_title, _) =
-        unicode_truncate::UnicodeTruncateStr::unicode_truncate(title_text.as_str(), title_available);
+    let (truncated_title, _) = unicode_truncate::UnicodeTruncateStr::unicode_truncate(
+        title_text.as_str(),
+        title_available,
+    );
 
     // Calculate button positions in title row
     let title_row_x = rows[0].x;
@@ -326,9 +320,8 @@ pub fn render_player_bar(
     // Calculate badge positions
     // Artist text starts at position 2 (after "  ")
     let artist_start = artist_row_x.saturating_add(2);
-    let artist_end = artist_start.saturating_add(
-        unicode_width::UnicodeWidthStr::width(artist_text.as_str()) as u16,
-    );
+    let artist_end = artist_start
+        .saturating_add(unicode_width::UnicodeWidthStr::width(artist_text.as_str()) as u16);
 
     // Shuffle badge position (after artist, with space)
     let shuffle_x = artist_end.saturating_add(1);
@@ -405,7 +398,7 @@ pub fn render_player_bar(
         progress_layout[2],
     );
 
-    // Row 4: Volume bar
+    // Row 4: Volume bar with enhanced visual indicator
     // Store volume bar area for hit testing
     let volume_row_width = rows[3].width;
     let volume_bar_x = rows[3].x.saturating_add(2);
@@ -417,12 +410,28 @@ pub fn render_player_bar(
         BUTTON_HEIGHT,
     ));
 
+    // Create a more visual volume bar
+    let vol_visual = theme::volume_bars(volume);
+    let vol_color = if volume > 80 {
+        Catppuccin::GREEN
+    } else if volume > 50 {
+        Catppuccin::TEAL
+    } else if volume > 20 {
+        Catppuccin::YELLOW
+    } else if volume > 0 {
+        Catppuccin::PEACH
+    } else {
+        Catppuccin::SURFACE_1
+    };
+
     let volume_line = Line::from(vec![
-        Span::styled(format!(" {}{}", vol_icon, vol_bars), vol_style),
+        Span::styled(format!(" {} ", vol_icon), vol_style),
+        Span::styled(format!("[{}]", vol_visual), Style::default().fg(vol_color)),
         Span::styled(
-            format!("  {}%", volume),
+            format!(" {:>3}%", volume),
             Style::default().fg(Catppuccin::SUBTEXT_0),
         ),
+        Span::styled("  +/- : adjust", Style::default().fg(Catppuccin::SURFACE_2)),
     ]);
     frame.render_widget(Paragraph::new(volume_line), rows[3]);
 }
@@ -565,10 +574,7 @@ mod tests {
         };
 
         // Click on play button should return PlayPauseButton, not PlayerBar
-        assert_eq!(
-            cache.area_at(30, 35),
-            Some(ClickableArea::PlayPauseButton)
-        );
+        assert_eq!(cache.area_at(30, 35), Some(ClickableArea::PlayPauseButton));
     }
 
     #[test]

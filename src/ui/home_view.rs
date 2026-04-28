@@ -6,7 +6,9 @@
 //! - Quick Access buttons (Liked Songs, Playlists, Library)
 //! - Empty states for new users
 
-use crate::state::home_state::{format_relative_time, ContinueContext, HomeState, RecentlyPlayedItem};
+use crate::state::home_state::{
+    format_relative_time, ContinueContext, HomeState, RecentlyPlayedItem,
+};
 use crate::ui::layout_cache::LayoutCache;
 use crate::ui::theme::{symbols, Catppuccin};
 use ratatui::{
@@ -87,13 +89,20 @@ pub fn render_home_dashboard(
     render_quick_access_section(frame, sections[3], content_width);
 }
 
-/// Render title bar for Home dashboard
+/// Render title bar for Home dashboard with enhanced styling
 fn render_title_bar(frame: &mut ratatui::Frame, area: Rect, _content_width: usize) {
-    let title = Paragraph::new(format!("  {} Home", symbols::HOME))
-        .style(Catppuccin::primary().add_modifier(Modifier::BOLD))
+    let title_text = format!("  {} Home Dashboard {}", symbols::HOME, symbols::MUSIC_NOTE);
+
+    let title = Paragraph::new(title_text)
+        .style(
+            Catppuccin::primary()
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED),
+        )
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(Catppuccin::border()),
         );
     frame.render_widget(title, area);
@@ -138,12 +147,13 @@ fn render_jump_back_in_section(
     }
 }
 
-/// Render a single "Jump Back In" card
+/// Render a single "Jump Back In" card with enhanced styling
 fn render_jump_back_in_card(frame: &mut ratatui::Frame, area: Rect, item: &ContinueContext) {
-    // Card border
+    // Card border with rounded corners for modern look
     let border_style = Catppuccin::border();
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(border_style);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -160,15 +170,15 @@ fn render_jump_back_in_card(frame: &mut ratatui::Frame, area: Rect, item: &Conti
     let progress = item.format_progress();
 
     let lines = vec![
-        Line::from(vec![
-            Span::styled(format!(" {} ", icon), Catppuccin::success()),
-        ]),
-        Line::from(vec![
-            Span::styled(name, Catppuccin::text()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {}%", progress), Catppuccin::dim()),
-        ]),
+        Line::from(vec![Span::styled(
+            format!(" {} ", icon),
+            Catppuccin::success(),
+        )]),
+        Line::from(vec![Span::styled(name, Catppuccin::text())]),
+        Line::from(vec![Span::styled(
+            format!("  {}%", progress),
+            Catppuccin::dim(),
+        )]),
     ];
 
     let content = Paragraph::new(lines);
@@ -204,7 +214,12 @@ fn render_recently_played_section(
     for (i, item) in items.iter().take(end).enumerate() {
         let time_ago = format_relative_time(item.played_at);
         let track_name = truncate(&item.track.name, content_width.saturating_sub(25)); // Reserve space for time
-        let artist_name = truncate(&item.track.artist, content_width.saturating_sub(25).saturating_sub(track_name.len() + 3));
+        let artist_name = truncate(
+            &item.track.artist,
+            content_width
+                .saturating_sub(25)
+                .saturating_sub(track_name.len() + 3),
+        );
 
         let is_selected = i == _selected_index;
         let style = if is_selected {
@@ -213,13 +228,15 @@ fn render_recently_played_section(
             Catppuccin::text()
         };
 
-        let context_icon = item.context.as_ref().map(|ctx| {
-            match ctx.context_type {
+        let context_icon = item
+            .context
+            .as_ref()
+            .map(|ctx| match ctx.context_type {
                 crate::state::home_state::ContextType::Album => symbols::DISC,
                 crate::state::home_state::ContextType::Playlist => symbols::MUSIC,
                 crate::state::home_state::ContextType::Artist => symbols::HEADPHONES,
-            }
-        }).unwrap_or(symbols::MUSIC_NOTE);
+            })
+            .unwrap_or(symbols::MUSIC_NOTE);
 
         lines.push(Line::from(vec![
             Span::styled(format!("   {} ", context_icon), Catppuccin::dim()),
@@ -230,13 +247,13 @@ fn render_recently_played_section(
 
     // Show "more" indicator if there are more tracks
     if items.len() > end {
-        lines.push(Line::from(vec![
-            Span::styled(format!("   ... and {} more", items.len() - end), Catppuccin::dim()),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!("   ... and {} more", items.len() - end),
+            Catppuccin::dim(),
+        )]));
     }
 
-    let list = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::NONE));
+    let list = Paragraph::new(lines).block(Block::default().borders(Borders::NONE));
     frame.render_widget(list, list_area);
 }
 
@@ -279,9 +296,10 @@ fn render_quick_access_section(frame: &mut ratatui::Frame, area: Rect, content_w
                     Span::styled(format!(" {} ", icon), Catppuccin::success()),
                     Span::styled(*label, Catppuccin::text()),
                 ]),
-                Line::from(vec![
-                    Span::styled(format!("   Press '{}'", key), Catppuccin::dim()),
-                ]),
+                Line::from(vec![Span::styled(
+                    format!("   Press '{}'", key),
+                    Catppuccin::dim(),
+                )]),
             ])
             .block(
                 Block::default()
@@ -296,17 +314,14 @@ fn render_quick_access_section(frame: &mut ratatui::Frame, area: Rect, content_w
 /// Render loading state
 fn render_loading_state(frame: &mut ratatui::Frame, area: Rect) {
     let spinner = crate::ui::theme::spinner_frame();
-    let content = Paragraph::new(format!(
-        "\n\n  {}  Loading your music...",
-        spinner
-    ))
-    .style(Catppuccin::loading())
-    .alignment(Alignment::Center)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Catppuccin::border()),
-    );
+    let content = Paragraph::new(format!("\n\n  {}  Loading your music...", spinner))
+        .style(Catppuccin::loading())
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Catppuccin::border()),
+        );
     frame.render_widget(content, area);
 }
 
@@ -314,24 +329,39 @@ fn render_loading_state(frame: &mut ratatui::Frame, area: Rect) {
 fn render_empty_state(frame: &mut ratatui::Frame, area: Rect, _content_width: usize) {
     let content = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled(format!("  {} Welcome to Joshify!", symbols::HOME), Catppuccin::primary().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            format!("  {} Welcome to Joshify!", symbols::HOME),
+            Catppuccin::primary().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(""),
-        Line::styled("  Start listening to see your recently played tracks here.", Catppuccin::text()),
+        Line::styled(
+            "  Start listening to see your recently played tracks here.",
+            Catppuccin::text(),
+        ),
         Line::from(""),
-        Line::styled(format!("  {} Press '/' to search for music", symbols::SEARCH), Catppuccin::info()),
-        Line::styled(format!("  {} Press 'l' to view your Liked Songs", symbols::HEART_FILLED), Catppuccin::success()),
-        Line::styled(format!("  {} Press 'p' to browse your Playlists", symbols::MUSIC), Catppuccin::secondary()),
+        Line::styled(
+            format!("  {} Press '/' to search for music", symbols::SEARCH),
+            Catppuccin::info(),
+        ),
+        Line::styled(
+            format!(
+                "  {} Press 'l' to view your Liked Songs",
+                symbols::HEART_FILLED
+            ),
+            Catppuccin::success(),
+        ),
+        Line::styled(
+            format!("  {} Press 'p' to browse your Playlists", symbols::MUSIC),
+            Catppuccin::secondary(),
+        ),
     ];
 
-    let widget = Paragraph::new(content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Home ")
-                .border_style(Catppuccin::border()),
-        );
+    let widget = Paragraph::new(content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Home ")
+            .border_style(Catppuccin::border()),
+    );
     frame.render_widget(widget, area);
 }
 
@@ -367,17 +397,15 @@ mod tests {
                     }),
                 },
             ],
-            jump_back_in: vec![
-                ContinueContext {
-                    context_type: crate::state::home_state::ContextType::Playlist,
-                    id: "playlist1".to_string(),
-                    name: "Test Playlist".to_string(),
-                    progress_percent: 45,
-                    last_played: Utc::now(),
-                    total_tracks: 20,
-                    completed_tracks: 9,
-                },
-            ],
+            jump_back_in: vec![ContinueContext {
+                context_type: crate::state::home_state::ContextType::Playlist,
+                id: "playlist1".to_string(),
+                name: "Test Playlist".to_string(),
+                progress_percent: 45,
+                last_played: Utc::now(),
+                total_tracks: 20,
+                completed_tracks: 9,
+            }],
             is_loading: false,
             last_updated: None,
         }

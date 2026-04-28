@@ -1,0 +1,98 @@
+name: Visual Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/ui/**'
+      - 'src/main.rs'
+      - 'tapes/**'
+      - '.github/workflows/visual-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/ui/**'
+      - 'src/main.rs'
+      - 'tapes/**'
+      - '.github/workflows/visual-tests.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  generate-screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev ffmpeg
+
+      - name: Install VHS
+        run: |
+          VHS_VERSION="0.11.0"
+          TTYD_VERSION="1.7.7"
+          
+          # Download VHS
+          wget -q "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_linux_amd64.deb" -O vhs.deb
+          sudo dpkg -i vhs.deb || sudo apt-get install -f -y
+          
+          # Download ttyd
+          wget -q "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" -O ttyd
+          chmod +x ttyd
+          sudo mv ttyd /usr/local/bin/
+          
+          # Verify installation
+          vhs version
+          ttyd --version
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Generate screenshots
+        run: |
+          mkdir -p screenshots/current
+          export PATH="/usr/local/bin:$PATH"
+          
+          # Run all tape files
+          for tape in tapes/*.tape; do
+            echo "▶️ Running: $tape"
+            if vhs "$tape" 2>&1; then
+              echo "✅ Success: $tape"
+            else
+              echo "⚠️ Warning: $tape had issues (may have partial output)"
+            fi
+            echo ""
+          done
+
+      - name: Upload screenshots artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: |
+            screenshots/*.png
+            screenshots/*.gif
+          retention-days: 30
+
+      - name: Update reference screenshots (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          mkdir -p screenshots/reference
+          cp screenshots/*.png screenshots/reference/ 2>/dev/null || true
+          
+      - name: Commit updated reference screenshots
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add screenshots/reference/
+          git diff --staged --quiet || (git commit -m "chore: update reference screenshots [skip ci]" && git push)

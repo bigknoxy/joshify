@@ -158,7 +158,6 @@ impl LayoutCache {
 
         None
     }
-
 }
 
 /// Represents a clickable area in the UI
@@ -249,10 +248,7 @@ mod tests {
         };
 
         // Should find specific button, not general player bar
-        assert_eq!(
-            cache.area_at(30, 37),
-            Some(ClickableArea::PlayPauseButton)
-        );
+        assert_eq!(cache.area_at(30, 37), Some(ClickableArea::PlayPauseButton));
     }
 
     #[test]
@@ -274,22 +270,22 @@ mod tests {
     fn test_playlist_item_hit() {
         let cache = LayoutCache {
             playlist_items: vec![
-                Rect::new(25, 5, 50, 1),  // Item 0
-                Rect::new(25, 6, 50, 1),  // Item 1
-                Rect::new(25, 7, 50, 1),  // Item 2
+                Rect::new(25, 5, 50, 1), // Item 0
+                Rect::new(25, 6, 50, 1), // Item 1
+                Rect::new(25, 7, 50, 1), // Item 2
             ],
             ..Default::default()
         };
 
         // Click on first playlist item
         assert_eq!(cache.area_at(30, 5), Some(ClickableArea::PlaylistItem(0)));
-        
+
         // Click on second playlist item
         assert_eq!(cache.area_at(30, 6), Some(ClickableArea::PlaylistItem(1)));
-        
+
         // Click on third playlist item
         assert_eq!(cache.area_at(30, 7), Some(ClickableArea::PlaylistItem(2)));
-        
+
         // Click between items - should return None or fall through to main view
         assert_eq!(cache.area_at(30, 10), None);
     }
@@ -298,23 +294,23 @@ mod tests {
     fn test_track_item_hit() {
         let cache = LayoutCache {
             track_items: vec![
-                Rect::new(25, 5, 50, 1),  // Track 0
-                Rect::new(25, 6, 50, 1),  // Track 1
-                Rect::new(25, 7, 50, 1),  // Track 2
-                Rect::new(25, 8, 50, 1),  // Track 3
+                Rect::new(25, 5, 50, 1), // Track 0
+                Rect::new(25, 6, 50, 1), // Track 1
+                Rect::new(25, 7, 50, 1), // Track 2
+                Rect::new(25, 8, 50, 1), // Track 3
             ],
             ..Default::default()
         };
 
         // Click on first track
         assert_eq!(cache.area_at(30, 5), Some(ClickableArea::TrackItem(0)));
-        
+
         // Click on middle track
         assert_eq!(cache.area_at(30, 7), Some(ClickableArea::TrackItem(2)));
-        
+
         // Click on last track
         assert_eq!(cache.area_at(30, 8), Some(ClickableArea::TrackItem(3)));
-        
+
         // Click outside track area
         assert_eq!(cache.area_at(100, 100), None);
     }
@@ -336,25 +332,25 @@ mod tests {
 
         // Test prev button
         assert_eq!(cache.area_at(26, 37), Some(ClickableArea::PrevButton));
-        
+
         // Test play/pause button
         assert_eq!(cache.area_at(31, 37), Some(ClickableArea::PlayPauseButton));
-        
+
         // Test next button
         assert_eq!(cache.area_at(36, 37), Some(ClickableArea::NextButton));
-        
+
         // Test shuffle button
         assert_eq!(cache.area_at(41, 37), Some(ClickableArea::ShuffleButton));
-        
+
         // Test repeat button
         assert_eq!(cache.area_at(46, 37), Some(ClickableArea::RepeatButton));
-        
+
         // Test queue button
         assert_eq!(cache.area_at(51, 37), Some(ClickableArea::QueueButton));
-        
+
         // Test volume bar (not a button, but clickable area)
         assert_eq!(cache.area_at(65, 37), Some(ClickableArea::VolumeBar));
-        
+
         // Test progress bar
         assert_eq!(cache.area_at(50, 34), Some(ClickableArea::ProgressBar));
     }
@@ -375,11 +371,11 @@ mod tests {
 
         // Search overlay takes priority over sidebar/main view
         assert_eq!(cache.area_at(15, 11), Some(ClickableArea::SearchInput));
-        
+
         // Help overlay takes priority (checked before queue)
         // Help: x=15-64, y=15-34
         assert_eq!(cache.area_at(20, 18), Some(ClickableArea::HelpOverlay));
-        
+
         // Queue overlay (in area not covered by help)
         // Queue: x=20-59, y=20-34; Help: x=15-64, y=15-34
         // Queue is entirely within help's y range, so test outside help's x range
@@ -387,10 +383,10 @@ mod tests {
         // Test point outside help but in queue's extended area - but queue is smaller
         // Let's test a point in queue that's also in help - help wins
         assert_eq!(cache.area_at(30, 25), Some(ClickableArea::HelpOverlay));
-        
+
         // Outside overlays - should find player button
         assert_eq!(cache.area_at(26, 37), Some(ClickableArea::PlayPauseButton));
-        
+
         // Outside everything
         assert_eq!(cache.area_at(100, 100), None);
     }
@@ -399,18 +395,18 @@ mod tests {
     fn test_overlay_priority_help_over_queue() {
         // Help overlay is checked before queue, so it takes priority when they overlap
         let cache = LayoutCache {
-            help_overlay: Some(Rect::new(10, 10, 60, 20)),  // x: 10-69, y: 10-29
+            help_overlay: Some(Rect::new(10, 10, 60, 20)), // x: 10-69, y: 10-29
             queue_overlay: Some(Rect::new(15, 15, 50, 15)), // x: 15-64, y: 15-29
             ..Default::default()
         };
 
         // In overlapping area - help takes priority (checked first)
         assert_eq!(cache.area_at(20, 20), Some(ClickableArea::HelpOverlay));
-        
+
         // In help overlay but outside queue
         // Queue starts at x=15, so x=12 is in help but not queue
         assert_eq!(cache.area_at(12, 12), Some(ClickableArea::HelpOverlay));
-        
+
         // Queue is entirely contained within help's bounds
         // help: x=10-69, y=10-29; queue: x=15-64, y=15-29
         // There's no point in queue that's outside help
@@ -420,43 +416,53 @@ mod tests {
     #[test]
     fn test_nav_item_hit_detection() {
         use crate::state::app_state::NavItem;
-        
+
         let cache = LayoutCache {
             sidebar: Some(Rect::new(0, 0, 20, 40)),
             nav_items: vec![
-                Rect::new(0, 16, 20, 1),  // Home
-                Rect::new(0, 17, 20, 1),  // Library (Search removed - accessible via '/')
-                Rect::new(0, 18, 20, 1),  // Playlists
-                Rect::new(0, 19, 20, 1),  // Liked Songs
+                Rect::new(0, 16, 20, 1), // Home
+                Rect::new(0, 17, 20, 1), // Library (Search removed - accessible via '/')
+                Rect::new(0, 18, 20, 1), // Playlists
+                Rect::new(0, 19, 20, 1), // Liked Songs
             ],
             ..Default::default()
         };
 
-        assert_eq!(cache.area_at(5, 16), Some(ClickableArea::NavItem(NavItem::Home)));
+        assert_eq!(
+            cache.area_at(5, 16),
+            Some(ClickableArea::NavItem(NavItem::Home))
+        );
         // Search removed from sidebar - accessible via '/' key
-        assert_eq!(cache.area_at(5, 17), Some(ClickableArea::NavItem(NavItem::Library)));
-        assert_eq!(cache.area_at(5, 18), Some(ClickableArea::NavItem(NavItem::Playlists)));
-        assert_eq!(cache.area_at(5, 19), Some(ClickableArea::NavItem(NavItem::LikedSongs)));
+        assert_eq!(
+            cache.area_at(5, 17),
+            Some(ClickableArea::NavItem(NavItem::Library))
+        );
+        assert_eq!(
+            cache.area_at(5, 18),
+            Some(ClickableArea::NavItem(NavItem::Playlists))
+        );
+        assert_eq!(
+            cache.area_at(5, 19),
+            Some(ClickableArea::NavItem(NavItem::LikedSongs))
+        );
     }
 
     #[test]
     fn test_playlist_item_edge_positions() {
         let cache = LayoutCache {
-            playlist_items: vec![
-                Rect::new(25, 5, 50, 1),
-            ],
+            playlist_items: vec![Rect::new(25, 5, 50, 1)],
             ..Default::default()
         };
 
         // Left edge of playlist item
         assert_eq!(cache.area_at(25, 5), Some(ClickableArea::PlaylistItem(0)));
-        
+
         // Right edge of playlist item (x=25+50-1=74)
         assert_eq!(cache.area_at(74, 5), Some(ClickableArea::PlaylistItem(0)));
-        
+
         // Just outside left edge
         assert_eq!(cache.area_at(24, 5), None);
-        
+
         // Just outside right edge
         assert_eq!(cache.area_at(75, 5), None);
     }
@@ -464,18 +470,16 @@ mod tests {
     #[test]
     fn test_track_item_edge_positions() {
         let cache = LayoutCache {
-            track_items: vec![
-                Rect::new(25, 5, 50, 1),
-            ],
+            track_items: vec![Rect::new(25, 5, 50, 1)],
             ..Default::default()
         };
 
         // Left edge
         assert_eq!(cache.area_at(25, 5), Some(ClickableArea::TrackItem(0)));
-        
+
         // Right edge
         assert_eq!(cache.area_at(74, 5), Some(ClickableArea::TrackItem(0)));
-        
+
         // Outside
         assert_eq!(cache.area_at(24, 5), None);
         assert_eq!(cache.area_at(75, 5), None);
@@ -490,10 +494,10 @@ mod tests {
 
         // Top-left corner
         assert_eq!(cache.area_at(30, 36), Some(ClickableArea::PlayPauseButton));
-        
+
         // Bottom-right corner (x=30+3-1=32, y=36+2-1=37)
         assert_eq!(cache.area_at(32, 37), Some(ClickableArea::PlayPauseButton));
-        
+
         // Just outside
         assert_eq!(cache.area_at(29, 36), None);
         assert_eq!(cache.area_at(33, 37), None);
@@ -504,7 +508,7 @@ mod tests {
     #[test]
     fn test_empty_cache_returns_none() {
         let cache = LayoutCache::new();
-        
+
         assert_eq!(cache.area_at(0, 0), None);
         assert_eq!(cache.area_at(50, 50), None);
         assert_eq!(cache.area_at(100, 100), None);
@@ -513,22 +517,22 @@ mod tests {
     #[test]
     fn test_sidebar_fallback_when_no_nav_item_hit() {
         use crate::state::app_state::NavItem;
-        
+
         // Sidebar with nav items, but click in sidebar area between nav items
         let cache = LayoutCache {
             sidebar: Some(Rect::new(0, 0, 20, 40)),
-            nav_items: vec![
-                Rect::new(0, 16, 20, 1),
-                Rect::new(0, 17, 20, 1),
-            ],
+            nav_items: vec![Rect::new(0, 16, 20, 1), Rect::new(0, 17, 20, 1)],
             ..Default::default()
         };
 
         // Click in sidebar but not on a nav item - should return Sidebar
         assert_eq!(cache.area_at(5, 5), Some(ClickableArea::Sidebar));
-        
+
         // Click on nav item - should return specific nav item
-        assert_eq!(cache.area_at(5, 16), Some(ClickableArea::NavItem(NavItem::Home)));
+        assert_eq!(
+            cache.area_at(5, 16),
+            Some(ClickableArea::NavItem(NavItem::Home))
+        );
     }
 
     #[test]
@@ -540,7 +544,7 @@ mod tests {
 
         // Click in main view but not on any specific item
         assert_eq!(cache.area_at(30, 10), Some(ClickableArea::MainView));
-        
+
         // Click outside main view
         assert_eq!(cache.area_at(10, 10), None);
     }
