@@ -1,3 +1,44 @@
+## [0.4.0](https://github.com/bigknoxy/joshify/compare/v0.3.0...v0.4.0) (2026-04-27)
+
+### Features
+
+- **Daemon Mode**: Background service with Unix socket IPC (`joshify daemon`, `joshify daemon-send`). JSON protocol for commands. 14 tests.
+- **CLI Commands**: Full command-line interface for scripting. Commands: play, pause, next, previous, stop, status, volume, seek, search, queue-add. Output formats: text, json, minimal. 24 tests.
+- **Lyrics Display**: Synced lyrics via LRCLIB API. Real-time lyric display with timestamp parsing. 10 tests.
+- **Theme System**: 7 built-in themes (Catppuccin Mocha/Latte, Gruvbox Dark/Light, Nord, Tokyo Night, Dracula). Dynamic theme switching. Theme trait for extensibility. 12 tests.
+- **Structured Logging**: Tracing-based logging with file rotation (10MB max, 5 files). Log level filtering. 12 tests.
+- **Documentation**: Updated README with all new features, CLI examples, configuration guide.
+
+### Dependencies
+
+- Added `tracing-appender = "0.2"` for log rotation
+- Added `toml = "0.8"` for configuration files
+- Added `dirs-next = "2"` for config directory detection
+- Added `realfft = "3"` for FFT audio visualization
+- Added `notify-rust = "4"` for Linux notifications (optional)
+
+---
+
+## [0.3.0](https://github.com/bigknoxy/joshify/compare/v0.2.0...v0.3.0) (2026-04-27)
+
+### Features
+
+- **Configuration System**: TOML-based configuration at `~/.config/joshify/config.toml`. Settings for audio, notifications, media control, UI, keybindings. Auto-created with defaults. 5 tests.
+- **Audio Visualization**: Real-time FFT spectrum visualization. Configurable bands (32, 64, 128). Smoothing factor control. Works with local playback. 7 tests.
+- **Media Control**: MPRIS integration for OS media key support. Platform abstraction for Linux/macOS/Windows. Commands: play, pause, next, previous, stop. 10 tests.
+- **Desktop Notifications**: Native OS notifications on track change. Rate limiting (5s cooldown). Duplicate detection. Album art thumbnails when available. 17 tests.
+- **Fuzzy Search**: Typo-tolerant search with relevance scoring. Custom implementation with consecutive match bonuses and gap penalties. 17 tests.
+- **Test Suite Growth**: 280+ tests covering all new functionality.
+
+### Dependencies
+
+- Added `toml = "0.8"` for configuration parsing
+- Added `dirs-next = "2"` for cross-platform directories
+- Added `realfft = "3"` for FFT processing
+- Added `num-complex = "0.4"` for complex numbers (FFT)
+
+---
+
 ## [0.2.0](https://github.com/bigknoxy/joshify/compare/v0.1.0...v0.2.0) (2026-04-08)
 
 ### Breaking Changes

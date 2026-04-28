@@ -69,9 +69,64 @@ Each entry should include:
 **Prevention**: Keep navigation intuitive - h=left (sidebar is left), l=right (content is right)
 **File**: `src/main.rs`
 
+---
+
+## 2026-04-26
+
+### Category: Pattern
+**Learned**: OnceLock is the modern Rust pattern for lazy static initialization
+**Context**: Replaced unsafe `static mut` with `std::sync::OnceLock` for config, media_control, and daemon globals
+**Prevention**: Always use OnceLock for thread-safe global initialization in Rust 1.70+. It provides safe, one-time initialization without unsafe blocks.
+**File**: `src/config.rs`, `src/media_control.rs`
+
+### Category: Decision
+**Learned**: Custom fuzzy search can be better than external crates with API issues
+**Context**: Nucleo crate had API issues, so implemented custom fuzzy search with scoring
+**Prevention**: When external crates have API problems, consider if a custom implementation is feasible. Sometimes simpler is better.
+**File**: `src/search.rs`
+
+### Category: Gotcha
+**Learned**: Tracing file logging can be complex with trait bounds
+**Context**: Attempted complex Box<dyn Write> setup for tracing-appender, simplified to avoid trait bound issues
+**Prevention**: For file logging with tracing, use simple working patterns. Don't over-abstract the writer type.
+**File**: `src/logging.rs`
+
+### Category: Pattern
+**Learned**: Expert subagents enable effective parallel development
+**Context**: Daemon mode (14 tests) was implemented by subagent while main agent worked on other features
+**Prevention**: For independent features, use subagents to parallelize work. Provide complete context and clear deliverables.
+**File**: `src/daemon.rs`
+
+### Category: Decision
+**Learned**: LRCLIB provides free synced lyrics without authentication
+**Context**: Other lyrics APIs require auth or paid tiers. LRCLIB is free and works well.
+**Prevention**: Research free APIs before committing to paid providers. Open-source alternatives often exist.
+**File**: `src/lyrics.rs`
+
+### Category: Gotcha
+**Learned**: CLI argument parsing with flags requires careful filtering
+**Context**: Search query was including `--limit` and its value in the query string
+**Prevention**: When parsing args with flags, filter out flag pairs (flag + value) before joining the query.
+**File**: `src/cli.rs`
+
+### Category: Pattern
+**Learned**: Theme system with trait allows extensibility beyond hardcoded themes
+**Context**: Created Theme trait that users could implement for custom themes
+**Prevention**: Use traits for theming systems - provides both built-in options and extensibility.
+**File**: `src/themes.rs`
+
+### Category: Decision
+**Learned**: Unix sockets are simpler than TCP for local IPC
+**Context**: Daemon mode uses Unix sockets at ~/.cache/joshify/daemon.sock instead of TCP
+**Prevention**: For local-only IPC, prefer Unix sockets (no port conflicts, file-based permissions, simpler cleanup).
+**File**: `src/daemon.rs`
+
+---
+
 ## Future Learning Sources
 - Test failures
 - Code review feedback
 - Performance bottlenecks
 - User experience issues
 - API behavior surprises
+- Documentation gaps

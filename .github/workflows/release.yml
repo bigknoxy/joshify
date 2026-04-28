@@ -1,0 +1,57 @@
+name: Release Documentation Update
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Get release info
+        id: release
+        run: |
+          echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          echo "name=${{ github.event.release.name }}" >> $GITHUB_OUTPUT
+
+      - name: Update version badge in README
+        run: |
+          VERSION="${{ steps.release.outputs.tag }}"
+          # Update the version badge if it exists, or add it
+          sed -i "s|badge/version-.*-blue|badge/version-${VERSION}-blue|g" README.md
+
+      - name: Update test count badge
+        run: |
+          # Run tests and capture count
+          TEST_COUNT=$(cargo test --lib 2>&1 | grep -oP '\d+(?= passed)' | head -1)
+          if [ -n "$TEST_COUNT" ]; then
+            sed -i "s|tests-.*-passing|tests-${TEST_COUNT}-passing|g" README.md
+          fi
+
+      - name: Create Pull Request for documentation updates
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "docs: update documentation for ${{ steps.release.outputs.tag }}"
+          title: "docs: Automated documentation update for ${{ steps.release.outputs.tag }}"
+          body: |
+            This PR was automatically created after the release of ${{ steps.release.outputs.tag }}.
+
+            Changes:
+            - Updated version badges
+            - Updated test count
+            - Synced documentation with release notes
+
+            Please review and merge to keep documentation current.
+          branch: docs/update-${{ steps.release.outputs.tag }}
+          delete-branch: true

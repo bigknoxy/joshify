@@ -3,7 +3,7 @@
 A beautiful terminal Spotify client built with Rust and ratatui.
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/bigknoxy/joshify/ci.yml?branch=main&style=flat-square)](https://github.com/bigknoxy/joshify/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen?style=flat-square)](https://github.com/bigknoxy/joshify)
+[![Tests](https://img.shields.io/badge/tests-335%20passing-brightgreen?style=flat-square)](https://github.com/bigknoxy/joshify)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 
@@ -29,6 +29,26 @@ A beautiful terminal Spotify client built with Rust and ratatui.
    ╲  ╲__╱  ╱
     ╲_____╱
 ```
+
+## Features
+
+- **Full Spotify Integration** - Play any track, browse playlists, access liked songs
+- **Local Playback** - Play directly through your computer (no Spotify app needed)
+- **Search** - Find any song, artist, or album with fuzzy matching
+- **Fuzzy Search** - Typo-tolerant search with relevance scoring
+- **Album Art** - Displayed with terminal graphics protocols (kitty, sixel, iTerm2) or ASCII fallback
+- **Audio Visualization** - Real-time FFT spectrum visualization (32/64/128 bands)
+- **Lyrics Display** - Synced lyrics via LRCLIB API
+- **Queue Management** - View and add tracks to queue
+- **Themes** - 7 built-in color themes (Catppuccin, Gruvbox, Nord, Tokyo Night, Dracula)
+- **Media Controls** - MPRIS integration for OS media key support
+- **Desktop Notifications** - Native OS notifications on track change
+- **CLI Mode** - Full command-line interface for scripting
+- **Daemon Mode** - Background service with IPC control
+- **Configuration File** - TOML-based user preferences
+- **Keyboard First** - All actions accessible via keyboard shortcuts
+- **Minimal Resource Usage** - Runs entirely in your terminal
+- **Comprehensive Test Suite** - 335 tests covering all functionality
 
 ## Installation
 
@@ -83,7 +103,9 @@ cargo uninstall joshify
 3. **Navigate**
    - `Tab` / `Shift+Tab` - Switch between sections
    - `↑` / `↓` or `j` / `k` - Navigate lists
+   - `h` / `l` - Focus sidebar / main content (vim-style)
    - `Enter` - Play selected track
+   - `Backspace` - Go back (browser-like navigation)
    - `/` - Search for music
    - `Tab` (in search) - Add track to queue
 
@@ -99,10 +121,72 @@ cargo uninstall joshify
 5. **Other Actions**
    - `Q` - Toggle queue view
    - `a` - Add current track to queue
+   - `v` - Toggle audio visualization
+   - `L` - Show lyrics for current track
+   - `T` - Cycle themes
    - `?` - Show help
    - `q` - Quit
 
-### Non-Interactive Mode (headless/automated)
+### CLI Mode (Non-Interactive)
+
+Joshify provides a full CLI for scripting and automation:
+
+```bash
+# Playback control
+joshify play                          # Resume playback
+joshify play <spotify:track:xxx>      # Play specific track
+joshify pause
+joshify next
+joshify previous
+joshify stop
+
+# Status and info
+joshify status                        # Human-readable status
+joshify status --format json          # JSON output for scripting
+joshify current                       # Show current track
+joshify current --format minimal      # Just track name
+
+# Volume and seeking
+joshify volume                        # Show current volume
+joshify volume 75                     # Set volume to 75%
+joshify seek 120000                   # Seek to 2 minutes
+joshify forward 10000                 # Skip forward 10 seconds
+joshify backward 10000                # Skip backward 10 seconds
+
+# Search and queue
+joshify search "artist name"          # Search tracks
+joshify search "query" --limit 10     # Limit results
+joshify queue-add <uri>               # Add track to queue
+joshify queue-clear                   # Clear queue
+
+# Shuffle and repeat
+joshify shuffle                       # Toggle shuffle
+joshify shuffle on                    # Enable shuffle
+joshify repeat                        # Cycle repeat mode
+joshify repeat track                  # Set repeat mode
+```
+
+### Daemon Mode
+
+Run Joshify as a background daemon for headless operation:
+
+```bash
+# Start daemon
+joshify daemon
+
+# Send commands to daemon
+joshify daemon-send play
+joshify daemon-send pause
+joshify daemon-send next
+joshify daemon-send status
+
+# Stop daemon
+joshify daemon-send shutdown
+```
+
+The daemon communicates via Unix socket at `~/.cache/joshify/daemon.sock` using JSON protocol.
+
+### Non-Interactive Authentication (headless/automated)
 
 For scripted deployments or headless environments, provide credentials via environment variables or CLI flags:
 
@@ -134,15 +218,55 @@ export SPOTIFY_TOKEN_EXPIRES_AT=1743552000  # Unix timestamp
 
 If no expiration is provided, tokens are assumed valid for 1 hour.
 
-## Features
+## Configuration
 
-- **Full Spotify Integration** - Play any track, browse playlists, access liked songs
-- **Search** - Find any song, artist, or album
-- **Album Art** - Displayed with terminal graphics protocols (kitty, sixel, iTerm2) or ASCII fallback
-- **Queue Management** - View and add tracks to queue
-- **Keyboard First** - All actions accessible via keyboard shortcuts
-- **Minimal Resource Usage** - Runs entirely in your terminal
-- **Comprehensive Test Suite** - 64 tests covering all core functionality
+Joshify loads configuration from `~/.config/joshify/config.toml`. The file is automatically created with defaults on first run.
+
+### Example Configuration
+
+```toml
+[audio]
+visualization = true           # Enable audio visualization
+visualization_bands = 64       # Number of bands (32, 64, or 128)
+visualization_smoothing = 0.3  # Smoothing factor (0.0 - 1.0)
+default_volume = 50            # Default volume (0-100)
+
+[notifications]
+enabled = true                 # Show desktop notifications
+cooldown_seconds = 5           # Minimum seconds between notifications
+show_album_art = true          # Include album art in notifications
+
+[media_control]
+enabled = true                 # Enable OS media key support
+
+[ui]
+theme = "catppuccin_mocha"     # Color theme
+time_format = "elapsed/total"  # Time display format
+show_breadcrumbs = true        # Show navigation breadcrumbs
+compact_layout = false         # Use compact layout
+
+[keybindings]
+# Optional custom keybindings (defaults shown)
+# quit = "q"
+# search = "/"
+# help = "?"
+```
+
+### Available Themes
+
+- `catppuccin_mocha` (default) - Dark pastel theme
+- `catppuccin_latte` - Light variant
+- `gruvbox_dark` - Retro dark theme
+- `gruvbox_light` - Retro light theme
+- `nord` - Arctic North blue theme
+- `tokyo_night` - Dark Tokyo Night theme
+- `dracula` - Classic Dracula theme
+
+Press `T` in the app to cycle through themes, or set in your config file.
+
+Credentials are stored in `~/.config/joshify/credentials.json` and automatically saved to your OS keyring when available (GNOME Keyring, macOS Keychain, Windows Credential Manager).
+
+To re-authenticate or change accounts, press `c` in the app.
 
 ## System Requirements
 
@@ -150,12 +274,7 @@ If no expiration is provided, tokens are assumed valid for 1 hour.
 - Spotify Premium account
 - Terminal with UTF-8 support
 - For best album art: kitty, iTerm2, or sixel-capable terminal
-
-## Configuration
-
-Joshify stores credentials in `~/.config/joshify/credentials.json`. Credentials are automatically saved to your OS keyring when available (GNOME Keyring, macOS Keychain, Windows Credential Manager).
-
-To re-authenticate or change accounts, press `c` in the app.
+- For audio visualization: Local playback mode
 
 ## Development
 
@@ -185,26 +304,46 @@ Joshify uses a modular architecture with separated concerns:
 
 ```
 src/
-├── main.rs          # Application entry point, event loop
-├── auth.rs          # OAuth authentication
-├── album_art.rs     # LRU-cached album art fetching
-├── keyring_store.rs # OS keyring integration
-├── api/             # Spotify API client
-│   ├── client.rs    # Client creation & auth
-│   ├── playback.rs  # Playback controls
-│   ├── library.rs   # Library & search
-│   └── rate_limit.rs# Rate limit handling
-├── state/           # Application state
-│   ├── app_state.rs # Main state coordinator
-│   ├── player_state.rs # Playback state
-│   ├── load_coordinator.rs # Async task coordination
-│   ├── library_state.rs   # Library cache
-│   └── queue_state.rs     # Queue management
-└── ui/              # Terminal rendering
-    ├── sidebar.rs   # Navigation sidebar
-    ├── main_view.rs # Main content area
-    ├── player_bar.rs# Now playing bar
-    └── overlays.rs  # Search, help, queue
+├── main.rs              # Application entry point, event loop
+├── lib.rs               # Library exports
+├── auth.rs              # OAuth authentication
+├── album_art.rs         # LRU-cached album art fetching
+├── keyring_store.rs     # OS keyring integration
+├── config.rs            # TOML configuration management
+├── cli.rs               # Command-line interface
+├── daemon.rs            # Background daemon with IPC
+├── logging.rs           # Structured logging with rotation
+├── lyrics.rs            # LRCLIB lyrics fetching
+├── media_control.rs     # MPRIS media key integration
+├── notifications.rs     # Desktop notifications
+├── search.rs            # Fuzzy search engine
+├── themes.rs            # Theme system (7 themes)
+├── api/                 # Spotify API client
+│   ├── client.rs        # Client creation & auth
+│   ├── playback.rs      # Playback controls
+│   ├── library.rs       # Library & search
+│   └── rate_limit.rs    # Rate limit handling
+├── state/               # Application state
+│   ├── app_state.rs     # Main state coordinator
+│   ├── player_state.rs  # Playback state
+│   ├── load_coordinator.rs  # Async task coordination
+│   ├── library_state.rs     # Library cache
+│   ├── queue_state.rs       # Queue management
+│   ├── home_state.rs        # Home dashboard state
+│   └── navigation_stack.rs  # Drill-down navigation
+├── player/              # Local playback
+│   ├── mod.rs           # Player interface
+│   ├── librespot.rs     # Spotify Connect integration
+│   └── visualization.rs # FFT spectrum visualization
+└── ui/                  # Terminal rendering
+    ├── sidebar.rs       # Navigation sidebar
+    ├── main_view.rs     # Main content area
+    ├── player_bar.rs    # Now playing bar
+    ├── overlays.rs      # Search, help, queue
+    ├── home_view.rs     # Home dashboard
+    ├── help.rs          # Help overlay
+    ├── theme.rs         # Theme colors
+    └── image_renderer.rs # Terminal image protocols
 ```
 
 ## Tech Stack
@@ -214,24 +353,44 @@ src/
 - **rspotify** - Spotify API client
 - **tokio** - Async runtime
 - **crossterm** - Terminal manipulation
+- **librespot** - Spotify Connect local playback
+- **realfft** - FFT for audio visualization
+- **tracing** - Structured logging
+- **serde** - Serialization for config/credentials
+- **toml** - Configuration file format
 - **lru** - LRU cache for album art (50 entry limit)
 - **keyring** - OS keyring integration
-- **serde** - Serialization for credentials
 
 ## Testing
 
-Joshify has a comprehensive test suite with 63 tests across 9 categories:
+Joshify has a comprehensive test suite with 335 tests across 12 categories:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
-| Player | 9 | Duration formatting, PlayerState, track detection |
-| Auth | 8 | Credentials loading, OAuth config, persistence |
-| Album Art | 6 | LRU cache, eviction, disk persistence |
-| API | 11 | Rate limiting, exponential backoff |
-| State | 7 | Navigation, focus, search, scrolling |
-| UI | 8 | Component rendering tests |
-| Concurrency | 5 | Async coordination, stale result rejection |
-| Error Injection | 8 | Timeout, malformed data, failure handling |
+| Player | 15 | Duration formatting, PlayerState, track detection, visualization |
+| Auth | 12 | Credentials loading, OAuth config, persistence, keyring |
+| Album Art | 10 | LRU cache, eviction, disk persistence |
+| API | 15 | Rate limiting, exponential backoff, library methods |
+| State | 25 | Navigation, focus, search, scrolling, home state |
+| UI | 20 | Component rendering, themes, overlays |
+| Config | 5 | Config loading, defaults, save/restore |
+| CLI | 24 | Command parsing, execution, output formatting |
+| Daemon | 14 | IPC protocol, command handling, JSON messages |
+| Lyrics | 10 | LRCLIB API, synced lyrics parsing |
+| Media Control | 10 | MPRIS stubs, platform abstraction |
+| Notifications | 17 | Rate limiting, duplicate detection |
+| Search | 17 | Fuzzy matching, relevance scoring |
+| Themes | 12 | Theme loading, color schemes |
+| Logging | 12 | Log rotation, level filtering |
+
+## Releases
+
+- **v0.4.0** (Current) - Release Readiness: CLI, daemon mode, themes, lyrics, logging
+- **v0.3.0** - Polish Core UX: Config, visualization, media control, notifications, fuzzy search
+- **v0.2.0** - Drill-down navigation, album/artist detail views, vim-style shortcuts
+- **v0.1.0** - Initial release: Basic playback, search, queue, album art
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
 ## License
 
