@@ -72,7 +72,8 @@ pub fn render_sidebar(
     let logo = joshify_logo();
     let logo_lines = logo.len() as u16;
     let content_start_y = area.y + 1; // After top border
-    let nav_start_y = content_start_y + logo_lines;
+    // Nav items start after logo + separator line
+    let nav_start_y = content_start_y + logo_lines + 1;
 
     let mut content = logo;
     content.push(Line::from(vec![Span::styled(
@@ -167,10 +168,10 @@ mod tests {
         assert_eq!(layout_cache.nav_items.len(), NavItem::all().len());
 
         // Verify first nav item accounts for top border
-        // Logo starts at y=1 (after border), logo has 14 lines + separator line = 15 lines
-        // But actual rendering shows y=15, so let's use the actual value
+        // Logo starts at y=1 (after border), logo has 14 lines, separator adds 1 more
+        // So nav items start at y = 1 + 14 + 1 = 16
         let first_nav_area = &layout_cache.nav_items[0];
-        assert_eq!(first_nav_area.y, 15); // Actual position from rendering
+        assert_eq!(first_nav_area.y, 16); // Correct position after logo + separator
         assert_eq!(first_nav_area.height, 1);
         assert_eq!(first_nav_area.width, 20);
 
@@ -183,7 +184,7 @@ mod tests {
         );
 
         // Verify last nav item position - just verify it's contiguous
-        // We already verified first item at y=15 and that items are contiguous
+        // We already verified first item at y=16 and that items are contiguous
         let last_idx = NavItem::all().len() - 1;
         let last_nav_area = &layout_cache.nav_items[last_idx];
         assert_eq!(

@@ -50,11 +50,7 @@ pub fn render_player_bar(
     layout_cache.progress_bar = None;
     layout_cache.volume_bar = None;
 
-    let (play_icon, play_text) = if is_playing {
-        (symbols::PAUSE, "Pause")
-    } else {
-        (symbols::PLAY, "Play")
-    };
+    // Play/Pause symbol determined inline in the render
 
     let album_art_width = 12u16;
     let [album_area, info_area] =
@@ -90,11 +86,11 @@ pub fn render_player_bar(
             .alignment(Alignment::Center);
         frame.render_widget(loading, album_area);
     } else {
+        // Centered placeholder art
         let art = vec![
-            Line::from("            "),
-            Line::from(format!("    {}      ", symbols::MUSIC_NOTE)),
-            Line::from("            "),
-            Line::from("            "),
+            Line::from(""),
+            Line::from(format!("   {}   ", symbols::DISC)),
+            Line::from(""),
         ];
         let placeholder = Paragraph::new(art)
             .block(
@@ -279,10 +275,10 @@ pub fn render_player_bar(
         BUTTON_HEIGHT,
     ));
 
-    // Render the title row with controls
+    // Render the title row with MODERN controls - using symbols instead of text
     let title_line = Line::from(vec![
         Span::styled(
-            format!("{:<width$}", "<<", width = PREV_BUTTON_WIDTH as usize),
+            format!("{:<width$}", symbols::SKIP_PREV, width = PREV_BUTTON_WIDTH as usize),
             Style::default()
                 .fg(Catppuccin::BLUE)
                 .add_modifier(Modifier::BOLD),
@@ -290,7 +286,7 @@ pub fn render_player_bar(
         Span::styled(
             format!(
                 "{:^width$}",
-                format!("{} {}", play_icon, play_text),
+                if is_playing { symbols::PAUSE } else { symbols::PLAY },
                 width = PLAY_PAUSE_BUTTON_WIDTH.saturating_sub(1) as usize
             ),
             Style::default()
@@ -298,13 +294,14 @@ pub fn render_player_bar(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("{:<width$}", ">>", width = NEXT_BUTTON_WIDTH as usize),
+            format!("{:<width$}", symbols::SKIP_NEXT, width = NEXT_BUTTON_WIDTH as usize),
             Style::default()
                 .fg(Catppuccin::BLUE)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(" | ", Style::default().fg(Catppuccin::SURFACE_1)),
         Span::styled(
-            format!(" {}", truncated_title),
+            truncated_title,
             Style::default()
                 .fg(Catppuccin::MAUVE)
                 .add_modifier(Modifier::BOLD),
