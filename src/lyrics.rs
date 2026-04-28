@@ -122,7 +122,7 @@ impl LyricsClient {
         track_name: &str,
         artist_name: &str,
         album_name: &str,
-        duration_ms: Option<u32>,
+        _duration_ms: Option<u32>,
     ) -> Result<TrackLyrics> {
         let url = format!("{}/get", LRCLIB_API);
         
@@ -275,6 +275,7 @@ impl Default for LyricsClient {
 
 /// LRCLIB API response structure
 #[derive(Debug, Clone, Deserialize)]
+#[allow(non_snake_case)]
 struct LrclibResponse {
     #[serde(rename = "id")]
     _id: i64,

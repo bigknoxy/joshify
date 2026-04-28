@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Media control commands that can be sent from the OS
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,27 +303,28 @@ pub mod windows {
     }
 }
 
+use std::sync::OnceLock;
+
 /// Global media control instance
-static mut MEDIA_CONTROL: Option<MediaControlService> = None;
-static MEDIA_CONTROL_INIT: std::sync::Once = std::sync::Once::new();
+static MEDIA_CONTROL: OnceLock<std::sync::Mutex<MediaControlService>> = OnceLock::new();
+static COMMAND_TX: OnceLock<mpsc::UnboundedSender<MediaCommand>> = OnceLock::new();
 
 /// Initialize global media control
 pub fn init() -> Result<mpsc::UnboundedSender<MediaCommand>> {
     let (mut service, tx) = MediaControlService::new();
     service.start()?;
-
-    MEDIA_CONTROL_INIT.call_once(|| {
-        unsafe {
-            MEDIA_CONTROL = Some(service);
-        }
-    });
+    
+    MEDIA_CONTROL.set(std::sync::Mutex::new(service))
+        .map_err(|_| anyhow::anyhow!("Media control already initialized"))?;
+    COMMAND_TX.set(tx.clone())
+        .map_err(|_| anyhow::anyhow!("Media control already initialized"))?;
 
     Ok(tx)
 }
 
-/// Get global media control instance
-pub fn get() -> Option<&'static mut MediaControlService> {
-    unsafe { MEDIA_CONTROL.as_mut() }
+/// Get global media control command sender
+pub fn get_command_sender() -> Option<&'static mpsc::UnboundedSender<MediaCommand>> {
+    COMMAND_TX.get()
 }
 
 #[cfg(test)]

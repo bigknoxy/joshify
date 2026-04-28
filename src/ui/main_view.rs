@@ -471,6 +471,7 @@ fn render_playlist_list(
 }
 
 /// Render breadcrumb trail at top of main view
+#[allow(dead_code)]
 fn render_breadcrumb(frame: &mut ratatui::Frame, area: Rect, trail: &[String]) {
     if trail.is_empty() {
         return;
@@ -512,7 +513,7 @@ fn render_album_detail(
         Constraint::Min(0),
     ]).areas(area);
 
-    let content_width = area.width.saturating_sub(2) as usize;
+    let _content_width = area.width.saturating_sub(2) as usize;
 
     // Header with album info
     let year_str = album.release_year.map(|y| format!(" ({})", y)).unwrap_or_default();
@@ -667,7 +668,7 @@ pub fn render_main_view(
     border_color: Color,
     playing_uri: Option<&str>,
     layout_cache: &mut LayoutCache,
-    breadcrumb_trail: Option<&[String]>,
+    _breadcrumb_trail: Option<&[String]>,
 ) {
     // Determine layout mode for responsive design
     let _layout_mode = if theme::Layout::is_compact(area.width) {

@@ -68,7 +68,8 @@ pub struct SampleBuffer {
     max_size: usize,
     /// FFT size (power of 2)
     fft_size: usize,
-    /// Sample rate
+    /// Sample rate (stored for future use)
+    #[allow(dead_code)]
     sample_rate: u32,
 }
 

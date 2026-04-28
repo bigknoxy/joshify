@@ -212,35 +212,21 @@ pub struct KeybindingsConfig {
     pub quit: Option<String>,
 }
 
+use std::sync::OnceLock;
+
 /// Global configuration instance
-static mut CONFIG: Option<Config> = None;
-static CONFIG_INIT: std::sync::Once = std::sync::Once::new();
+static CONFIG: OnceLock<Config> = OnceLock::new();
 
 /// Initialize global config
 pub fn init() -> Result<()> {
-    CONFIG_INIT.call_once(|| {
-        let config = Config::load().unwrap_or_default();
-        unsafe {
-            CONFIG = Some(config);
-        }
-    });
+    let config = Config::load().unwrap_or_default();
+    CONFIG.set(config).map_err(|_| anyhow::anyhow!("Config already initialized"))?;
     Ok(())
 }
 
 /// Get global config instance
 pub fn get() -> &'static Config {
-    unsafe {
-        CONFIG.as_ref()
-            .expect("Config not initialized. Call config::init() first.")
-    }
-}
-
-/// Get mutable global config instance
-pub fn get_mut() -> &'static mut Config {
-    unsafe {
-        CONFIG.as_mut()
-            .expect("Config not initialized. Call config::init() first.")
-    }
+    CONFIG.get().expect("Config not initialized. Call config::init() first.")
 }
 
 #[cfg(test)]

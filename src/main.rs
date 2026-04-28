@@ -2110,6 +2110,59 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 }
                                             }
                                         }
+                                        ContentState::AlbumDetail { album, tracks } => {
+                                            // Push current state to nav stack before navigating
+                                            app.nav_stack.push(joshify::state::navigation_stack::NavigationEntry::AlbumDetail { 
+                                                album: album.clone(), 
+                                                tracks: tracks.clone() 
+                                            });
+                                            // Play selected track from album
+                                            if !tracks.is_empty() && app.selected_index < tracks.len() {
+                                                let track = &tracks[app.selected_index];
+                                                
+                                                // Track the highlighted item for queue operations
+                                                app.highlighted_item = Some(HighlightedItem {
+                                                    uri: track.uri.clone(),
+                                                    name: track.name.clone(),
+                                                    artist: track.artist.clone(),
+                                                    _context: app.current_context.clone(),
+                                                });
+
+                                                if app.playback_mode == PlaybackMode::Local {
+                                                    if let Some(ref player) = app.local_player {
+                                                        match player.load_uri(&track.uri, true, 0) {
+                                                            Ok(_) => {
+                                                                app.player_state.current_track_name = Some(track.name.clone());
+                                                                app.player_state.current_artist_name = Some(track.artist.clone());
+                                                                app.player_state.current_track_uri = Some(track.uri.clone());
+                                                                app.player_state.is_playing = true;
+                                                                app.player_state.progress_ms = 0;
+                                                                app.status_message = Some(format!("Playing locally: {}", track.name));
+                                                            }
+                                                            Err(e) => {
+                                                                app.status_message = Some(format!("Local playback error: {}", e));
+                                                            }
+                                                        }
+                                                    }
+                                                } else if let Some(ref client) = client {
+                                                    let c = client.clone();
+                                                    let track_uri = track.uri.clone();
+                                                    let track_name = track.name.clone();
+                                                    tokio::spawn(async move {
+                                                        let guard = c.lock().await;
+                                                        if let Ok(devices) = guard.available_devices().await {
+                                                            if let Some(device) = devices.first() {
+                                                                if let Some(ref device_id) = device.id {
+                                                                    let _ = guard.transfer_playback(device_id).await;
+                                                                }
+                                                            }
+                                                        }
+                                                        let _ = guard.start_playback(vec![track_uri], None).await;
+                                                    });
+                                                    app.status_message = Some(format!("Playing: {}", track_name));
+                                                }
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -2167,6 +2220,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
+                                    ContentState::AlbumDetail { tracks, .. } => tracks.len(),
                                     ContentState::Library { albums, artists, selected_tab } => {
                                         match selected_tab {
                                             joshify::state::app_state::LibraryTab::Albums => albums.len(),
@@ -2257,6 +2311,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     ContentState::Playlists(p) => p.len(),
                                     ContentState::PlaylistTracks(_, t) => t.len(),
                                     ContentState::SearchResults(_, t) => t.len(),
+                                    ContentState::AlbumDetail { tracks, .. } => tracks.len(),
                                     ContentState::Library { albums, artists, selected_tab } => {
                                         match selected_tab {
                                             joshify::state::app_state::LibraryTab::Albums => albums.len(),

@@ -3,11 +3,10 @@
 //! Shows native OS notifications when tracks change, including
 //! album art thumbnails when available.
 
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Notification service for desktop notifications
 pub struct NotificationService {
@@ -149,25 +148,28 @@ impl NotificationService {
             info!("Creating Linux desktop notifier");
             // Would use notify-rust here
             // For now, return stub
-            return Some(Box::new(StubNotifier));
+            Some(Box::new(StubNotifier))
         }
 
         #[cfg(target_os = "macos")]
         {
             info!("Creating macOS desktop notifier");
             // Would use mac-notification-sys here
-            return Some(Box::new(StubNotifier));
+            Some(Box::new(StubNotifier))
         }
 
         #[cfg(target_os = "windows")]
         {
             info!("Creating Windows desktop notifier");
             // Would use winrt-notification here
-            return Some(Box::new(StubNotifier));
+            Some(Box::new(StubNotifier))
         }
 
-        warn!("No platform notifier available for this OS");
-        None
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            warn!("No platform notifier available for this OS");
+            None
+        }
     }
 
     /// Show a track change notification
@@ -293,16 +295,16 @@ pub mod linux {
     pub struct LinuxNotifier;
 
     impl PlatformNotifier for LinuxNotifier {
-        fn notify(&self, title: &str, body: &str, icon: Option<&str>) -> Result<()> {
+        fn notify(&self, _title: &str, _body: &str, _icon: Option<&str>) -> Result<()> {
             // Would use notify_rust::Notification here
             // Example:
             // notify_rust::Notification::new()
-            //     .summary(title)
-            //     .body(body)
-            //     .icon(icon.unwrap_or("music"))
+            //     .summary(_title)
+            //     .body(_body)
+            //     .icon(_icon.unwrap_or("music"))
             //     .timeout(Duration::from_secs(5))
             //     .show()?;
-            info!("Linux notification: {} — {}", title, body);
+            info!("Linux notification: {} — {}", _title, _body);
             Ok(())
         }
     }

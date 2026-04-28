@@ -3,8 +3,6 @@
 //! Provides fast, typo-tolerant searching for tracks, albums, and artists.
 //! Simple implementation that works well for terminal UI search.
 
-use tracing::debug;
-
 /// Search result with relevance score
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult<T> {
@@ -107,13 +105,13 @@ impl SimpleFuzzySearch {
         let mut pattern_chars = pattern.chars().peekable();
         let mut score = 100u32;
         let mut match_indices = Vec::new();
-        let mut last_match_pos = 0usize;
+        let mut _last_match_pos = 0usize;
         let mut bonus = 0u32;
 
         if let Some(first_char) = pattern_chars.next() {
             // Find first character
             if let Some(pos) = item_lower.find(first_char) {
-                last_match_pos = pos;
+                _last_match_pos = pos;
                 match_indices.push(pos);
                 score -= pos as u32; // Penalty for position
             } else {
@@ -122,23 +120,23 @@ impl SimpleFuzzySearch {
 
             // Find remaining characters in order
             for (_, char) in pattern_chars.enumerate() {
-                if last_match_pos + 1 >= item_lower.len() {
+                if _last_match_pos + 1 >= item_lower.len() {
                     return None;
                 }
 
-                if let Some(rel_pos) = item_lower[last_match_pos + 1..].find(char) {
-                    let pos = last_match_pos + 1 + rel_pos;
+                if let Some(rel_pos) = item_lower[_last_match_pos + 1..].find(char) {
+                    let pos = _last_match_pos + 1 + rel_pos;
                     match_indices.push(pos);
 
                     // Bonus for consecutive matches (camelCase/kebab-case)
-                    if pos == last_match_pos + 1 {
+                    if pos == _last_match_pos + 1 {
                         bonus += 50;
                     } else {
                         // Penalty for gaps
                         score += rel_pos as u32;
                     }
 
-                    last_match_pos = pos;
+                    _last_match_pos = pos;
                 } else {
                     return None;
                 }
