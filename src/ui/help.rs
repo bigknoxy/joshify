@@ -257,6 +257,22 @@ impl HelpContent {
                         },
                     ],
                 },
+                HelpCategory {
+                    name: "Appearance",
+                    icon: "🎨",
+                    items: vec![
+                        HelpItem {
+                            keys: "T",
+                            description: "Cycle color theme",
+                            mouse: None,
+                        },
+                        HelpItem {
+                            keys: "",
+                            description: "Themes: Catppuccin, Gruvbox, Nord, Tokyo Night, Dracula",
+                            mouse: None,
+                        },
+                    ],
+                },
             ],
         }
     }

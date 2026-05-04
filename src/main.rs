@@ -62,6 +62,8 @@ struct App {
     mouse_state: joshify::ui::MouseState,
     /// Navigation stack for drill-down browsing
     nav_stack: joshify::state::navigation_stack::NavigationStack,
+    /// Theme registry for managing color themes
+    theme_registry: joshify::themes::ThemeRegistry,
 }
 
 impl App {
@@ -99,7 +101,32 @@ impl App {
             layout_cache: joshify::ui::LayoutCache::new(),
             mouse_state: joshify::ui::MouseState::new(),
             nav_stack: joshify::state::navigation_stack::NavigationStack::new(),
+            theme_registry: joshify::themes::ThemeRegistry::default(),
         }
+    }
+
+    /// Cycle to the next theme
+    fn cycle_theme(&mut self) {
+        use joshify::themes::BuiltInTheme;
+        use joshify::ui::theme;
+        
+        let current = self.theme_registry.current();
+        let (next_theme, theme_name) = match current {
+            BuiltInTheme::CatppuccinMocha => (BuiltInTheme::CatppuccinLatte, "Catppuccin Latte"),
+            BuiltInTheme::CatppuccinLatte => (BuiltInTheme::GruvboxDark, "Gruvbox Dark"),
+            BuiltInTheme::GruvboxDark => (BuiltInTheme::GruvboxLight, "Gruvbox Light"),
+            BuiltInTheme::GruvboxLight => (BuiltInTheme::Nord, "Nord"),
+            BuiltInTheme::Nord => (BuiltInTheme::TokyoNight, "Tokyo Night"),
+            BuiltInTheme::TokyoNight => (BuiltInTheme::Dracula, "Dracula"),
+            BuiltInTheme::Dracula => (BuiltInTheme::CatppuccinMocha, "Catppuccin Mocha"),
+        };
+        
+        self.theme_registry.switch_theme(next_theme);
+        
+        // Update the global theme so UI renders with new colors
+        theme::set_current_theme(next_theme);
+        
+        self.status_message = Some(format!("Theme: {}", theme_name));
     }
 
     fn focus_next(&mut self) {
@@ -2928,6 +2955,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.help_state = Some(joshify::ui::HelpOverlayState::default());
                             }
                         }
+
+                        // Theme switching - 'T' to cycle through themes
+                        crossterm::event::KeyCode::Char('T') => {
+                            app.cycle_theme();
+                        }
+
                         // Backspace - browser back navigation
                         crossterm::event::KeyCode::Backspace => {
                             if app.nav_stack.can_go_back() {

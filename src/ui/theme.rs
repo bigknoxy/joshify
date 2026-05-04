@@ -1,36 +1,121 @@
-//! Catppuccin Mocha theme system
+//! Dynamic theme system for Joshify
 //!
-//! Modern, vibrant, accessible color palette for the entire UI.
-//! Dark theme only (light theme planned for future).
+//! Supports multiple color themes including:
+//! - Catppuccin Mocha/Latte
+//! - Gruvbox Dark/Light
+//! - Nord
+//! - Tokyo Night
+//! - Dracula
+//!
+//! Themes can be switched at runtime using the 'T' key.
 
 use ratatui::style::{Color, Modifier, Style};
+use std::cell::RefCell;
 
-/// Catppuccin Mocha color palette
-/// https://github.com/catppuccin/catppuccin
+thread_local! {
+    static CURRENT_THEME: RefCell<CurrentTheme> = RefCell::new(CurrentTheme::default());
+}
+
+/// Current theme state
+#[derive(Clone, Copy, Debug)]
+struct CurrentTheme {
+    theme: crate::themes::BuiltInTheme,
+}
+
+impl Default for CurrentTheme {
+    fn default() -> Self {
+        Self {
+            theme: crate::themes::BuiltInTheme::CatppuccinMocha,
+        }
+    }
+}
+
+impl CurrentTheme {
+    fn get_color(&self, color_type: ColorType) -> Color {
+        use crate::themes::Theme;
+        let theme = self.theme.to_theme();
+        
+        match color_type {
+            ColorType::Base => theme.background(),
+            ColorType::Text => theme.foreground(),
+            ColorType::Primary => theme.primary(),
+            ColorType::Secondary => theme.secondary(),
+            ColorType::Accent => theme.accent(),
+            ColorType::Border => theme.border(),
+            ColorType::SelectionBg => theme.selection_bg(),
+            ColorType::SelectionFg => theme.selection_fg(),
+            ColorType::Success => theme.status_playing(),
+            ColorType::Error => theme.status_error(),
+            ColorType::Warning => theme.secondary(), // Approximation
+            ColorType::Muted => theme.muted(),
+            ColorType::Info => theme.accent(),
+            ColorType::Mauve => theme.secondary(), // Fallback
+            ColorType::Pink => theme.accent(),
+            ColorType::Green => theme.status_playing(),
+            ColorType::Yellow => theme.secondary(),
+            ColorType::Red => theme.status_error(),
+            ColorType::Blue => theme.primary(),
+            ColorType::Teal => theme.accent(),
+            ColorType::Overlay0 => theme.border(),
+            ColorType::Surface0 => theme.background(),
+            ColorType::Surface1 => theme.border(),
+            ColorType::Surface2 => theme.muted(),
+        }
+    }
+}
+
+/// Types of colors needed by the UI
+#[derive(Clone, Copy, Debug)]
+enum ColorType {
+    Base, Text, Primary, Secondary, Accent, Border,
+    SelectionBg, SelectionFg, Success, Error, Warning, Muted, Info,
+    Mauve, Pink, Green, Yellow, Red, Blue, Teal, Overlay0,
+    Surface0, Surface1, Surface2,
+}
+
+/// Set the current theme globally
+pub fn set_current_theme(theme: crate::themes::BuiltInTheme) {
+    CURRENT_THEME.with(|t| {
+        *t.borrow_mut() = CurrentTheme { theme };
+    });
+}
+
+/// Get the current theme name
+pub fn current_theme_name() -> String {
+    CURRENT_THEME.with(|t| {
+        use crate::themes::BuiltInTheme;
+        let theme = t.borrow().theme;
+        match theme {
+            BuiltInTheme::CatppuccinMocha => "Catppuccin Mocha",
+            BuiltInTheme::CatppuccinLatte => "Catppuccin Latte",
+            BuiltInTheme::GruvboxDark => "Gruvbox Dark",
+            BuiltInTheme::GruvboxLight => "Gruvbox Light",
+            BuiltInTheme::Nord => "Nord",
+            BuiltInTheme::TokyoNight => "Tokyo Night",
+            BuiltInTheme::Dracula => "Dracula",
+        }.to_string()
+    })
+}
+
+/// Catppuccin Mocha theme - DEPRECATED: Use dynamic theme functions instead
+/// This struct is kept for backward compatibility but now delegates to the current theme
 pub struct Catppuccin;
 
 impl Catppuccin {
-    // ─── Base colors ───
+    // ─── Legacy constants (deprecated, kept for compatibility) ───
+    // These are the Catppuccin Mocha values as fallback
     pub const BASE: Color = Color::Rgb(30, 30, 46);
     pub const MANTLE: Color = Color::Rgb(24, 24, 37);
     pub const CRUST: Color = Color::Rgb(17, 17, 27);
-
-    // ─── Surface colors (panels, cards) ───
     pub const SURFACE_0: Color = Color::Rgb(49, 50, 68);
     pub const SURFACE_1: Color = Color::Rgb(69, 71, 90);
     pub const SURFACE_2: Color = Color::Rgb(88, 91, 112);
-
-    // ─── Overlay colors (borders, separators) ───
     pub const OVERLAY_0: Color = Color::Rgb(108, 112, 134);
     pub const OVERLAY_1: Color = Color::Rgb(127, 132, 156);
     pub const OVERLAY_2: Color = Color::Rgb(147, 153, 178);
-
-    // ─── Text colors ───
     pub const TEXT: Color = Color::Rgb(205, 214, 244);
     pub const SUBTEXT_0: Color = Color::Rgb(166, 173, 200);
     pub const SUBTEXT_1: Color = Color::Rgb(186, 194, 222);
-
-    // ─── Accent colors ───
     pub const BLUE: Color = Color::Rgb(137, 180, 250);
     pub const SAPPHIRE: Color = Color::Rgb(116, 199, 236);
     pub const SKY: Color = Color::Rgb(137, 221, 255);
@@ -45,126 +130,133 @@ impl Catppuccin {
     pub const FLAMINGO: Color = Color::Rgb(240, 198, 198);
     pub const ROSEWATER: Color = Color::Rgb(245, 224, 220);
 
-    // ─── Semantic styles ───
+    // Helper to get current theme color
+    fn get_color(color_type: ColorType) -> Color {
+        CURRENT_THEME.with(|t| t.borrow().get_color(color_type))
+    }
 
-    /// Primary accent (blue) - main actions, links, focus
+    // ─── Semantic styles (now dynamic based on current theme) ───
+
+    /// Primary accent - main actions, links, focus
     pub fn primary() -> Style {
-        Style::default().fg(Self::BLUE)
+        Style::default().fg(Self::get_color(ColorType::Primary))
     }
 
-    /// Secondary accent (mauve) - secondary elements
+    /// Secondary accent - secondary elements
     pub fn secondary() -> Style {
-        Style::default().fg(Self::MAUVE)
+        Style::default().fg(Self::get_color(ColorType::Secondary))
     }
 
-    /// Success state (green)
+    /// Success state
     pub fn success() -> Style {
-        Style::default().fg(Self::GREEN)
+        Style::default().fg(Self::get_color(ColorType::Success))
     }
 
-    /// Warning state (yellow)
+    /// Warning state
     pub fn warning() -> Style {
-        Style::default().fg(Self::YELLOW)
+        Style::default().fg(Self::get_color(ColorType::Warning))
     }
 
-    /// Error state (red)
+    /// Error state
     pub fn error() -> Style {
-        Style::default().fg(Self::RED)
+        Style::default().fg(Self::get_color(ColorType::Error))
     }
 
-    /// Info state (teal)
+    /// Info state
     pub fn info() -> Style {
-        Style::default().fg(Self::TEAL)
+        Style::default().fg(Self::get_color(ColorType::Info))
     }
 
-    /// Focused element (pink + bold)
+    /// Focused element
     pub fn focused() -> Style {
-        Style::default().fg(Self::PINK).add_modifier(Modifier::BOLD)
-    }
-
-    /// Selected element (inverted: crust on blue)
-    pub fn selected() -> Style {
         Style::default()
-            .fg(Self::BASE)
-            .bg(Self::BLUE)
+            .fg(Self::get_color(ColorType::Accent))
             .add_modifier(Modifier::BOLD)
     }
 
-    /// Hover state (pink, underlined)
+    /// Selected element (inverted: bg on fg)
+    pub fn selected() -> Style {
+        Style::default()
+            .fg(Self::get_color(ColorType::Base))
+            .bg(Self::get_color(ColorType::Primary))
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// Hover state
     pub fn hover() -> Style {
         Style::default()
-            .fg(Self::PINK)
+            .fg(Self::get_color(ColorType::Accent))
             .add_modifier(Modifier::UNDERLINED)
     }
 
-    /// Dim/subtle text (subtext_0)
+    /// Dim/subtle text
     pub fn dim() -> Style {
-        Style::default().fg(Self::SUBTEXT_0)
+        Style::default().fg(Self::get_color(ColorType::Muted))
     }
 
     /// Normal text
     pub fn text() -> Style {
-        Style::default().fg(Self::TEXT)
+        Style::default().fg(Self::get_color(ColorType::Text))
     }
 
-    /// Border style (surface_1)
+    /// Border style
     pub fn border() -> Style {
-        Style::default().fg(Self::SURFACE_1)
+        Style::default().fg(Self::get_color(ColorType::Border))
     }
 
-    /// Focused border (pink)
+    /// Focused border
     pub fn border_focused() -> Style {
-        Style::default().fg(Self::PINK)
+        Style::default().fg(Self::get_color(ColorType::Accent))
     }
 
     // ─── Component styles ───
 
     /// Sidebar item (default state)
     pub fn sidebar_item() -> Style {
-        Style::default().fg(Self::SUBTEXT_1)
+        Style::default().fg(Self::get_color(ColorType::Muted))
     }
 
     /// Sidebar item (selected)
     pub fn sidebar_item_selected() -> Style {
         Style::default()
-            .fg(Self::BASE)
-            .bg(Self::BLUE)
+            .fg(Self::get_color(ColorType::Base))
+            .bg(Self::get_color(ColorType::Primary))
             .add_modifier(Modifier::BOLD)
     }
 
     /// Sidebar item (hovered)
     pub fn sidebar_item_hovered() -> Style {
         Style::default()
-            .fg(Self::PINK)
+            .fg(Self::get_color(ColorType::Accent))
             .add_modifier(Modifier::UNDERLINED)
     }
 
     /// Track list item (default)
     pub fn track_item() -> Style {
-        Style::default().fg(Self::TEXT)
+        Style::default().fg(Self::get_color(ColorType::Text))
     }
 
     /// Track list item (selected)
     pub fn track_item_selected() -> Style {
         Style::default()
-            .fg(Self::BASE)
-            .bg(Self::MAUVE)
+            .fg(Self::get_color(ColorType::Base))
+            .bg(Self::get_color(ColorType::Secondary))
             .add_modifier(Modifier::BOLD)
     }
 
     /// Track number/index (dim)
     pub fn track_number() -> Style {
-        Style::default().fg(Self::OVERLAY_1)
+        Style::default().fg(Self::get_color(ColorType::Muted))
     }
 
-    /// Artist name in track list (teal)
+    /// Artist name in track list
     pub fn artist_name() -> Style {
-        Style::default().fg(Self::TEAL)
+        Style::default().fg(Self::get_color(ColorType::Accent))
     }
 
     /// Duration text (dim)
     pub fn duration() -> Style {
-        Style::default().fg(Self::OVERLAY_0)
+        Style::default().fg(Self::get_color(ColorType::Muted))
     }
 
     /// Progress bar color (blue to green gradient concept)
