@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -15,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build and test the landing page
+  # Build the landing page
   build:
     name: Build Landing Page
     runs-on: ubuntu-latest
@@ -26,45 +29,18 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      # Install VHS for generating demo GIFs
-      - name: Install VHS
-        run: |
-          mkdir -p ~/.local/bin
-          # Download VHS (adjust URL for your architecture)
-          curl -L https://github.com/charmbracelet/vhs/releases/latest/download/vhs_$(uname -s)_$(uname -m).tar.gz | tar -xz -C ~/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Install ttyd
-        run: |
-          curl -L https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.$(uname -m) -o ~/.local/bin/ttyd
-          chmod +x ~/.local/bin/ttyd
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
-
-      # Build the application for VHS demos
-      - name: Build for demos
-        run: cargo build --release 2>&1 | tail -20
-
-      # Generate demo GIFs with VHS
-      - name: Generate demo GIF
+      # Ensure demo GIF directory exists (with fallback)
+      - name: Setup assets
         run: |
           mkdir -p docs/landing-page/assets
-          timeout 120 vhs tapes/readme_demo.tape || true
-          # Also copy existing screenshots if available
-          if [ -d screenshots/current ]; then
-            cp screenshots/current/*.png docs/landing-page/assets/ 2>/dev/null || true
+          # If no demo.gif exists, create a placeholder (landing page has JS fallback)
+          if [ ! -f docs/landing-page/assets/demo.gif ]; then
+            echo "No demo.gif found - landing page will use terminal typing fallback"
           fi
 
       # Validate HTML
       - name: Validate HTML
-        uses: anishathalye/proof-html@v1.1.0
+        uses: anishathalye/proof-html@v2
         with:
           directory: docs/landing-page
           enforce_https: false
