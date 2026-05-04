@@ -38,16 +38,17 @@ jobs:
             echo "No demo.gif found - landing page will use terminal typing fallback"
           fi
 
-      # Validate HTML
+      # Validate HTML (optional, doesn't block deployment)
       - name: Validate HTML
         uses: anishathalye/proof-html@v2
         with:
           directory: docs/landing-page
           enforce_https: false
-          url_ignore: |
-            fonts.googleapis.com
-            fonts.gstatic.com
-          allow_failure: true
+          check_external_hash: false
+          ignore_url: |
+            https://fonts.googleapis.com
+            https://fonts.gstatic.com
+        continue-on-error: true
 
       # Copy landing page to dist
       - name: Prepare deployment
