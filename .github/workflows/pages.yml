@@ -1,0 +1,103 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  # Build and test the landing page
+  build:
+    name: Build Landing Page
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      # Install VHS for generating demo GIFs
+      - name: Install VHS
+        run: |
+          mkdir -p ~/.local/bin
+          # Download VHS (adjust URL for your architecture)
+          curl -L https://github.com/charmbracelet/vhs/releases/latest/download/vhs_$(uname -s)_$(uname -m).tar.gz | tar -xz -C ~/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install ttyd
+        run: |
+          curl -L https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.$(uname -m) -o ~/.local/bin/ttyd
+          chmod +x ~/.local/bin/ttyd
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
+
+      # Build the application for VHS demos
+      - name: Build for demos
+        run: cargo build --release 2>&1 | tail -20
+
+      # Generate demo GIFs with VHS
+      - name: Generate demo GIF
+        run: |
+          mkdir -p docs/landing-page/assets
+          timeout 120 vhs tapes/readme_demo.tape || true
+          # Also copy existing screenshots if available
+          if [ -d screenshots/current ]; then
+            cp screenshots/current/*.png docs/landing-page/assets/ 2>/dev/null || true
+          fi
+
+      # Validate HTML
+      - name: Validate HTML
+        uses: anishathalye/proof-html@v1.1.0
+        with:
+          directory: docs/landing-page
+          enforce_https: false
+          url_ignore: |
+            fonts.googleapis.com
+            fonts.gstatic.com
+          allow_failure: true
+
+      # Copy landing page to dist
+      - name: Prepare deployment
+        run: |
+          mkdir -p _site
+          cp -r docs/landing-page/* _site/
+          # Ensure index.html exists at root
+          if [ ! -f _site/index.html ]; then
+            echo "Error: index.html not found"
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  # Deploy to GitHub Pages
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

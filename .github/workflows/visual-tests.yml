@@ -20,79 +20,175 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Generate screenshots from tape files
   generate-screenshots:
+    name: Generate Screenshots
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev ffmpeg
+          sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev xvfb
 
       - name: Install VHS
         run: |
-          VHS_VERSION="0.11.0"
-          TTYD_VERSION="1.7.7"
-          
-          # Download VHS
-          wget -q "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_linux_amd64.deb" -O vhs.deb
-          sudo dpkg -i vhs.deb || sudo apt-get install -f -y
-          
-          # Download ttyd
-          wget -q "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" -O ttyd
-          chmod +x ttyd
-          sudo mv ttyd /usr/local/bin/
-          
-          # Verify installation
-          vhs version
-          ttyd --version
+          mkdir -p ~/.local/bin
+          curl -L https://github.com/charmbracelet/vhs/releases/latest/download/vhs_$(uname -s)_$(uname -m).tar.gz | tar -xz -C ~/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Install ttyd
+        run: |
+          curl -L https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.$(uname -m) -o ~/.local/bin/ttyd
+          chmod +x ~/.local/bin/ttyd
 
-      - name: Build release binary
+      - name: Build for VHS
         run: cargo build --release
 
-      - name: Generate screenshots
+      - name: Create screenshots directory
+        run: mkdir -p screenshots/current
+
+      - name: Run VHS tapes
+        env:
+          DISPLAY: :99
         run: |
-          mkdir -p screenshots/current
-          export PATH="/usr/local/bin:$PATH"
-          
-          # Run all tape files
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
           for tape in tapes/*.tape; do
-            echo "▶️ Running: $tape"
-            if vhs "$tape" 2>&1; then
-              echo "✅ Success: $tape"
-            else
-              echo "⚠️ Warning: $tape had issues (may have partial output)"
-            fi
-            echo ""
+            echo "Running: $tape"
+            timeout 120 vhs "$tape" || echo "Tape completed or timed out: $tape"
           done
 
-      - name: Upload screenshots artifact
+      - name: Collect screenshots
+        run: |
+          # Move generated screenshots to current directory
+          find screenshots -name "*.png" -exec mv {} screenshots/current/ \; 2>/dev/null || true
+          ls -la screenshots/current/ || echo "No screenshots generated"
+
+      - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots
-          path: |
-            screenshots/*.png
-            screenshots/*.gif
-          retention-days: 30
+          name: screenshots-current
+          path: screenshots/current/
+          if-no-files-found: warn
 
-      - name: Update reference screenshots (main branch only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      - name: Store reference screenshots
+        if: github.ref == 'refs/heads/main'
         run: |
           mkdir -p screenshots/reference
-          cp screenshots/*.png screenshots/reference/ 2>/dev/null || true
-          
-      - name: Commit updated reference screenshots
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+          cp screenshots/current/*.png screenshots/reference/ 2>/dev/null || true
+
+      - name: Upload reference screenshots
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-reference
+          path: screenshots/reference/
+          if-no-files-found: warn
+
+  # Generate demo GIF for README and landing page
+  generate-demo:
+    name: Generate Demo GIF
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add screenshots/reference/
-          git diff --staged --quiet || (git commit -m "chore: update reference screenshots [skip ci]" && git push)
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev xvfb
+
+      - name: Install VHS
+        run: |
+          mkdir -p ~/.local/bin
+          curl -L https://github.com/charmbracelet/vhs/releases/latest/download/vhs_$(uname -s)_$(uname -m).tar.gz | tar -xz -C ~/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install ttyd
+        run: |
+          curl -L https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.$(uname -m) -o ~/.local/bin/ttyd
+          chmod +x ~/.local/bin/ttyd
+
+      - name: Build for VHS
+        run: cargo build --release
+
+      - name: Generate demo GIF
+        env:
+          DISPLAY: :99
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          timeout 120 vhs tapes/readme_demo.tape || true
+          # Ensure demo.gif exists
+          ls -la assets/demo.gif || echo "Demo GIF not generated"
+
+      - name: Upload demo GIF
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-gif
+          path: assets/demo.gif
+          if-no-files-found: warn
+
+  # Commit demo GIF back to repo on main
+  update-readme-assets:
+    name: Update README Assets
+    needs: generate-demo
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download demo GIF
+        uses: actions/download-artifact@v4
+        with:
+          name: demo-gif
+          path: assets/
+
+      - name: Check for changes
+        id: check
+        run: |
+          if [ -f assets/demo.gif ]; then
+            git add assets/demo.gif
+            if ! git diff --cached --quiet; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit demo GIF
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: update demo GIF from VHS [skip ci]"
+          git push

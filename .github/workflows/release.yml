@@ -1,57 +1,276 @@
-name: Release Documentation Update
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
-  update-docs:
+  # Generate changelog from conventional commits
+  changelog:
+    name: Generate Changelog
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
+    outputs:
+      release_notes: ${{ steps.generate.outputs.notes }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Generate changelog notes
+        id: generate
+        run: |
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            # No previous tag, get all commits
+            COMMITS=$(git log --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s" --no-merges)
+          fi
+
+          # Parse conventional commits
+          FEATURES=$(echo "$COMMITS" | grep "^feat:" | sed 's/^feat:/- /' || true)
+          FIXES=$(echo "$COMMITS" | grep "^fix:" | sed 's/^fix:/- /' || true)
+          DOCS=$(echo "$COMMITS" | grep "^docs:" | sed 's/^docs:/- /' || true)
+          PERF=$(echo "$COMMITS" | grep "^perf:" | sed 's/^perf:/- /' || true)
+          REFACTOR=$(echo "$COMMITS" | grep "^refactor:" | sed 's/^refactor:/- /' || true)
+          TEST=$(echo "$COMMITS" | grep "^test:" | sed 's/^test:/- /' || true)
+
+          # Build release notes
+          NOTES=""
+          if [ -n "$FEATURES" ]; then
+            NOTES="$NOTES## Features\n\n$FEATURES\n\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            NOTES="$NOTES## Bug Fixes\n\n$FIXES\n\n"
+          fi
+          if [ -n "$PERF" ]; then
+            NOTES="$NOTES## Performance\n\n$PERF\n\n"
+          fi
+          if [ -n "$REFACTOR" ]; then
+            NOTES="$NOTES## Refactoring\n\n$REFACTOR\n\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            NOTES="$NOTES## Documentation\n\n$DOCS\n\n"
+          fi
+          if [ -n "$TEST" ]; then
+            NOTES="$NOTES## Testing\n\n$TEST\n\n"
+          fi
+
+          # Escape for GitHub Actions
+          NOTES="${NOTES//'%'/'%25'}"
+          NOTES="${NOTES//$'\n'/'%0A'}"
+          NOTES="${NOTES//$'\r'/'%0D'}"
+
+          echo "notes=$NOTES" >> $GITHUB_OUTPUT
+
+  # Build binaries for multiple platforms
+  build-binaries:
+    name: Build Binaries
+    needs: changelog
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: linux-x86_64
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: linux-x86_64-musl
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: macos-aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install pkg-config
+          brew install chafa || true
+          brew install portaudio
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          BINARY="target/${{ matrix.target }}/release/joshify"
+          if [ -f "$BINARY.exe" ]; then
+            BINARY="$BINARY.exe"
+          fi
+          cp "$BINARY" "dist/joshify-${{ matrix.name }}"
+          cd dist
+          tar czf "joshify-${{ matrix.name }}.tar.gz" "joshify-${{ matrix.name }}"
+          ls -la
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: joshify-${{ matrix.name }}
+          path: dist/joshify-${{ matrix.name }}.tar.gz
+
+  # Create GitHub Release
+  release:
+    name: Create Release
+    needs: [changelog, build-binaries]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Joshify v${{ needs.changelog.outputs.version }}
+          body: ${{ needs.changelog.outputs.release_notes }}
+          files: artifacts/*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update latest release (main branch)
+        if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build (Development)
+          body: |
+            This is the latest development build from the main branch.
+
+            **Version:** ${{ needs.changelog.outputs.version }}
+
+            These binaries are built from the latest commit on main and may contain unreleased features or fixes.
+          files: artifacts/*.tar.gz
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish to crates.io
+  publish-crate:
+    name: Publish to crates.io
+    needs: [changelog, build-binaries]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Get release info
-        id: release
-        run: |
-          echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-          echo "name=${{ github.event.release.name }}" >> $GITHUB_OUTPUT
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-      - name: Update version badge in README
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
+
+      - name: Run tests
+        run: cargo test --lib --verbose
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+        continue-on-error: true
+
+  # Update documentation
+  update-docs:
+    name: Update Documentation
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update README badges
         run: |
-          VERSION="${{ steps.release.outputs.tag }}"
-          # Update the version badge if it exists, or add it
+          VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s|badge/version-.*-blue|badge/version-${VERSION}-blue|g" README.md
+          sed -i "s|crates/v/joshify.*style=for-the-badge|crates/v/joshify?style=for-the-badge|g" README.md
 
-      - name: Update test count badge
-        run: |
-          # Run tests and capture count
-          TEST_COUNT=$(cargo test --lib 2>&1 | grep -oP '\d+(?= passed)' | head -1)
-          if [ -n "$TEST_COUNT" ]; then
-            sed -i "s|tests-.*-passing|tests-${TEST_COUNT}-passing|g" README.md
-          fi
-
-      - name: Create Pull Request for documentation updates
-        uses: peter-evans/create-pull-request@v5
+      - name: Create Pull Request for badge updates
+        uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "docs: update documentation for ${{ steps.release.outputs.tag }}"
-          title: "docs: Automated documentation update for ${{ steps.release.outputs.tag }}"
+          commit-message: "docs: update version badge to ${{ github.ref_name }}"
+          title: "docs: Update version badge for ${{ github.ref_name }}"
           body: |
-            This PR was automatically created after the release of ${{ steps.release.outputs.tag }}.
-
-            Changes:
-            - Updated version badges
-            - Updated test count
-            - Synced documentation with release notes
-
-            Please review and merge to keep documentation current.
-          branch: docs/update-${{ steps.release.outputs.tag }}
+            Automated PR to update the version badge in README.md
+            to reflect the latest release ${{ github.ref_name }}.
+          branch: docs/update-version-badge
           delete-branch: true

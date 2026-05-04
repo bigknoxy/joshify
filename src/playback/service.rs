@@ -254,7 +254,7 @@ impl SpotifyPlaybackService {
     ///
     /// Falls back to simple track playback if the context ID cannot be parsed.
     /// Uses `Offset::Uri` for better compatibility with Spotify Connect devices.
-    /// 
+    ///
     /// NOTE: We use `Offset::Uri(track_uri)` instead of `Offset::Position(index)` because:
     /// 1. The Spotify API `offset.position` expects a track index (0-based integer)
     /// 2. rspotify's `Offset::Position(Duration)` incorrectly converts to milliseconds
@@ -288,7 +288,12 @@ impl SpotifyPlaybackService {
                         );
                         match guard
                             .oauth
-                            .start_context_playback(play_context, None, Some(offset), Some(position))
+                            .start_context_playback(
+                                play_context,
+                                None,
+                                Some(offset),
+                                Some(position),
+                            )
                             .await
                         {
                             Ok(()) => {
@@ -332,7 +337,12 @@ impl SpotifyPlaybackService {
                         );
                         match guard
                             .oauth
-                            .start_context_playback(play_context, None, Some(offset), Some(position))
+                            .start_context_playback(
+                                play_context,
+                                None,
+                                Some(offset),
+                                Some(position),
+                            )
                             .await
                         {
                             Ok(()) => {
@@ -375,7 +385,12 @@ impl SpotifyPlaybackService {
                         );
                         match guard
                             .oauth
-                            .start_context_playback(play_context, None, Some(offset), Some(position))
+                            .start_context_playback(
+                                play_context,
+                                None,
+                                Some(offset),
+                                Some(position),
+                            )
                             .await
                         {
                             Ok(()) => {

@@ -2011,7 +2011,7 @@ mod tests {
     #[test]
     fn test_queue_remaining_tracks_calculation() {
         let mut queue = PlaybackQueue::new();
-        
+
         queue.set_context(
             make_playlist_context("spotify:playlist:test", "Test"),
             vec![
@@ -2020,22 +2020,22 @@ mod tests {
                 "spotify:track:3".to_string(),
             ],
         );
-        
+
         // Initially 3 remaining
         assert_eq!(queue.remaining_context_tracks(), 3);
-        
+
         // After playing track 1
         queue.advance();
         assert_eq!(queue.remaining_context_tracks(), 2);
-        
+
         // After playing track 2
         queue.advance();
         assert_eq!(queue.remaining_context_tracks(), 1);
-        
+
         // After playing track 3
         queue.advance();
         assert_eq!(queue.remaining_context_tracks(), 0);
-        
+
         // Exhausted
         assert_eq!(queue.advance(), None);
     }
@@ -2044,7 +2044,7 @@ mod tests {
     #[test]
     fn test_queue_user_interruption_during_playback() {
         let mut queue = PlaybackQueue::new();
-        
+
         // Set up context
         queue.set_context(
             make_playlist_context("spotify:playlist:test", "Test"),
@@ -2053,16 +2053,16 @@ mod tests {
                 "spotify:track:ctx2".to_string(),
             ],
         );
-        
+
         // Start playing context
         assert_eq!(queue.advance(), Some("spotify:track:ctx1".to_string()));
-        
+
         // User adds track to queue during playback
         queue.add_to_up_next(make_entry("spotify:track:user1", "User Track", "Artist"));
-        
+
         // User track plays next (priority over context)
         assert_eq!(queue.advance(), Some("spotify:track:user1".to_string()));
-        
+
         // Then context continues
         assert_eq!(queue.advance(), Some("spotify:track:ctx2".to_string()));
     }
@@ -2071,25 +2071,25 @@ mod tests {
     #[test]
     fn test_queue_exhaustion_detection() {
         let mut queue = PlaybackQueue::new();
-        
+
         // Empty queue is exhausted
         assert!(queue.is_exhausted());
-        
+
         // Add user track
         queue.add_to_up_next(make_entry("spotify:track:user", "User", "Artist"));
         assert!(!queue.is_exhausted());
-        
+
         // Play user track
         queue.advance();
         assert!(queue.is_exhausted());
-        
+
         // Add context
         queue.set_context(
             make_playlist_context("spotify:playlist:test", "Test"),
             vec!["spotify:track:ctx".to_string()],
         );
         assert!(!queue.is_exhausted());
-        
+
         // Play context track
         queue.advance();
         assert!(queue.is_exhausted());
@@ -2099,21 +2099,21 @@ mod tests {
     #[test]
     fn test_queue_advance_source_tracking() {
         let mut queue = PlaybackQueue::new();
-        
+
         queue.add_to_up_next(make_entry("spotify:track:user", "User", "Artist"));
         queue.set_context(
             make_playlist_context("spotify:playlist:test", "Test"),
             vec!["spotify:track:ctx".to_string()],
         );
-        
+
         // User track should be from UpNext
         queue.advance();
         assert_eq!(queue.current_source(), CurrentSource::UpNext);
-        
+
         // Context track should be from Context
         queue.advance();
         assert_eq!(queue.current_source(), CurrentSource::Context);
-        
+
         // Exhausted
         queue.advance();
         assert_eq!(queue.current_source(), CurrentSource::None);
@@ -2123,7 +2123,7 @@ mod tests {
     #[test]
     fn test_queue_shuffle_preserves_up_next() {
         let mut queue = PlaybackQueue::new();
-        
+
         queue.set_context(
             make_playlist_context("spotify:playlist:test", "Test"),
             vec![
@@ -2132,17 +2132,17 @@ mod tests {
                 "spotify:track:3".to_string(),
             ],
         );
-        
+
         // Add user track before shuffle
         queue.add_to_up_front(make_entry("spotify:track:user", "User", "Artist"));
-        
+
         // Enable shuffle
         queue.set_shuffle(true);
-        
+
         // User track should still play first (shuffle doesn't affect up_next)
         let next = queue.advance();
         assert_eq!(next, Some("spotify:track:user".to_string()));
-        
+
         // Context tracks are shuffled (we can't predict order, but should get 3 tracks)
         let mut found_tracks = vec![];
         while let Some(uri) = queue.advance() {
@@ -2158,11 +2158,11 @@ mod tests {
     #[test]
     fn test_queue_total_remaining_count() {
         let mut queue = PlaybackQueue::new();
-        
+
         // Add user tracks
         queue.add_to_up_next(make_entry("spotify:track:user1", "User 1", "Artist"));
         queue.add_to_up_next(make_entry("spotify:track:user2", "User 2", "Artist"));
-        
+
         // Set context
         queue.set_context(
             make_playlist_context("spotify:playlist:test", "Test"),
@@ -2171,15 +2171,15 @@ mod tests {
                 "spotify:track:ctx2".to_string(),
             ],
         );
-        
+
         // 2 user + 2 context = 4 total
         assert_eq!(queue.remaining_count(), 4);
-        
+
         // After playing user tracks
         queue.advance();
         queue.advance();
         assert_eq!(queue.remaining_count(), 2);
-        
+
         // After playing context tracks
         queue.advance();
         queue.advance();

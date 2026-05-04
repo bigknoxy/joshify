@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Joshify — Terminal Spotify Client</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0d0d0f;
+            --bg-secondary: #141418;
+            --bg-tertiary: #1a1a20;
+            --text-primary: #f0f0f5;
+            --text-secondary: #8b8b9e;
+            --text-muted: #5a5a6e;
+            --accent-mauve: #cba6f7;
+            --accent-green: #a6e3a1;
+            --accent-blue: #89b4fa;
+            --accent-pink: #f5c2e7;
+            --accent-yellow: #f9e2af;
+            --terminal-green: #00ff41;
+            --border: #2a2a35;
+            --glow: rgba(203, 166, 247, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Noise texture overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.03;
+            z-index: 1000;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        /* Scanline effect */
+        .scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                to bottom,
+                transparent 50%,
+                rgba(0, 0, 0, 0.1) 50%
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 999;
+            opacity: 0.3;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            padding: 1.5rem 3rem;
+            background: linear-gradient(to bottom, var(--bg-primary) 0%, transparent 100%);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        nav.scrolled {
+            background: rgba(13, 13, 15, 0.9);
+            border-bottom-color: var(--border);
+        }
+
+        .nav-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: var(--text-primary);
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        .logo:hover {
+            color: var(--accent-mauve);
+            text-shadow: 0 0 20px var(--glow);
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent-green) 0%, var(--accent-mauve) 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2.5rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            letter-spacing: 0.02em;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .nav-links a::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--accent-mauve);
+            transition: width 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .nav-links a:hover::after {
+            width: 100%;
+        }
+
+        .nav-cta {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent-mauve);
+            color: var(--accent-mauve);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-mauve) 0%, var(--accent-pink) 100%);
+            color: var(--bg-primary);
+            box-shadow: 0 4px 20px var(--glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px var(--glow);
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8rem 3rem 4rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% 20%, rgba(203, 166, 247, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse 60% 40% at 80% 80%, rgba(166, 227, 161, 0.05) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .hero-grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(42, 42, 53, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(42, 42, 53, 0.3) 1px, transparent 1px);
+            background-size: 60px 60px;
+            opacity: 0.5;
+            mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 0%, transparent 70%);
+        }
+
+        .hero-content {
+            max-width: 1200px;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-text {
+            animation: fadeInUp 1s ease-out;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 100px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-green);
+            margin-bottom: 1.5rem;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .hero-badge::before {
+            content: '●';
+            color: var(--accent-green);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 5vw, 4.5rem);
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            letter-spacing: -0.02em;
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, var(--accent-mauve) 0%, var(--accent-pink) 50%, var(--accent-green) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            max-width: 500px;
+        }
+
+        .hero-stats {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .btn-large {
+            padding: 1rem 2rem;
+            font-size: 1rem;
+        }
+
+        /* Terminal Window */
+        .terminal-window {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 
+                0 25px 50px -12px rgba(0, 0, 0, 0.5),
+                0 0 0 1px rgba(203, 166, 247, 0.1);
+            animation: fadeInUp 1s ease-out 0.2s both;
+        }
+
+        .terminal-header {
+            background: var(--bg-tertiary);
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .terminal-dot.red { background: #ff5f56; }
+        .terminal-dot.yellow { background: #ffbd2e; }
+        .terminal-dot.green { background: #27c93f; }
+
+        .terminal-title {
+            margin-left: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .terminal-demo {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .demo-gif {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 0 0 12px 12px;
+        }
+
+        .terminal-body {
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            min-height: 320px;
+        }
+
+        .terminal-line {
+            margin-bottom: 0.25rem;
+            opacity: 0;
+            animation: typeIn 0.1s ease-out forwards;
+        }
+
+        .terminal-prompt {
+            color: var(--accent-green);
+        }
+
+        .terminal-command {
+            color: var(--text-primary);
+        }
+
+        .terminal-output {
+            color: var(--text-secondary);
+            margin-left: 1rem;
+        }
+
+        .terminal-comment {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .terminal-playing {
+            color: var(--accent-mauve);
+        }
+
+        @keyframes typeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Features Section */
+        .features {
+            padding: 6rem 3rem;
+            position: relative;
+        }
+
+        .section-header {
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto 4rem;
+        }
+
+        .section-label {
+            display: inline-block;
+            padding: 0.4rem 0.8rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 100px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-blue);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        h2 {
+            font-size: clamp(2rem, 4vw, 3rem);
+            font-weight: 700;
+            margin-bottom: 1rem;
+            letter-spacing: -0.02em;
+        }
+
+        .section-subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .features-grid {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-mauve), var(--accent-green));
+            transform: scaleX(0);
+            transition: transform 0.4s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent-mauve);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--bg-tertiary);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1.25rem;
+            border: 1px solid var(--border);
+        }
+
+        .feature-card h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* Installation Section */
+        .installation {
+            padding: 6rem 3rem;
+            background: var(--bg-secondary);
+            position: relative;
+        }
+
+        .installation::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
+        }
+
+        .install-content {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .install-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+        }
+
+        .install-tab {
+            padding: 0.6rem 1.2rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .install-tab.active {
+            background: var(--bg-tertiary);
+            border-color: var(--accent-mauve);
+            color: var(--text-primary);
+        }
+
+        .install-tab:hover:not(.active) {
+            border-color: var(--text-muted);
+            color: var(--text-primary);
+        }
+
+        .code-block {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .code-header {
+            background: var(--bg-tertiary);
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .code-lang {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .copy-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 0.4rem 0.8rem;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .copy-btn:hover {
+            border-color: var(--accent-mauve);
+            color: var(--accent-mauve);
+        }
+
+        .code-content {
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.8;
+            overflow-x: auto;
+        }
+
+        .code-content .comment {
+            color: var(--text-muted);
+        }
+
+        .code-content .prompt {
+            color: var(--accent-green);
+        }
+
+        .code-content .command {
+            color: var(--text-primary);
+        }
+
+        /* Demo Section */
+        .demo {
+            padding: 6rem 3rem;
+        }
+
+        .demo-grid {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .demo-text h3 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .demo-text p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+
+        .demo-list {
+            list-style: none;
+        }
+
+        .demo-list li {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 0;
+            color: var(--text-secondary);
+        }
+
+        .demo-list li::before {
+            content: '▸';
+            color: var(--accent-green);
+            font-weight: bold;
+        }
+
+        .demo-visual {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            position: relative;
+        }
+
+        .demo-visual::after {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-mauve), transparent);
+        }
+
+        .theme-showcase {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .theme-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .theme-colors {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .theme-color {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+        }
+
+        .theme-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        /* Footer */
+        footer {
+            padding: 4rem 3rem 2rem;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .footer-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 3rem;
+            flex-wrap: wrap;
+            gap: 2rem;
+        }
+
+        .footer-brand {
+            max-width: 300px;
+        }
+
+        .footer-brand .logo {
+            margin-bottom: 1rem;
+        }
+
+        .footer-brand p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 4rem;
+        }
+
+        .footer-column h4 {
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        .footer-column ul {
+            list-style: none;
+        }
+
+        .footer-column li {
+            margin-bottom: 0.5rem;
+        }
+
+        .footer-column a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.3s ease;
+        }
+
+        .footer-column a:hover {
+            color: var(--accent-mauve);
+        }
+
+        .footer-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .footer-copyright {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .footer-social {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .social-link {
+            width: 40px;
+            height: 40px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        .social-link:hover {
+            border-color: var(--accent-mauve);
+            color: var(--accent-mauve);
+            transform: translateY(-2px);
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .hero-content {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+
+            .hero-subtitle {
+                margin-left: auto;
+                margin-right: auto;
+            }
+
+            .hero-stats {
+                justify-content: center;
+            }
+
+            .hero-buttons {
+                justify-content: center;
+            }
+
+            .terminal-window {
+                order: -1;
+                max-width: 500px;
+                margin: 0 auto;
+            }
+
+            .demo-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-links {
+                display: none;
+            }
+
+            .footer-links {
+                flex-direction: column;
+                gap: 2rem;
+            }
+        }
+
+        /* Scroll animations */
+        .scroll-reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease;
+        }
+
+        .scroll-reveal.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Cursor blink */
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 18px;
+            background: var(--accent-green);
+            animation: blink 1s step-end infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+
+    <nav>
+        <div class="nav-content">
+            <a href="#" class="logo">
+                <div class="logo-icon">🦍</div>
+                <span>joshify</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#install">Install</a></li>
+                <li><a href="#demo">Demo</a></li>
+                <li><a href="https://github.com/bigknoxy/joshify">GitHub</a></li>
+            </ul>
+            <div class="nav-cta">
+                <a href="https://github.com/bigknoxy/joshify/releases" class="btn btn-secondary">Releases</a>
+                <a href="#install" class="btn btn-primary">Install</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-bg"></div>
+        <div class="hero-grid"></div>
+        <div class="hero-content">
+            <div class="hero-text">
+                <div class="hero-badge">v0.5.0 Available Now</div>
+                <h1>
+                    Spotify in your
+                    <span class="gradient-text">terminal</span>
+                </h1>
+                <p class="hero-subtitle">
+                    A beautiful, fast, and feature-rich Spotify client that runs entirely in your terminal. No Electron. No bloat. Just pure Rust.
+                </p>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <span class="stat-value">469</span>
+                        <span class="stat-label">Tests</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value">7</span>
+                        <span class="stat-label">Themes</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value">0</span>
+                        <span class="stat-label">Dependencies*</span>
+                    </div>
+                </div>
+                <div class="hero-buttons">
+                    <a href="#install" class="btn btn-primary btn-large">Get Started</a>
+                    <a href="https://github.com/bigknoxy/joshify" class="btn btn-secondary btn-large">
+                        <span>⭐ Star on GitHub</span>
+                    </a>
+                </div>
+            </div>
+            <div class="terminal-window">
+                <div class="terminal-header">
+                    <div class="terminal-dot red"></div>
+                    <div class="terminal-dot yellow"></div>
+                    <div class="terminal-dot green"></div>
+                    <span class="terminal-title">joshify</span>
+                </div>
+                <div class="terminal-demo">
+                    <img src="assets/demo.gif" alt="Joshify Terminal Demo" class="demo-gif" onerror="this.style.display='none'; document.getElementById('terminal').style.display='block'; startTerminalTyping();">
+                    <div class="terminal-body" id="terminal" style="display: none;">
+                        <!-- Content will be typed by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <div class="section-header scroll-reveal">
+            <span class="section-label">Features</span>
+            <h2>Everything you need</h2>
+            <p class="section-subtitle">
+                Built from the ground up for terminal enthusiasts who demand speed, beauty, and functionality.
+            </p>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">🏠</div>
+                <h3>Local Playback</h3>
+                <p>Play directly through your computer using librespot. No Spotify app required. Premium audio quality with minimal latency.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">🔍</div>
+                <h3>Fuzzy Search</h3>
+                <p>Typo-tolerant search with smart relevance scoring. Find tracks, albums, and artists instantly with intelligent matching.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">🎨</div>
+                <h3>Album Art</h3>
+                <p>Beautiful album artwork via terminal graphics protocols. Supports kitty, iTerm2, sixel, and ASCII fallback for any terminal.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">📊</div>
+                <h3>Audio Visualization</h3>
+                <p>Real-time FFT spectrum visualization with configurable bands. Watch your music come alive in the terminal.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">🎤</div>
+                <h3>Synced Lyrics</h3>
+                <p>Real-time lyrics from LRCLIB API. Follow along with your favorite songs as they play.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">🎭</div>
+                <h3>7 Beautiful Themes</h3>
+                <p>Catppuccin, Gruvbox, Nord, Tokyo Night, Dracula, and more. Switch instantly with a keypress.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">📋</div>
+                <h3>Queue Management</h3>
+                <p>Full playback queue with reordering, removal, and priority handling. Up next and context tracks.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">💻</div>
+                <h3>CLI & Daemon</h3>
+                <p>Complete command-line interface plus background daemon mode. Control via scripts, IPC, or interactively.</p>
+            </div>
+            <div class="feature-card scroll-reveal">
+                <div class="feature-icon">⚡</div>
+                <h3>Lightning Fast</h3>
+                <p>Built with Rust for minimal resource usage. Sub-50ms startup time. 60fps UI rendering.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="installation" id="install">
+        <div class="section-header scroll-reveal">
+            <span class="section-label">Install</span>
+            <h2>Get Joshify</h2>
+            <p class="section-subtitle">
+                Multiple installation methods. Choose what works best for you.
+            </p>
+        </div>
+        <div class="install-content scroll-reveal">
+            <div class="install-tabs">
+                <button class="install-tab active" data-tab="curl">One-Line</button>
+                <button class="install-tab" data-tab="cargo">Cargo</button>
+                <button class="install-tab" data-tab="source">Source</button>
+            </div>
+
+            <div class="code-block" id="curl-panel">
+                <div class="code-header">
+                    <span class="code-lang">bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <div class="code-content">
+                    <span class="comment"># Install with one command</span><br>
+                    <span class="prompt">$</span> <span class="command">curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash</span>
+                </div>
+            </div>
+
+            <div class="code-block" id="cargo-panel" style="display: none;">
+                <div class="code-header">
+                    <span class="code-lang">bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <div class="code-content">
+                    <span class="comment"># Install via cargo</span><br>
+                    <span class="prompt">$</span> <span class="command">cargo install joshify</span>
+                </div>
+            </div>
+
+            <div class="code-block" id="source-panel" style="display: none;">
+                <div class="code-header">
+                    <span class="code-lang">bash</span>
+                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                </div>
+                <div class="code-content">
+                    <span class="comment"># Clone and build from source</span><br>
+                    <span class="prompt">$</span> <span class="command">git clone https://github.com/bigknoxy/joshify.git</span><br>
+                    <span class="prompt">$</span> <span class="command">cd joshify</span><br>
+                    <span class="prompt">$</span> <span class="command">cargo install --path .</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="demo" id="demo">
+        <div class="demo-grid">
+            <div class="demo-text scroll-reveal">
+                <span class="section-label">Interface</span>
+                <h3>Keyboard First, Mouse Friendly</h3>
+                <p>Vim-style navigation with full mouse support. Navigate with hjkl, click to play, scroll to browse. Your choice.</p>
+                <ul class="demo-list">
+                    <li>Tab / Shift+Tab to switch sections</li>
+                    <li>Space for play/pause</li>
+                    <li>n / p for next/previous</li>
+                    <li>/ to search</li>
+                    <li>? for help</li>
+                    <li>q to quit</li>
+                </ul>
+            </div>
+            <div class="demo-visual scroll-reveal">
+                <div class="theme-showcase">
+                    <div class="theme-item">
+                        <div class="theme-colors">
+                            <div class="theme-color" style="background: #1e1e2e;"></div>
+                            <div class="theme-color" style="background: #cba6f7;"></div>
+                            <div class="theme-color" style="background: #a6e3a1;"></div>
+                        </div>
+                        <span class="theme-name">Catppuccin Mocha</span>
+                    </div>
+                    <div class="theme-item">
+                        <div class="theme-colors">
+                            <div class="theme-color" style="background: #282828;"></div>
+                            <div class="theme-color" style="background: #fabd2f;"></div>
+                            <div class="theme-color" style="background: #b8bb26;"></div>
+                        </div>
+                        <span class="theme-name">Gruvbox Dark</span>
+                    </div>
+                    <div class="theme-item">
+                        <div class="theme-colors">
+                            <div class="theme-color" style="background: #2e3440;"></div>
+                            <div class="theme-color" style="background: #88c0d0;"></div>
+                            <div class="theme-color" style="background: #5e81ac;"></div>
+                        </div>
+                        <span class="theme-name">Nord</span>
+                    </div>
+                    <div class="theme-item">
+                        <div class="theme-colors">
+                            <div class="theme-color" style="background: #1a1b26;"></div>
+                            <div class="theme-color" style="background: #7aa2f7;"></div>
+                            <div class="theme-color" style="background: #bb9af7;"></div>
+                        </div>
+                        <span class="theme-name">Tokyo Night</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-content">
+            <div class="footer-top">
+                <div class="footer-brand">
+                    <a href="#" class="logo">
+                        <div class="logo-icon">🦍</div>
+                        <span>joshify</span>
+                    </a>
+                    <p>A beautiful terminal Spotify client built with Rust. Open source and free forever.</p>
+                </div>
+                <div class="footer-links">
+                    <div class="footer-column">
+                        <h4>Product</h4>
+                        <ul>
+                            <li><a href="#features">Features</a></li>
+                            <li><a href="#install">Install</a></li>
+                            <li><a href="https://github.com/bigknoxy/joshify/releases">Releases</a></li>
+                            <li><a href="https://github.com/bigknoxy/joshify/blob/main/CHANGELOG.md">Changelog</a></li>
+                        </ul>
+                    </div>
+                    <div class="footer-column">
+                        <h4>Resources</h4>
+                        <ul>
+                            <li><a href="https://github.com/bigknoxy/joshify">GitHub</a></li>
+                            <li><a href="https://github.com/bigknoxy/joshify/issues">Issues</a></li>
+                            <li><a href="https://github.com/bigknoxy/joshify/discussions">Discussions</a></li>
+                            <li><a href="https://docs.rs/joshify">Documentation</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="footer-copyright">© 2026 Joshify. MIT License. Made with ⚡ by bigknoxy.</p>
+                <div class="footer-social">
+                    <a href="https://github.com/bigknoxy/joshify" class="social-link" aria-label="GitHub">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Terminal typing animation
+        const terminalLines = [
+            { type: 'prompt', content: '$ joshify' },
+            { type: 'comment', content: '# Starting Joshify...' },
+            { type: 'comment', content: '# Connected to Spotify' },
+            { type: 'output', content: '' },
+            { type: 'playing', content: '▶ Now Playing' },
+            { type: 'output', content: '  🎵 Blinding Lights' },
+            { type: 'output', content: '  👤 The Weeknd' },
+            { type: 'output', content: '  💿 After Hours' },
+            { type: 'output', content: '' },
+            { type: 'comment', content: '# Press ? for help, q to quit' },
+            { type: 'cursor', content: '' }
+        ];
+
+        const terminal = document.getElementById('terminal');
+        let lineIndex = 0;
+
+        function typeLine() {
+            if (lineIndex >= terminalLines.length) return;
+
+            const line = terminalLines[lineIndex];
+            const div = document.createElement('div');
+            div.className = 'terminal-line';
+            div.style.animationDelay = `${lineIndex * 0.15}s`;
+
+            if (line.type === 'cursor') {
+                div.innerHTML = '<span class="terminal-prompt">$</span> <span class="cursor"></span>';
+            } else if (line.type === 'prompt') {
+                div.innerHTML = `<span class="terminal-prompt">$</span> <span class="terminal-command">${line.content.substring(2)}</span>`;
+            } else if (line.type === 'comment') {
+                div.innerHTML = `<span class="terminal-comment">${line.content}</span>`;
+            } else if (line.type === 'playing') {
+                div.innerHTML = `<span class="terminal-playing">${line.content}</span>`;
+            } else {
+                div.innerHTML = `<span class="terminal-output">${line.content}</span>`;
+            }
+
+            terminal.appendChild(div);
+            lineIndex++;
+            setTimeout(typeLine, 150);
+        }
+
+        // Function to start terminal typing (called if GIF fails to load)
+        function startTerminalTyping() {
+            setTimeout(typeLine, 1000);
+        }
+
+        // Check if demo GIF exists - if not, show terminal typing
+        const demoGif = document.querySelector('.demo-gif');
+        if (demoGif) {
+            demoGif.onerror = function() {
+                this.style.display = 'none';
+                document.getElementById('terminal').style.display = 'block';
+                startTerminalTyping();
+            };
+            // Also check if already loaded (cached)
+            if (!demoGif.complete || demoGif.naturalWidth === 0) {
+                demoGif.onerror();
+            }
+        } else {
+            startTerminalTyping();
+        }
+
+        // Navigation scroll effect
+        const nav = document.querySelector('nav');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 50) {
+                nav.classList.add('scrolled');
+            } else {
+                nav.classList.remove('scrolled');
+            }
+        });
+
+        // Scroll reveal animation
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.scroll-reveal').forEach(el => {
+            observer.observe(el);
+        });
+
+        // Tab switching
+        const tabs = document.querySelectorAll('.install-tab');
+        const panels = {
+            curl: document.getElementById('curl-panel'),
+            cargo: document.getElementById('cargo-panel'),
+            source: document.getElementById('source-panel')
+        };
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+
+                Object.values(panels).forEach(p => p.style.display = 'none');
+                panels[tab.dataset.tab].style.display = 'block';
+            });
+        });
+
+        // Copy code function
+        function copyCode(btn) {
+            const codeContent = btn.closest('.code-block').querySelector('.code-content').innerText;
+            navigator.clipboard.writeText(codeContent).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            });
+        }
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
