@@ -1,132 +1,142 @@
-# Joshify Learnings Log
+# Learnings - joshify
 
-## Format
-Each entry should include:
-- Date
-- Category (bug, pattern, decision, gotcha)
-- Description
-- Prevention strategy
+## 2025-05-03
 
----
+### Category: Bug Fix
+**Learned**: Continuous playlist playback wasn't working because we never populated the PlaybackQueue with context tracks when starting playback.
 
-## 2026-04-25
+**Context**: When user presses Enter on a playlist track, we set `current_context` but never called `queue.set_context()` with the full track list. This meant:
+1. `playback_queue.context_tracks` was empty
+2. `remaining_context_tracks()` returned 0
+3. Auto-advance logic in `EndOfTrack` handler couldn't find next tracks
 
-### Category: Pattern
-**Learned**: Mouse event handling requires careful coordinate math with terminal borders
-**Context**: Sidebar nav items were off by 1 due to not accounting for `Borders::ALL` in hit testing
-**Prevention**: Always account for border offset when calculating hit test regions. Content starts at `area.y + 1` when borders are present.
-**File**: `src/ui/sidebar.rs`
+**Fix**: In `main.rs`, when Enter is pressed on a playlist track:
+1. Extract track URIs from the tracks list
+2. Call `queue_state.playback_queue_mut().set_context()` with context + URIs
+3. Advance queue position to selected_index
+4. Sync local_queue with the domain queue
 
-### Category: Bug
-**Learned**: LayoutCache `area_at()` must check all variants, not just track_items
-**Context**: Playlist items weren't clickable because `ClickableArea` enum had `PlaylistItem` but `area_at()` didn't check it
-**Prevention**: When adding new clickable areas, update BOTH the enum AND the hit test function
-**File**: `src/ui/layout_cache.rs`
+**Prevention**: Always populate queue state when starting context playback. Add debug logging to verify queue state.
 
-### Category: Gotcha
-**Learned**: Volume normalization differs between local and remote playback
-**Context**: Spotify API uses 0-100, librespot uses 0-65535
-**Prevention**: Always normalize volume based on playback mode. Use `(new_volume as u32 * 65535 / 100) as u16` for local, direct for remote.
-**File**: `src/main.rs`
-
-### Category: Pattern
-**Learned**: u16 overflow can happen in seemingly safe calculations
-**Context**: `new_volume as u16 * 65535 / 100` overflows at volume > 99
-**Prevention**: Cast to u32 BEFORE multiplication, then back to u16
-**File**: `src/main.rs`
+**Files**: `src/main.rs` (lines ~2187-2220)
 
 ---
 
-## 2026-04-26
+### Category: Bug Fix
+**Learned**: Silent fallback to single-track playback in `play_with_context()` was hiding parse failures.
 
-### Category: Pattern
-**Learned**: Navigation stack pattern enables browser-like back/forward navigation in TUI
-**Context**: Implemented NavigationStack with push/pop/peek methods, storing (ContentState, selected_index) tuples
-**Prevention**: When drilling down (Enter on item), push current state BEFORE loading new view. On back, restore saved state.
-**File**: `src/state/navigation_stack.rs`
+**Context**: If `PlaylistId::from_id()` failed, code silently fell through to `play_track_simple()`, which uses `uris: [track_uri]` with NO context. This played exactly one track.
 
-### Category: Pattern
-**Learned**: ContentState enum extension requires careful handling of all match arms
-**Context**: Added AlbumDetail and ArtistDetail variants; had to update render_content() to handle all cases
-**Prevention**: When adding enum variants, use exhaustive match to find all locations needing updates
-**File**: `src/state/app_state.rs`, `src/ui/main_view.rs`
+**Fix**: Changed to explicit `match` on parse result:
+- Parse success → Try context playback, only fallback on API failure
+- Parse failure → Return `PlaybackError::InvalidContext` with clear error message
+- Added `InvalidContext` error variant
 
-### Category: Gotcha
-**Learned**: Focus transfer from sidebar to main content requires explicit state change
-**Context**: Enter key on sidebar items was loading content but not changing focus target
-**Prevention**: Always set `app.focus = FocusTarget::MainContent` when user navigates to content from sidebar
-**File**: `src/main.rs`
+**Prevention**: Never silently fall back to degraded behavior. Always error loudly with context.
 
-### Category: Decision
-**Learned**: Spotify deprecated artist_top_tracks endpoint; using simplified approach
-**Context**: API call was returning 404, decided to stub rather than implement workaround
-**Prevention**: Check API changelog before implementing features; stub first, verify endpoint availability
-**File**: `src/api/library.rs`
-
-### Category: Pattern
-**Learned**: Vim-style navigation (h/j/k/l) integrates well with existing arrow key handlers
-**Context**: Added 'h' for sidebar focus, 'l' for main content, 'j'/'k' for up/down
-**Prevention**: Keep navigation intuitive - h=left (sidebar is left), l=right (content is right)
-**File**: `src/main.rs`
+**Files**: `src/playback/service.rs` (lines ~274-400)
 
 ---
 
-## 2026-04-26
+### Category: Bug Fix
+**Learned**: Local mode `EndOfTrack` handler only checked `local_queue`, not context tracks.
 
-### Category: Pattern
-**Learned**: OnceLock is the modern Rust pattern for lazy static initialization
-**Context**: Replaced unsafe `static mut` with `std::sync::OnceLock` for config, media_control, and daemon globals
-**Prevention**: Always use OnceLock for thread-safe global initialization in Rust 1.70+. It provides safe, one-time initialization without unsafe blocks.
-**File**: `src/config.rs`, `src/media_control.rs`
+**Context**: When playing a playlist in local mode, `local_queue` is empty (no user-added tracks). The `EndOfTrack` handler only checked `!local_queue.is_empty()`, so it never advanced.
 
-### Category: Decision
-**Learned**: Custom fuzzy search can be better than external crates with API issues
-**Context**: Nucleo crate had API issues, so implemented custom fuzzy search with scoring
-**Prevention**: When external crates have API problems, consider if a custom implementation is feasible. Sometimes simpler is better.
-**File**: `src/search.rs`
+**Fix**: Restructured handler with three phases:
+1. Check `local_queue` (user-added tracks, highest priority)
+2. If empty, check `playback_queue.remaining_context_tracks() > 0`
+3. If context tracks exist, call `playback_queue.advance()` and load next URI
+4. Log decisions at each phase for debugging
 
-### Category: Gotcha
-**Learned**: Tracing file logging can be complex with trait bounds
-**Context**: Attempted complex Box<dyn Write> setup for tracing-appender, simplified to avoid trait bound issues
-**Prevention**: For file logging with tracing, use simple working patterns. Don't over-abstract the writer type.
-**File**: `src/logging.rs`
+**Prevention**: When implementing queue logic, always check both user queue AND context tracks.
 
-### Category: Pattern
-**Learned**: Expert subagents enable effective parallel development
-**Context**: Daemon mode (14 tests) was implemented by subagent while main agent worked on other features
-**Prevention**: For independent features, use subagents to parallelize work. Provide complete context and clear deliverables.
-**File**: `src/daemon.rs`
-
-### Category: Decision
-**Learned**: LRCLIB provides free synced lyrics without authentication
-**Context**: Other lyrics APIs require auth or paid tiers. LRCLIB is free and works well.
-**Prevention**: Research free APIs before committing to paid providers. Open-source alternatives often exist.
-**File**: `src/lyrics.rs`
-
-### Category: Gotcha
-**Learned**: CLI argument parsing with flags requires careful filtering
-**Context**: Search query was including `--limit` and its value in the query string
-**Prevention**: When parsing args with flags, filter out flag pairs (flag + value) before joining the query.
-**File**: `src/cli.rs`
-
-### Category: Pattern
-**Learned**: Theme system with trait allows extensibility beyond hardcoded themes
-**Context**: Created Theme trait that users could implement for custom themes
-**Prevention**: Use traits for theming systems - provides both built-in options and extensibility.
-**File**: `src/themes.rs`
-
-### Category: Decision
-**Learned**: Unix sockets are simpler than TCP for local IPC
-**Context**: Daemon mode uses Unix sockets at ~/.cache/joshify/daemon.sock instead of TCP
-**Prevention**: For local-only IPC, prefer Unix sockets (no port conflicts, file-based permissions, simpler cleanup).
-**File**: `src/daemon.rs`
+**Files**: `src/main.rs` (lines ~826-900)
 
 ---
 
-## Future Learning Sources
-- Test failures
-- Code review feedback
-- Performance bottlenecks
-- User experience issues
-- API behavior surprises
-- Documentation gaps
+### Category: Testing
+**Learned**: All 6 auto-advance tests already existed from previous work and pass.
+
+**Context**: Tests for queue advancement were already written:
+- `test_queue_remaining_tracks_calculation`
+- `test_queue_user_interruption_during_playback`
+- `test_queue_exhaustion_detection`
+- `test_queue_advance_source_tracking`
+- `test_queue_shuffle_preserves_up_next`
+- `test_queue_total_remaining_count`
+
+**Verification**: All 451 library tests + 18 performance tests pass.
+
+---
+
+### Category: Borrow Checker
+**Learned**: Be careful with match arm borrows that extend past the block.
+
+**Context**: In the fix for populating the queue, I had:
+```rust
+if let Some(PlaybackContext::Playlist { uri, name, .. }) = &app.current_context {
+    app.current_context = Some(PlaybackContext::Playlist {
+        uri: uri.clone(),  // ERROR: uri borrowed in match arm
+        ...
+    });
+    // use uri here
+}
+```
+
+**Fix**: Clone values at start of match arm:
+```rust
+if let Some(PlaybackContext::Playlist { uri, name, .. }) = &app.current_context {
+    let uri = uri.clone();  // Clone first
+    let name = name.clone();
+    app.current_context = Some(PlaybackContext::Playlist {
+        uri: uri.clone(),
+        ...
+    });
+    // use uri here - now it's a clone, not a borrow
+}
+```
+
+**Prevention**: When mutating a field that's borrowed in a match arm, clone the borrowed values immediately.
+
+---
+
+### Category: Bug Fix
+**Learned**: Selected track plays twice because calling `advance()` multiple times to "position" the queue consumes tracks.
+
+**Context**: When user selects track 3, I called `advance()` 3 times to position the queue. But `advance()` returns AND consumes the track:
+- Call 1: returns track 1, position=1
+- Call 2: returns track 2, position=2  
+- Call 3: returns track 3, position=3
+
+When track 3 ends:
+- Spotify auto-advances to track 4
+- We call `handle_remote_track_advance()` → `advance()`
+- This returns track 4, position=4 ✓
+
+BUT we had a SECOND bug: duplicate queue population blocks. The first block set context, the second block set it AGAIN (resetting position to 0), then called `advance()` 3 times. This positioned the queue at track 4 instead of track 3.
+
+**Fix**: 
+1. Removed duplicate queue population code
+2. Added `set_context_position()` method to set position without consuming tracks
+3. Changed to use `set_context_position(selected_index)` instead of calling `advance()` in a loop
+
+**Prevention**: 
+- Don't duplicate code blocks
+- Methods that consume should be clearly named (advance vs set_position)
+- Test edge cases where starting position != 0
+
+**Files**: 
+- `src/playback/domain.rs` - Added `set_context_position()` method
+- `src/main.rs` - Fixed to use new method, removed duplicate code
+
+---
+
+## Summary
+
+Fixed three distinct bugs preventing continuous playlist playback:
+1. ✅ Queue never populated with context tracks
+2. ✅ Silent fallback to single-track playback
+3. ✅ Local mode only checked user queue
+
+All tests pass (451 lib + 18 perf). Clippy warnings unchanged (~38).

@@ -1,5 +1,7 @@
 use anyhow::Result;
 use joshify::auth::OAuthConfig;
+use joshify::playback::domain::PlaybackContext;
+use joshify::playback::PlaybackMode;
 use joshify::player::LocalPlayer;
 use joshify::session::LocalSession;
 use joshify::state::app_state::{
@@ -13,14 +15,6 @@ use librespot::core::authentication::Credentials;
 use rspotify::clients::OAuthClient;
 use std::sync::Arc;
 
-/// Playback mode - local or remote
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum PlaybackMode {
-    #[default]
-    Local,
-    Remote,
-}
-
 /// Highlighted item in the current view (for queue operations)
 #[derive(Debug, Clone)]
 struct HighlightedItem {
@@ -28,25 +22,6 @@ struct HighlightedItem {
     name: String,
     artist: String,
     _context: Option<PlaybackContext>,
-}
-
-/// Playback context - what collection the current track came from
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-enum PlaybackContext {
-    Playlist {
-        uri: String,
-        name: String,
-        track_index: usize,
-    },
-    Album {
-        uri: String,
-        name: String,
-    },
-    Artist {
-        uri: String,
-        name: String,
-    },
 }
 
 /// Application state
@@ -163,12 +138,12 @@ impl App {
                     _context: self.current_context.clone(),
                 });
 
-                // Update playlist context track_index when navigating
+                // Update playlist context start_index when navigating
                 if let Some(PlaybackContext::Playlist { uri, name, .. }) = &self.current_context {
                     self.current_context = Some(PlaybackContext::Playlist {
                         uri: uri.clone(),
                         name: name.clone(),
-                        track_index: self.selected_index,
+                        start_index: self.selected_index,
                     });
                 }
             }
@@ -180,16 +155,58 @@ impl App {
         client: &Arc<Mutex<joshify::api::SpotifyClient>>,
         tx_art: &tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
     ) {
+        // Store previous state for change detection
+        let old_track_uri = self.player_state.current_track_uri.clone();
+        let old_is_playing = self.player_state.is_playing;
+        let old_progress_ms = self.player_state.progress_ms;
+        let old_duration_ms = self.player_state.duration_ms;
+        
         let client_guard = client.lock().await;
         match client_guard.current_playback().await {
             Ok(Some(ctx)) => {
-                let old_track_uri = self.player_state.current_track_uri.clone();
                 self.player_state = PlayerState::from_context(&ctx);
 
                 let new_track_uri = self.player_state.current_track_uri.clone();
-                if old_track_uri != new_track_uri {
+                let new_is_playing = self.player_state.is_playing;
+                
+                // Track changed - could be auto-advance or manual skip
+                if new_track_uri != old_track_uri {
                     self.player_state.reset_scroll();
+                    
+                    // Log track change for debugging
+                    if let (Some(ref old), Some(ref new)) = (&old_track_uri, &new_track_uri) {
+                        tracing::info!(
+                            "Track changed from {} to {} (is_playing: {})",
+                            old, new, new_is_playing
+                        );
+                        
+                        // If we have a context and track changed while playing,
+                        // update our queue position tracking
+                        if new_is_playing && self.playback_mode == PlaybackMode::Remote {
+                            self.handle_remote_track_advance().await;
+                        }
+                    }
                 }
+                
+                // Detect when playback stopped (track ended or paused)
+                if old_is_playing && !new_is_playing {
+                    // Check if we were near the end of the track (within 2 seconds)
+                    let was_near_end = old_duration_ms.saturating_sub(old_progress_ms) < 2000;
+                    
+                    if was_near_end && self.playback_mode == PlaybackMode::Remote {
+                        tracing::info!(
+                            "Track ended naturally (progress: {}ms / {}ms) - triggering advance",
+                            old_progress_ms, old_duration_ms
+                        );
+                        self.trigger_remote_advance(client).await;
+                    } else {
+                        tracing::debug!(
+                            "Playback stopped (progress: {}ms / {}ms, near_end: {})",
+                            old_progress_ms, old_duration_ms, was_near_end
+                        );
+                    }
+                }
+                
                 let new_album_art_url = self.player_state.current_album_art_url.clone();
 
                 if new_track_uri != old_track_uri
@@ -222,6 +239,16 @@ impl App {
                 }
             }
             Ok(None) => {
+                // Playback stopped completely
+                if old_is_playing {
+                    tracing::info!("Playback stopped (no active playback context)");
+                    
+                    // If we were playing and now there's nothing, try to advance
+                    if self.playback_mode == PlaybackMode::Remote {
+                        self.trigger_remote_advance(client).await;
+                    }
+                }
+                
                 self.player_state.is_playing = false;
                 self.player_state.current_track_name = Some("Nothing playing".to_string());
                 self.player_state.current_artist_name = Some("".to_string());
@@ -240,6 +267,61 @@ impl App {
                 }
             }
         }
+    }
+    
+    /// Handle track auto-advance in remote mode
+    /// Called when Spotify advances to the next track within a context
+    async fn handle_remote_track_advance(&mut self) {
+        // Advance our internal queue tracking to stay in sync with Spotify
+        let queue = self.queue_state.playback_queue_mut();
+        if queue.has_context() {
+            // Spotify advanced within the context - advance our position tracker
+            // but don't actually play anything (Spotify is already playing)
+            let _ = queue.advance();
+            tracing::info!(
+                "Advanced queue position to {} (context: {})",
+                queue.context_position(),
+                queue.context().name()
+            );
+        }
+    }
+    
+    /// Trigger next track in remote mode
+    /// Called when current track ends and we need to continue playback
+    async fn trigger_remote_advance(&mut self, client: &Arc<Mutex<joshify::api::SpotifyClient>>) {
+        // Check if we have items in the up_next queue
+        let next_from_queue = {
+            let queue = self.queue_state.playback_queue_mut();
+            queue.advance()
+        };
+        
+        if let Some(next_uri) = next_from_queue {
+            // Play from user queue
+            tracing::info!("Advancing to next track from queue: {}", next_uri);
+            let c = client.clone();
+            tokio::spawn(async move {
+                let guard = c.lock().await;
+                if let Err(e) = guard.playback_next().await {
+                    tracing::warn!("Failed to advance to next track: {}", e);
+                }
+            });
+            } else {
+                // No queue items - check if we have context tracks to continue with
+                let queue = self.queue_state.playback_queue();
+                if queue.has_context() && queue.remaining_context_tracks() > 0 {
+                    // Spotify is already auto-advancing within the context
+                    // since we started playback with start_context_playback()
+                    // Just update our position tracker to stay in sync
+                    tracing::info!(
+                        "No queue items, Spotify auto-advancing within context ({} tracks remaining)",
+                        queue.remaining_context_tracks()
+                    );
+                    // The handle_remote_track_advance() will be called by the poll loop
+                    // when Spotify reports the track change, which will advance our position
+                } else {
+                    tracing::info!("No more tracks in queue or context - playback will stop");
+                }
+            }
     }
 }
 use ratatui::backend::CrosstermBackend;
@@ -738,8 +820,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     }
                     PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
                         app.player_state.is_playing = false;
-                        // Auto-advance to next queue item when track ends
+
+                        // PHASE 1: Check user-added queue (up_next) first - highest priority
                         if !app.queue_state.local_queue.is_empty() {
+                            tracing::info!(
+                                "EndOfTrack: Found {} items in user queue, advancing",
+                                app.queue_state.local_queue.len()
+                            );
                             if let Some(next_entry) = app.queue_state.next_track() {
                                 if let Some(ref player) = app.local_player {
                                     match player.load_uri(&next_entry.uri, true, 0) {
@@ -757,7 +844,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 next_entry.name
                                             ));
                                             tracing::info!(
-                                                "Auto-advanced to queue item: {}",
+                                                "Auto-advanced to user queue item: {}",
                                                 next_entry.name
                                             );
                                         }
@@ -769,6 +856,69 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                 }
                             }
+                        }
+                        // PHASE 2: Check context tracks if user queue is empty
+                        else if app.queue_state.playback_queue().remaining_context_tracks() > 0 {
+                            let remaining = app.queue_state.playback_queue().remaining_context_tracks();
+                            tracing::info!(
+                                "EndOfTrack: User queue empty, {} context tracks remaining. Advancing...",
+                                remaining
+                            );
+
+                            // Advance to next context track
+                            if let Some(next_uri) = app.queue_state.playback_queue_mut().advance() {
+                                tracing::info!(
+                                    "EndOfTrack: Advancing to next context track: {}",
+                                    next_uri
+                                );
+
+                                if let Some(ref player) = app.local_player {
+                                    match player.load_uri(&next_uri, true, 0) {
+                                        Ok(_) => {
+                                            // Try to get track info from the content state
+                                            let track_name = app.player_state.current_track_name.clone()
+                                                .unwrap_or_else(|| "Unknown".to_string());
+                                            let artist_name = app.player_state.current_artist_name.clone()
+                                                .unwrap_or_else(|| "Unknown".to_string());
+
+                                            app.player_state.current_track_uri = Some(next_uri.clone());
+                                            app.player_state.is_playing = true;
+                                            app.player_state.progress_ms = 0;
+                                            app.status_message = Some(format!(
+                                                "Playing next from playlist: {} - {}",
+                                                track_name,
+                                                artist_name
+                                            ));
+                                            tracing::info!(
+                                                "Auto-advanced to context track: {} ({} remaining)",
+                                                next_uri,
+                                                app.queue_state.playback_queue().remaining_context_tracks()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            app.status_message =
+                                                Some(format!("Context playback error: {}", e));
+                                            tracing::warn!(
+                                                "Failed to load next context track {}: {}",
+                                                next_uri,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "EndOfTrack: advance() returned None despite {} remaining tracks",
+                                    remaining
+                                );
+                            }
+                        }
+                        // PHASE 3: Nothing left to play
+                        else {
+                            tracing::info!(
+                                "EndOfTrack: No more tracks to play (queue empty, context exhausted)"
+                            );
+                            app.status_message = Some("Playback ended".to_string());
                         }
                     }
                     PlayerEvent::TrackChanged { audio_item } => {
@@ -1319,7 +1469,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.current_context = Some(PlaybackContext::Playlist {
                             uri: format!("spotify:playlist:{}", id),
                             name: name.clone(),
-                            track_index: 0,
+                            start_index: 0,
                         });
                         app.content_state =
                             ContentState::LoadingInProgress(LoadAction::PlaylistTracks {
@@ -2027,6 +2177,23 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             {
                                                 let track = &tracks[app.selected_index];
 
+                                                // Ensure the context has the correct start_index
+                                                // This is critical for URI-based offset playback
+                                                if let Some(PlaybackContext::Playlist { uri, name, .. }) = &app.current_context {
+                                                    let uri = uri.clone();
+                                                    let name = name.clone();
+                                                    app.current_context = Some(PlaybackContext::Playlist {
+                                                        uri: uri.clone(),
+                                                        name: name.clone(),
+                                                        start_index: app.selected_index,
+                                                    });
+                                                    tracing::info!(
+                                                        "Enter key: Updated playlist context start_index to {} for track {}",
+                                                        app.selected_index,
+                                                        track.name
+                                                    );
+                                                }
+
                                                 // Track the highlighted item for queue operations
                                                 app.highlighted_item = Some(HighlightedItem {
                                                     uri: track.uri.clone(),
@@ -2034,6 +2201,28 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     artist: track.artist.clone(),
                                                     _context: app.current_context.clone(),
                                                 });
+
+                                                // Populate playback queue for BOTH local and remote modes
+                                                // This ensures auto-advance works regardless of playback mode
+                                                if let Some(ref ctx) = app.current_context {
+                                                    let track_uris: Vec<String> = tracks.iter().map(|t| t.uri.clone()).collect();
+                                                    app.queue_state.playback_queue_mut().set_context(
+                                                        ctx.clone(),
+                                                        track_uris.clone(),
+                                                    );
+                                                    // Set the position to the selected track
+                                                    // advance() will return this track if called, but since we play
+                                                    // directly via API/player, we need to advance manually after playback
+                                                    app.queue_state.playback_queue_mut().set_context_position(app.selected_index);
+                                                    app.queue_state.sync_from_playback_queue();
+                                                    tracing::info!(
+                                                        "Populated playback queue with {} tracks for context playback. Position set to {} (track at index {}: {})",
+                                                        track_uris.len(),
+                                                        app.selected_index,
+                                                        app.selected_index,
+                                                        track.name
+                                                    );
+                                                }
 
                                                 if app.playback_mode == PlaybackMode::Local {
                                                     // Play locally with librespot
@@ -2055,6 +2244,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                                     "Playing locally: {}",
                                                                     track.name
                                                                 ));
+                                                                // Advance queue position so the selected track is "consumed"
+                                                                // This ensures when track ends, advance() returns the NEXT track
+                                                                let _ = app.queue_state.playback_queue_mut().advance();
+                                                                tracing::info!(
+                                                                    "Local playback started: consumed selected track, queue position now at {} ({} remaining)",
+                                                                    app.queue_state.playback_queue().context_position(),
+                                                                    app.queue_state.playback_queue().remaining_context_tracks()
+                                                                );
                                                             }
                                                             Err(e) => {
                                                                 app.status_message = Some(format!(
@@ -2092,12 +2289,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                                                 device_id,
                                                                             )
                                                                             .await;
+                                                                        // Small delay to let device transfer settle before play command
+                                                                        // This prevents race where transfer and play commands conflict
+                                                                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                                                                     }
                                                                 }
                                                             }
                                                             if let Some(
                                                                 PlaybackContext::Playlist {
                                                                     uri,
+                                                                    start_index,
                                                                     ..
                                                                 },
                                                             ) = &context
@@ -2112,10 +2313,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                                         playlist_id_str,
                                                                     )
                                                                 {
+                                                                    // Use URI-based offset for unambiguous track selection
+                                                                    // This is more reliable than index-based offsets which can drift
+                                                                    tracing::info!(
+                                                                        "Starting playlist playback: playlist_id={}, track_uri={}, start_index={}",
+                                                                        playlist_id_str,
+                                                                        track_uri,
+                                                                        *start_index
+                                                                    );
+                                                                    let offset = rspotify::model::Offset::Uri(track_uri.clone());
                                                                     let _ = guard.oauth.start_context_playback(
                                                                         rspotify::model::PlayContextId::from(playlist_id),
                                                                         None,
-                                                                        Some(rspotify::model::Offset::Uri(track_uri.clone())),
+                                                                        Some(offset),
                                                                         None,
                                                                     ).await;
                                                                 } else {
@@ -2834,22 +3044,53 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     {
                                         let playlist_uri =
                                             format!("spotify:playlist:{}", playlist_id);
-                                        app.current_context = Some(PlaybackContext::Playlist {
+                                        let context = PlaybackContext::Playlist {
                                             uri: playlist_uri,
                                             name: playlist_id.clone(),
-                                            track_index: index,
-                                        });
+                                            start_index: index,
+                                        };
+                                        app.current_context = Some(context.clone());
+
+                                        // Also populate the playback queue with context tracks
+                                        // so queue advancement works correctly
+                                        let track_uris: Vec<String> =
+                                            tracks.iter().map(|t| t.uri.clone()).collect();
+                                        app.queue_state
+                                            .playback_queue_mut()
+                                            .set_context(context, track_uris);
                                     }
 
-                                    // Track the highlighted item for queue operations
-                                    app.highlighted_item = Some(HighlightedItem {
-                                        uri: track.uri.clone(),
-                                        name: track.name.clone(),
-                                        artist: track.artist.clone(),
-                                        _context: app.current_context.clone(),
-                                    });
+                                                // Track the highlighted item for queue operations
+                                                app.highlighted_item = Some(HighlightedItem {
+                                                    uri: track.uri.clone(),
+                                                    name: track.name.clone(),
+                                                    artist: track.artist.clone(),
+                                                    _context: app.current_context.clone(),
+                                                });
 
-                                    if app.playback_mode == PlaybackMode::Local {
+                                                // If we have a playlist context, populate the
+                                                // playback queue with context tracks so queue
+                                                // advancement works correctly
+                                                if let ContentState::PlaylistTracks(_, ref ctx_tracks) = app.content_state {
+                                                    if let Some(ref ctx) = app.current_context {
+                                                        let track_uris: Vec<String> =
+                                                            ctx_tracks.iter().map(|t| t.uri.clone()).collect();
+                                                        app.queue_state
+                                                            .playback_queue_mut()
+                                                            .set_context(ctx.clone(), track_uris.clone());
+                                                        // Set position to the selected track
+                                                        app.queue_state.playback_queue_mut().set_context_position(index);
+                                                        app.queue_state.sync_from_playback_queue();
+                                                        tracing::info!(
+                                                            "Mouse: Populated playback queue with {} tracks. Position set to {} (track at index {})",
+                                                            track_uris.len(),
+                                                            index,
+                                                            index
+                                                        );
+                                                    }
+                                                }
+
+                                                if app.playback_mode == PlaybackMode::Local {
                                         // Play locally with librespot
                                         if let Some(ref player) = app.local_player {
                                             match player.load_uri(&track.uri, true, 0) {
@@ -2866,6 +3107,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         "Playing locally: {}",
                                                         track.name
                                                     ));
+                                                    // Advance queue position so the selected track is "consumed"
+                                                    let _ = app.queue_state.playback_queue_mut().advance();
+                                                    tracing::info!(
+                                                        "Mouse: Local playback started - consumed selected track, position now at {} ({} remaining)",
+                                                        app.queue_state.playback_queue().context_position(),
+                                                        app.queue_state.playback_queue().remaining_context_tracks()
+                                                    );
                                                 }
                                                 Err(e) => {
                                                     app.status_message = Some(format!(
@@ -2885,6 +3133,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             let track_uri = track.uri.clone();
                                             let track_name = track.name.clone();
                                             let context = app.current_context.clone();
+                                            let track_index = index; // Capture index for async block
                                             let playlist_id_for_context =
                                                 if let ContentState::PlaylistTracks(pid, _) =
                                                     &app.content_state
@@ -2914,10 +3163,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     if let Ok(playlist_id) =
                                                         rspotify::model::PlaylistId::from_id(&pid)
                                                     {
+                                                        // Use URI-based offset for unambiguous track selection
+                                                        // This is more reliable than index-based offsets
+                                                        tracing::info!(
+                                                            "Mouse: Starting playlist playback: playlist_id={}, track_uri={}, track_index={}",
+                                                            pid,
+                                                            track_uri,
+                                                            track_index
+                                                        );
+                                                        let offset = rspotify::model::Offset::Uri(track_uri.clone());
                                                         let _ = guard.oauth.start_context_playback(
                                                             rspotify::model::PlayContextId::from(playlist_id),
                                                             None,
-                                                            Some(rspotify::model::Offset::Uri(track_uri.clone())),
+                                                            Some(offset),
                                                             None,
                                                         ).await;
                                                     } else {
@@ -2928,6 +3186,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     }
                                                 } else if let Some(PlaybackContext::Playlist {
                                                     uri,
+                                                    start_index,
                                                     ..
                                                 }) = &context
                                                 {
@@ -2940,10 +3199,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                             playlist_id_str,
                                                         )
                                                     {
+                                                        // Use URI-based offset for unambiguous track selection
+                                                        tracing::info!(
+                                                            "Existing context: Starting playlist playback: playlist_id={}, track_uri={}, start_index={}",
+                                                            playlist_id_str,
+                                                            track_uri,
+                                                            *start_index
+                                                        );
+                                                        let offset = rspotify::model::Offset::Uri(track_uri.clone());
                                                         let _ = guard.oauth.start_context_playback(
                                                             rspotify::model::PlayContextId::from(playlist_id),
                                                             None,
-                                                            Some(rspotify::model::Offset::Uri(track_uri.clone())),
+                                                            Some(offset),
                                                             None,
                                                         ).await;
                                                     } else {
@@ -3240,5 +3507,155 @@ async fn run_search_test(args: CliArgs) -> Result<()> {
     } else {
         println!("\n🎉 All searches working!");
         Ok(())
+    }
+}
+
+// =============================================================================
+// Tests for Auto-Advance and Queue Management
+// =============================================================================
+
+#[cfg(test)]
+mod playback_tests {
+    use super::*;
+    use joshify::playback::domain::{PlaybackQueue, PlaybackContext, QueueEntry};
+
+    /// Test that PlaybackQueue correctly advances through context tracks
+    #[test]
+    fn test_queue_advances_through_context_tracks() {
+        let mut queue = PlaybackQueue::new();
+        
+        // Set up a playlist context with 5 tracks
+        queue.set_context(
+            PlaybackContext::Playlist {
+                uri: "spotify:playlist:test".to_string(),
+                name: "Test Playlist".to_string(),
+                start_index: 0,
+            },
+            vec![
+                "spotify:track:1".to_string(),
+                "spotify:track:2".to_string(),
+                "spotify:track:3".to_string(),
+                "spotify:track:4".to_string(),
+                "spotify:track:5".to_string(),
+            ],
+        );
+        
+        // Verify initial state
+        assert_eq!(queue.context_position(), 0);
+        assert_eq!(queue.remaining_context_tracks(), 5);
+        
+        // Advance through tracks
+        assert_eq!(queue.advance(), Some("spotify:track:1".to_string()));
+        assert_eq!(queue.context_position(), 1);
+        assert_eq!(queue.remaining_context_tracks(), 4);
+        
+        assert_eq!(queue.advance(), Some("spotify:track:2".to_string()));
+        assert_eq!(queue.context_position(), 2);
+        assert_eq!(queue.remaining_context_tracks(), 3);
+        
+        assert_eq!(queue.advance(), Some("spotify:track:3".to_string()));
+        assert_eq!(queue.advance(), Some("spotify:track:4".to_string()));
+        assert_eq!(queue.advance(), Some("spotify:track:5".to_string()));
+        
+        // Queue exhausted
+        assert_eq!(queue.advance(), None);
+        assert_eq!(queue.remaining_context_tracks(), 0);
+    }
+
+    /// Test that up_next queue takes priority over context tracks
+    #[test]
+    fn test_up_next_queue_priority() {
+        let mut queue = PlaybackQueue::new();
+        
+        // Set up context
+        queue.set_context(
+            PlaybackContext::Playlist {
+                uri: "spotify:playlist:test".to_string(),
+                name: "Test Playlist".to_string(),
+                start_index: 0,
+            },
+            vec![
+                "spotify:track:ctx1".to_string(),
+                "spotify:track:ctx2".to_string(),
+            ],
+        );
+        
+        // Add user-queued tracks
+        queue.add_to_up_next(QueueEntry {
+            uri: "spotify:track:queue1".to_string(),
+            name: "Queue Track 1".to_string(),
+            artist: "Artist".to_string(),
+            added_by_user: true,
+            is_recommendation: false,
+        });
+        
+        queue.add_to_up_next(QueueEntry {
+            uri: "spotify:track:queue2".to_string(),
+            name: "Queue Track 2".to_string(),
+            artist: "Artist".to_string(),
+            added_by_user: true,
+            is_recommendation: false,
+        });
+        
+        // User queue plays first
+        assert_eq!(queue.advance(), Some("spotify:track:queue1".to_string()));
+        assert_eq!(queue.advance(), Some("spotify:track:queue2".to_string()));
+        
+        // Then context tracks
+        assert_eq!(queue.advance(), Some("spotify:track:ctx1".to_string()));
+        assert_eq!(queue.advance(), Some("spotify:track:ctx2".to_string()));
+        
+        // Exhausted
+        assert_eq!(queue.advance(), None);
+    }
+
+    /// Test queue behavior when empty
+    #[test]
+    fn test_empty_queue_behavior() {
+        let mut queue = PlaybackQueue::new();
+        
+        // Empty queue returns None
+        assert_eq!(queue.advance(), None);
+        assert_eq!(queue.remaining_context_tracks(), 0);
+        assert!(queue.is_exhausted());
+        
+        // Add context
+        queue.set_context(
+            PlaybackContext::Playlist {
+                uri: "spotify:playlist:test".to_string(),
+                name: "Test".to_string(),
+                start_index: 0,
+            },
+            vec!["spotify:track:1".to_string()],
+        );
+        
+        assert!(!queue.is_exhausted());
+        assert_eq!(queue.advance(), Some("spotify:track:1".to_string()));
+        assert!(queue.is_exhausted());
+    }
+
+    /// Test that queue correctly tracks position after multiple advances
+    #[test]
+    fn test_queue_position_tracking() {
+        let mut queue = PlaybackQueue::new();
+        
+        queue.set_context(
+            PlaybackContext::Album {
+                uri: "spotify:album:test".to_string(),
+                name: "Test Album".to_string(),
+            },
+            (1..=10).map(|i| format!("spotify:track:{}", i)).collect(),
+        );
+        
+        // Advance 5 times
+        for i in 1..=5 {
+            queue.advance();
+            assert_eq!(queue.context_position(), i);
+            assert_eq!(queue.remaining_context_tracks(), 10 - i);
+        }
+        
+        // Current position should be 5, 5 tracks remaining
+        assert_eq!(queue.context_position(), 5);
+        assert_eq!(queue.remaining_context_tracks(), 5);
     }
 }

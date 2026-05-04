@@ -10,6 +10,7 @@ pub mod logging;
 pub mod lyrics;
 pub mod media_control;
 pub mod notifications;
+pub mod playback;
 pub mod player;
 pub mod search;
 pub mod session;

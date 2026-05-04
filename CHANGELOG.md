@@ -1,3 +1,17 @@
+## [0.5.0](https://github.com/bigknoxy/joshify/compare/v0.4.0...v0.5.0) (2026-05-04)
+
+### Bug Fixes
+
+- **Playback Queue Auto-Advance**: Fixed issue where selecting a track in a playlist would cause it to play twice before continuing. Now correctly advances to the next track after playback ends.
+- **Remote Mode Context Playback**: Fixed duplicate `playback_next()` call that could cause skipped tracks in Remote mode. Spotify handles auto-advance within context.
+- **Mouse Click Handler**: Fixed missing `set_context_position()` call when double-clicking tracks, ensuring queue advancement works correctly for mouse interactions.
+
+### Technical Details
+
+- Added explicit `advance()` call after starting playback to keep queue position in sync
+- Improved debug logging throughout playback flow for easier troubleshooting
+- Fixed position tracking semantics: `context_position` now correctly represents "next track to be returned by advance()"
+
 ## [0.4.0](https://github.com/bigknoxy/joshify/compare/v0.3.0...v0.4.0) (2026-04-27)
 
 ### Features

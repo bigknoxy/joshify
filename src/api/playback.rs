@@ -112,9 +112,10 @@ impl SpotifyClient {
     }
 
     /// Transfer playback to a device
+    /// Note: play=false to avoid race with subsequent play commands
     pub async fn transfer_playback(&self, device_id: &str) -> Result<()> {
         self.oauth
-            .transfer_playback(device_id, Some(true))
+            .transfer_playback(device_id, Some(false))
             .await
             .context("Failed to transfer playback")?;
         Ok(())

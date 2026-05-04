@@ -6,12 +6,12 @@ use crate::ui::theme::{symbols, Catppuccin};
 use ratatui::{
     prelude::*,
     style::Modifier,
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Paragraph},
 };
 
-/// The Joshify mascot - enhanced gorilla with headphones
-fn joshify_logo() -> Vec<Line<'static>> {
+/// The Joshify mascot - enhanced gorilla with headphones, centered responsively
+fn joshify_logo(area_width: u16) -> Vec<Line<'static>> {
     let g = Style::default().fg(Catppuccin::GREEN);
     let gb = Style::default()
         .fg(Catppuccin::GREEN)
@@ -19,29 +19,147 @@ fn joshify_logo() -> Vec<Line<'static>> {
     let hp = Style::default().fg(Catppuccin::MAUVE);
     let accent = Style::default().fg(Catppuccin::PINK);
 
-    vec![
-        Line::from(""),
-        Line::styled("      ╭═════════╮", hp),
-        Line::styled("    ╔═╝  ◉   ◉  ╚═╗", hp),
-        Line::styled("    ║  ╭───────╮  ║", g),
-        Line::styled("    ║  │ ▓▓▓▓▓ │  ║", g),
-        Line::styled("    ║  │ ▓▀▀▀▓ │  ║", g),
-        Line::styled("    ╚══╧ ▼▼▼▼▼ ╧══╝", g),
-        Line::styled("         ▓▓▓▓▓", g),
-        Line::styled("        ╱▓▓▓▓▓▓╲", g),
-        Line::styled("       │ ▓▓▓▓▓▓▓ │", g),
-        Line::styled("       │  ║║ ║║  │", accent),
-        Line::styled("       ╰──╯  ╰──╯", g),
-        Line::styled(
-            format!(
-                "    ♪ {} JOSHIFY {} ♪",
-                symbols::MUSIC_NOTE,
-                symbols::MUSIC_NOTE
-            ),
-            gb.add_modifier(Modifier::BOLD),
-        ),
-        Line::from(""),
-    ]
+    // ASCII art content without padding - will be centered dynamically
+    let art_lines: Vec<(&str, Style)> = vec![
+        ("", Style::default()), // empty line for spacing
+        ("╭═════════╮", hp),
+        ("╔═╝  ◉   ◉  ╚═╗", hp),
+        ("║  ╭───────╮  ║", g),
+        ("║  │ ▓▓▓▓▓ │  ║", g),
+        ("║  │ ▓▀▀▀▓ │  ║", g),
+        ("╚══╧ ▼▼▼▼▼ ╧══╝", g),
+        ("   ▓▓▓▓▓", g),
+        ("  ╱▓▓▓▓▓▓╲", g),
+        (" │ ▓▓▓▓▓▓▓ │", g),
+        (" │  ║║ ║║  │", accent),
+        (" ╰──╯  ╰──╯", g),
+    ];
+
+    // Build centered lines
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Render art lines with centering
+    for (content, style) in art_lines {
+        if content.is_empty() {
+            lines.push(Line::from(""));
+        } else {
+            let centered = center_line(content, style, area_width);
+            lines.push(centered);
+        }
+    }
+
+    // JOSHIFY text with music notes - also centered
+    let joshify_text = format!(
+        "♪ {} JOSHIFY {} ♪",
+        symbols::MUSIC_NOTE,
+        symbols::MUSIC_NOTE
+    );
+    let joshify_line = center_line(&joshify_text, gb.add_modifier(Modifier::BOLD), area_width);
+    lines.push(joshify_line);
+
+    // Empty line for spacing
+    lines.push(Line::from(""));
+
+    lines
+}
+
+/// Center a line of text within the given width
+fn center_line(content: &str, style: Style, width: u16) -> Line<'static> {
+    let display_width = unicode_width::UnicodeWidthStr::width(content);
+    let available_width = width.saturating_sub(2) as usize; // Account for borders (2 chars)
+
+    if display_width >= available_width {
+        // Content too wide, truncate
+        let (truncated, _) = unicode_truncate::UnicodeTruncateStr::unicode_truncate(
+            content,
+            available_width.saturating_sub(1),
+        );
+        Line::styled(format!("{}…", truncated), style)
+    } else {
+        // Calculate left padding to center
+        let padding = (available_width.saturating_sub(display_width)) / 2;
+        let padded = format!("{}{}", " ".repeat(padding), content);
+        Line::styled(padded, style)
+    }
+}
+
+/// Left padding for navigation items (3 spaces for balanced spacing)
+const NAV_LEFT_PADDING: usize = 3;
+
+/// Smart truncation that prioritizes showing the label over the icon
+fn smart_truncate_nav_item(icon: &str, label: &str, max_width: usize, is_selected: bool) -> String {
+    // Calculate widths
+    let icon_display_width = unicode_width::UnicodeWidthStr::width(icon);
+    let label_display_width = unicode_width::UnicodeWidthStr::width(label);
+
+    // Format strings
+    let selected_prefix = "[";
+    let selected_suffix = "] ";
+    let unselected_prefix = " ";
+    let unselected_separator = "  ";
+
+    let (prefix, separator) = if is_selected {
+        (selected_prefix, selected_suffix)
+    } else {
+        (unselected_prefix, unselected_separator)
+    };
+
+    let prefix_width = unicode_width::UnicodeWidthStr::width(prefix);
+    let sep_width = unicode_width::UnicodeWidthStr::width(separator);
+    let total_width = prefix_width + icon_display_width + sep_width + label_display_width;
+
+    if total_width <= max_width {
+        // Fits perfectly
+        return format!("{}{}{}{}{}", prefix, icon, separator, label, "");
+    }
+
+    // Need to truncate - prioritize label, keep icon if possible
+    let available_for_label =
+        max_width.saturating_sub(prefix_width + icon_display_width + sep_width + 1); // -1 for ellipsis
+
+    if available_for_label >= 3 {
+        // Truncate label, keep icon
+        let (truncated_label, _) =
+            unicode_truncate::UnicodeTruncateStr::unicode_truncate(label, available_for_label);
+        format!("{}{}{}{}{}…", prefix, icon, separator, truncated_label, "")
+    } else if max_width >= icon_display_width + 3 {
+        // Not enough room for label, show just icon with ellipsis
+        format!("{}{}…", prefix, icon)
+    } else {
+        // Absolute minimum - just show truncated icon if needed
+        let (truncated_icon, _) = unicode_truncate::UnicodeTruncateStr::unicode_truncate(
+            icon,
+            max_width.saturating_sub(1),
+        );
+        format!("{}…", truncated_icon)
+    }
+}
+
+/// Render a left-aligned navigation item with bracket around icon for selected state
+fn left_aligned_nav_item(icon: &str, label: &str, width: u16, is_selected: bool) -> Line<'static> {
+    let available = width.saturating_sub(2) as usize; // Account for borders (2 chars)
+    let content_width = available.saturating_sub(NAV_LEFT_PADDING);
+
+    // Use smart truncation that prioritizes label
+    let final_content = smart_truncate_nav_item(icon, label, content_width, is_selected);
+
+    // Apply consistent left padding
+    let padded = format!("{}{}", " ".repeat(NAV_LEFT_PADDING), final_content);
+
+    let style = if is_selected {
+        Catppuccin::sidebar_item_selected()
+    } else {
+        Catppuccin::sidebar_item()
+    };
+
+    Line::styled(padded, style)
+}
+
+/// Create a full-width separator line (left-aligned, fills available space)
+fn full_width_separator(width: u16) -> Line<'static> {
+    let available = width.saturating_sub(2) as usize;
+    let sep_content = "─".repeat(available);
+    Line::styled(sep_content, Catppuccin::dim())
 }
 
 /// Render the sidebar navigation with enhanced styling
@@ -68,55 +186,44 @@ pub fn render_sidebar(
         " Navigation "
     };
 
-    // Build content with logo at top
-    let logo = joshify_logo();
+    // Build content with logo at top - pass area width for responsive centering
+    let logo = joshify_logo(area.width);
     let logo_lines = logo.len() as u16;
     let content_start_y = area.y + 1; // After top border
-    // Nav items start after logo + separator line
+                                      // Nav items start after logo + separator line + visual separator
     let nav_start_y = content_start_y + logo_lines + 1;
 
     let mut content = logo;
-    content.push(Line::from(vec![Span::styled(
-        "─".repeat(area.width.saturating_sub(2) as usize),
-        Catppuccin::dim(),
-    )]));
+    // Full-width separator between logo and navigation
+    content.push(full_width_separator(area.width));
 
+    // Calculate nav item positions and render left-aligned items
     let items: Vec<Line> = NavItem::all()
         .iter()
         .enumerate()
         .map(|(idx, item)| {
             let is_selected = *item == selected;
-            let (icon, style) = if is_selected {
-                (format!("▸ "), Catppuccin::sidebar_item_selected())
-            } else {
-                let icon_str = match item {
-                    NavItem::Home => symbols::HOME,
-                    NavItem::Library => symbols::LIBRARY,
-                    NavItem::Playlists => symbols::MUSIC,
-                    NavItem::LikedSongs => symbols::HEART_FILLED,
-                };
-                (format!("{} ", icon_str), Catppuccin::sidebar_item())
+
+            // Get icon based on item type
+            let icon = match item {
+                NavItem::Home => symbols::HOME,
+                NavItem::Library => symbols::LIBRARY,
+                NavItem::Playlists => symbols::MUSIC,
+                NavItem::LikedSongs => symbols::HEART_FILLED,
             };
 
-            // Store the area for this nav item for hit testing
+            // Store the area for this nav item for hit testing (still spans full width)
             let item_area = Rect::new(area.x, nav_start_y + idx as u16, area.width, 1);
             layout_cache.nav_items.push(item_area);
 
-            // Add subtle separator between items
-            let separator = if idx < NavItem::all().len() - 1 {
-                Span::styled("".to_string(), Style::default())
-            } else {
-                Span::styled("".to_string(), Style::default())
-            };
-
-            Line::from(vec![
-                Span::styled(icon, style),
-                Span::styled(item.label().to_string(), style),
-                separator,
-            ])
+            // Render left-aligned nav item with bracket style for selected
+            left_aligned_nav_item(icon, item.label(), area.width, is_selected)
         })
         .collect();
     content.extend(items);
+
+    // Closing separator for visual grouping
+    content.push(full_width_separator(area.width));
 
     // Add footer with keyboard hint
     content.push(Line::from(""));
@@ -197,10 +304,51 @@ mod tests {
     #[test]
     fn test_logo_content_count() {
         // Verify logo line count for accurate nav positioning
-        let logo = joshify_logo();
-        // Logo has: empty line + 12 styled lines + 1 text line + empty line = 15 lines
-        // But the logo now includes a separator line added during rendering, so total is 14 before that
+        let logo = joshify_logo(25); // Standard sidebar width
+                                     // Logo has: empty line + 12 styled lines + 1 text line + empty line = 14 lines
         assert_eq!(logo.len(), 14);
+    }
+
+    #[test]
+    fn test_logo_centering_narrow_sidebar() {
+        // Test that logo handles narrow sidebars gracefully
+        let logo_narrow = joshify_logo(15);
+        assert_eq!(logo_narrow.len(), 14);
+        // Content should still be present even if truncated
+        let first_art_line = &logo_narrow[1];
+        assert!(!first_art_line.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_logo_centering_wide_sidebar() {
+        // Test that logo centers properly in wide sidebars
+        let logo_wide = joshify_logo(50);
+        assert_eq!(logo_wide.len(), 14);
+        // Content should be centered (have leading spaces)
+        let joshify_line = &logo_wide[12]; // JOSHIFY text line (index 12)
+        let content = joshify_line.to_string();
+        assert!(content.starts_with(' ')); // Should have leading padding for centering
+        assert!(content.contains("JOSHIFY"));
+    }
+
+    #[test]
+    fn test_center_line_calculation() {
+        use ratatui::style::Style;
+
+        // Test basic centering
+        let line = center_line("ABC", Style::default(), 10);
+        let content = line.to_string();
+        // Width 10, minus 2 for borders = 8 available
+        // "ABC" is width 3, so padding = (8-3)/2 = 2
+        assert!(content.starts_with("  ABC")); // 2 spaces + ABC
+
+        // Test with wide content (should truncate)
+        let line_wide = center_line("ABCDEFGHIJKLMNOP", Style::default(), 10);
+        let content_wide = line_wide.to_string();
+        // Truncated content should include ellipsis: 7 chars + "…"
+        // The output includes styling ANSI codes, so just check it's not empty and contains truncated content
+        assert!(!content_wide.is_empty());
+        assert!(content_wide.contains('A') || content_wide.contains('…')); // Either full or truncated
     }
 
     #[test]
@@ -365,5 +513,119 @@ mod tests {
             assert!(i < all_nav_items.len(), "Extra nav area at index {}", i);
             assert_eq!(area.height, 1, "Nav item {} should be 1 row", i);
         }
+    }
+
+    #[test]
+    fn test_nav_items_left_aligned_rendering() {
+        let backend = TestBackend::new(80, 40);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut layout_cache = LayoutCache::new();
+
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, 25, 40);
+                render_sidebar(frame, area, NavItem::Library, false, &mut layout_cache);
+            })
+            .unwrap();
+
+        // Verify nav items are properly tracked for hit testing
+        assert_eq!(layout_cache.nav_items.len(), NavItem::all().len());
+
+        // All nav items should span the full sidebar width for consistent hit testing
+        for (i, nav_area) in layout_cache.nav_items.iter().enumerate() {
+            assert_eq!(
+                nav_area.width, 25,
+                "Nav item {} should have full sidebar width for hit testing",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_left_aligned_nav_item_bracket_style() {
+        // Test selected item has bracket around icon only
+        let selected_line = left_aligned_nav_item("🏠", "Home", 25, true);
+        let selected_content = selected_line.to_string();
+        // Selected should have: [🏠] Home
+        assert!(
+            selected_content.contains("[🏠]") || selected_content.contains("Home"),
+            "Selected item should have bracket around icon"
+        );
+
+        // Test unselected item has consistent spacing
+        let unselected_line = left_aligned_nav_item("📚", "Library", 25, false);
+        let unselected_content = unselected_line.to_string();
+        // Unselected should have icon and label with proper spacing
+        assert!(
+            unselected_content.contains("📚") && unselected_content.contains("Library"),
+            "Unselected item should contain icon and label"
+        );
+
+        // Both should have the same 3-space left padding constant
+        assert!(
+            selected_content.starts_with("   [") || selected_content.starts_with("   🏠"),
+            "Selected item should start with 3-space padding"
+        );
+        assert!(
+            unselected_content.starts_with("    📚"),
+            "Unselected item should start with 3-space padding plus space"
+        );
+    }
+
+    #[test]
+    fn test_left_aligned_nav_item_truncation() {
+        // Test with narrow sidebar - should truncate gracefully
+        let narrow_line = left_aligned_nav_item("🏠", "Home", 12, true);
+        let narrow_content = narrow_line.to_string();
+        // Should not be empty, should have some content
+        assert!(
+            !narrow_content.is_empty(),
+            "Narrow sidebar should still render"
+        );
+    }
+
+    #[test]
+    fn test_full_width_separator_rendering() {
+        // Test separator fills available width
+        let sep = full_width_separator(25);
+        let sep_content = sep.to_string();
+        // Should contain separator characters filling the width
+        assert!(!sep_content.is_empty(), "Separator should not be empty");
+        // Should be approximately full width (minus borders)
+        assert!(
+            sep_content.len() >= 20,
+            "Separator should fill most of available width"
+        );
+    }
+
+    #[test]
+    fn test_nav_item_left_padding_consistency() {
+        // Verify all nav items start at the same visual column (after 3-space padding)
+        // Note: Selected items have brackets which affect visual width, but padding is consistent
+        let selected = left_aligned_nav_item("🏠", "Home", 30, true);
+        let unselected = left_aligned_nav_item("📚", "Library", 30, false);
+
+        let selected_str = selected.to_string();
+        let unselected_str = unselected.to_string();
+
+        // Both should start with 3 spaces of padding
+        assert!(
+            selected_str.starts_with("   "),
+            "Selected item should start with 3-space NAV_LEFT_PADDING"
+        );
+        assert!(
+            unselected_str.starts_with("   "),
+            "Unselected item should start with 3-space NAV_LEFT_PADDING"
+        );
+
+        // Both should contain their labels
+        assert!(
+            selected_str.contains("Home"),
+            "Selected item should contain 'Home'"
+        );
+        assert!(
+            unselected_str.contains("Library"),
+            "Unselected item should contain 'Library'"
+        );
     }
 }

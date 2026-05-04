@@ -68,6 +68,22 @@ tokio::spawn(async move { spirc_task.await; });
 
 ---
 
+## 2025-05-04: Playback Queue Position Management
+
+### Failure Mode: Track plays twice when selected from middle of playlist
+- **Signal**: User presses Enter on track 3, track 3 plays, then track 3 plays again, then track 4
+- **Root Cause**: `PlaybackQueue.context_position` tracks what `advance()` will return next. When playing track N directly via API/player (not via `advance()`), the position wasn't being advanced.
+- **The Fix**: After starting playback, call `advance()` to "consume" the selected track, moving position to N+1
+- **Prevention Rule**: When playing directly via API/player, ALWAYS call `advance()` afterwards to keep queue in sync
+- **Code Pattern**:
+  ```rust
+  queue.set_context_position(selected_index);
+  player.load_uri(&track.uri, true, 0)?;  // Start playback
+  let _ = queue.advance();  // Consume the track - critical!
+  ```
+
+---
+
 ## 2026-04-03: Testing approach
 
 ### Binary crate testing

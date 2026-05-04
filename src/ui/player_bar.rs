@@ -278,7 +278,11 @@ pub fn render_player_bar(
     // Render the title row with MODERN controls - using symbols instead of text
     let title_line = Line::from(vec![
         Span::styled(
-            format!("{:<width$}", symbols::SKIP_PREV, width = PREV_BUTTON_WIDTH as usize),
+            format!(
+                "{:<width$}",
+                symbols::SKIP_PREV,
+                width = PREV_BUTTON_WIDTH as usize
+            ),
             Style::default()
                 .fg(Catppuccin::BLUE)
                 .add_modifier(Modifier::BOLD),
@@ -286,7 +290,11 @@ pub fn render_player_bar(
         Span::styled(
             format!(
                 "{:^width$}",
-                if is_playing { symbols::PAUSE } else { symbols::PLAY },
+                if is_playing {
+                    symbols::PAUSE
+                } else {
+                    symbols::PLAY
+                },
                 width = PLAY_PAUSE_BUTTON_WIDTH.saturating_sub(1) as usize
             ),
             Style::default()
@@ -294,7 +302,11 @@ pub fn render_player_bar(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("{:<width$}", symbols::SKIP_NEXT, width = NEXT_BUTTON_WIDTH as usize),
+            format!(
+                "{:<width$}",
+                symbols::SKIP_NEXT,
+                width = NEXT_BUTTON_WIDTH as usize
+            ),
             Style::default()
                 .fg(Catppuccin::BLUE)
                 .add_modifier(Modifier::BOLD),
