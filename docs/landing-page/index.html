@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Joshify — Terminal Spotify Client</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+    <meta name="theme-color" content="#0d0d0f">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -654,63 +659,290 @@
         /* Demo Section */
         .demo {
             padding: 6rem 3rem;
+            background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
         }
 
-        .demo-grid {
-            max-width: 1200px;
+        .demo-container {
+            max-width: 1000px;
             margin: 0 auto;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
+        }
+
+        .terminal-window-large {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 
+                0 25px 50px -12px rgba(0, 0, 0, 0.5),
+                0 0 0 1px rgba(203, 166, 247, 0.1);
+        }
+
+        .terminal-window-large .terminal-header {
+            padding: 0.75rem 1rem;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            display: flex;
             align-items: center;
+            gap: 0.5rem;
         }
 
-        .demo-text h3 {
-            font-size: 1.75rem;
-            font-weight: 600;
+        .terminal-window-large .terminal-body {
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            min-height: 400px;
+        }
+
+        .terminal-line {
             margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        .demo-text p {
+        .terminal-line .prompt {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        .terminal-line .command-text {
+            color: var(--text-primary);
+        }
+
+        .terminal-line .cursor {
+            color: var(--accent-mauve);
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .terminal-output {
             color: var(--text-secondary);
-            margin-bottom: 1.5rem;
+            margin: 0.5rem 0 1rem 1.5rem;
+            font-size: 0.8rem;
         }
 
-        .demo-list {
-            list-style: none;
+        .terminal-ui-preview {
+            margin-top: 1.5rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
         }
 
-        .demo-list li {
+        .ui-frame {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            min-height: 280px;
+        }
+
+        .ui-sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            padding: 1rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .ui-section {
             display: flex;
             align-items: center;
             gap: 0.75rem;
-            padding: 0.5rem 0;
+            padding: 0.6rem 0.75rem;
+            border-radius: 6px;
             color: var(--text-secondary);
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
         }
 
-        .demo-list li::before {
-            content: '▸';
-            color: var(--accent-green);
-            font-weight: bold;
+        .ui-section.active {
+            background: rgba(203, 166, 247, 0.15);
+            color: var(--text-primary);
+            border-left: 2px solid var(--accent-mauve);
         }
 
-        .demo-visual {
+        .ui-section:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .ui-section .ui-icon {
+            font-size: 1rem;
+        }
+
+        .ui-main {
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .ui-now-playing {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
-            position: relative;
+            border-radius: 8px;
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: 50px 1fr auto;
+            gap: 1rem;
+            align-items: center;
         }
 
-        .demo-visual::after {
-            content: '';
-            position: absolute;
-            top: -1px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100px;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, var(--accent-mauve), transparent);
+        .ui-album-art {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--accent-mauve), var(--accent-blue));
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .ui-track-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .ui-track-name {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .ui-artist {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .ui-controls {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .control-btn {
+            width: 32px;
+            height: 32px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+
+        .control-btn:hover {
+            background: var(--accent-mauve);
+            border-color: var(--accent-mauve);
+        }
+
+        .control-btn.playing {
+            background: var(--accent-green);
+            border-color: var(--accent-green);
+            color: var(--bg-primary);
+        }
+
+        .ui-progress {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .progress-bar {
+            flex: 1;
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-mauve), var(--accent-green));
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-time {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .ui-visualizer {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 4px;
+            height: 60px;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+
+        .viz-bar {
+            width: 8px;
+            background: linear-gradient(to top, var(--accent-mauve), var(--accent-green));
+            border-radius: 2px;
+            opacity: 0.8;
+            animation: viz-pulse 0.5s ease-in-out infinite alternate;
+        }
+
+        .viz-bar:nth-child(2n) { animation-delay: 0.1s; }
+        .viz-bar:nth-child(3n) { animation-delay: 0.2s; }
+        .viz-bar:nth-child(4n) { animation-delay: 0.3s; }
+        .viz-bar:nth-child(5n) { animation-delay: 0.15s; }
+
+        @keyframes viz-pulse {
+            0% { transform: scaleY(0.8); opacity: 0.6; }
+            100% { transform: scaleY(1); opacity: 1; }
+        }
+
+        .ui-help-hint {
+            text-align: center;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .key {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-primary);
+            margin: 0 0.1rem;
+        }
+
+        .key-inline {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-mauve);
+            margin: 0 0.15rem;
+        }
+
+        .demo-info kbd {
+            font-family: 'JetBrains Mono', monospace;
         }
 
         .theme-showcase {
@@ -1103,56 +1335,104 @@
     </section>
 
     <section class="demo" id="demo">
-        <div class="demo-grid">
-            <div class="demo-text scroll-reveal">
-                <span class="section-label">Interface</span>
-                <h3>Keyboard First, Mouse Friendly</h3>
-                <p>Vim-style navigation with full mouse support. Navigate with hjkl, click to play, scroll to browse. Your choice.</p>
-                <ul class="demo-list">
-                    <li>Tab / Shift+Tab to switch sections</li>
-                    <li>Space for play/pause</li>
-                    <li>n / p for next/previous</li>
-                    <li>/ to search</li>
-                    <li>? for help</li>
-                    <li>q to quit</li>
-                </ul>
-            </div>
-            <div class="demo-visual scroll-reveal">
-                <div class="theme-showcase">
-                    <div class="theme-item">
-                        <div class="theme-colors">
-                            <div class="theme-color" style="background: #1e1e2e;"></div>
-                            <div class="theme-color" style="background: #cba6f7;"></div>
-                            <div class="theme-color" style="background: #a6e3a1;"></div>
-                        </div>
-                        <span class="theme-name">Catppuccin Mocha</span>
+        <div class="section-header scroll-reveal" style="text-align: center; margin-bottom: 3rem;">
+            <span class="section-label">Live Demo</span>
+            <h2>See it in action</h2>
+            <p class="section-subtitle">
+                Interactive terminal simulation showing actual Joshify gameplay.
+            </p>
+        </div>
+        <div class="demo-container scroll-reveal">
+            <div class="terminal-window-large">
+                <div class="terminal-header">
+                    <div class="terminal-dot red"></div>
+                    <div class="terminal-dot yellow"></div>
+                    <div class="terminal-dot green"></div>
+                    <span class="terminal-title">joshify -- demo</span>
+                </div>
+                <div class="terminal-body" id="demo-terminal">
+                    <div class="terminal-line">
+                        <span class="prompt">$</span>
+                        <span class="command-text" id="demo-command"></span>
+                        <span class="cursor">█</span>
                     </div>
-                    <div class="theme-item">
-                        <div class="theme-colors">
-                            <div class="theme-color" style="background: #282828;"></div>
-                            <div class="theme-color" style="background: #fabd2f;"></div>
-                            <div class="theme-color" style="background: #b8bb26;"></div>
+                    <div class="terminal-output" id="demo-output"></div>
+                    <div class="terminal-ui-preview">
+                        <div class="ui-frame">
+                            <div class="ui-sidebar">
+                                <div class="ui-section active">
+                                    <span class="ui-icon">🏠</span>
+                                    <span class="ui-label">Home</span>
+                                </div>
+                                <div class="ui-section">
+                                    <span class="ui-icon">🔍</span>
+                                    <span class="ui-label">Search</span>
+                                </div>
+                                <div class="ui-section">
+                                    <span class="ui-icon">📚</span>
+                                    <span class="ui-label">Library</span>
+                                </div>
+                                <div class="ui-section">
+                                    <span class="ui-icon">📋</span>
+                                    <span class="ui-label">Queue</span>
+                                </div>
+                            </div>
+                            <div class="ui-main">
+                                <div class="ui-now-playing">
+                                    <div class="ui-album-art">🎵</div>
+                                    <div class="ui-track-info">
+                                        <div class="ui-track-name">Never Gonna Give You Up</div>
+                                        <div class="ui-artist">Rick Astley</div>
+                                    </div>
+                                    <div class="ui-controls">
+                                        <span class="control-btn">⏮</span>
+                                        <span class="control-btn playing">⏸</span>
+                                        <span class="control-btn">⏭</span>
+                                    </div>
+                                    <div class="ui-progress">
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" style="width: 45%"></div>
+                                        </div>
+                                        <div class="progress-time">1:23 / 3:32</div>
+                                    </div>
+                                </div>
+                                <div class="ui-visualizer">
+                                    <div class="viz-bar" style="height: 30%"></div>
+                                    <div class="viz-bar" style="height: 60%"></div>
+                                    <div class="viz-bar" style="height: 45%"></div>
+                                    <div class="viz-bar" style="height: 80%"></div>
+                                    <div class="viz-bar" style="height: 55%"></div>
+                                    <div class="viz-bar" style="height: 70%"></div>
+                                    <div class="viz-bar" style="height: 40%"></div>
+                                    <div class="viz-bar" style="height: 65%"></div>
+                                    <div class="viz-bar" style="height: 50%"></div>
+                                    <div class="viz-bar" style="height: 75%"></div>
+                                    <div class="viz-bar" style="height: 35%"></div>
+                                    <div class="viz-bar" style="height: 60%"></div>
+                                </div>
+                                <div class="ui-help-hint">
+                                    <span class="key">Space</span> play/pause  
+                                    <span class="key">n</span> next  
+                                    <span class="key">p</span> prev  
+                                    <span class="key">/</span> search  
+                                    <span class="key">?</span> help  
+                                    <span class="key">q</span> quit
+                                </div>
+                            </div>
                         </div>
-                        <span class="theme-name">Gruvbox Dark</span>
-                    </div>
-                    <div class="theme-item">
-                        <div class="theme-colors">
-                            <div class="theme-color" style="background: #2e3440;"></div>
-                            <div class="theme-color" style="background: #88c0d0;"></div>
-                            <div class="theme-color" style="background: #5e81ac;"></div>
-                        </div>
-                        <span class="theme-name">Nord</span>
-                    </div>
-                    <div class="theme-item">
-                        <div class="theme-colors">
-                            <div class="theme-color" style="background: #1a1b26;"></div>
-                            <div class="theme-color" style="background: #7aa2f7;"></div>
-                            <div class="theme-color" style="background: #bb9af7;"></div>
-                        </div>
-                        <span class="theme-name">Tokyo Night</span>
                     </div>
                 </div>
             </div>
+        </div>
+        <div class="demo-info scroll-reveal" style="text-align: center; margin-top: 2rem;">
+            <p style="color: var(--text-secondary);">
+                <strong>Navigation:</strong> Use <kbd class="key-inline">Tab</kbd> to switch sections, 
+                <kbd class="key-inline">↑</kbd><kbd class="key-inline">↓</kbd> or <kbd class="key-inline">j</kbd><kbd class="key-inline">k</kbd> to navigate, 
+                <kbd class="key-inline">Enter</kbd> to play
+            </p>
+            <p style="color: var(--text-secondary); margin-top: 0.5rem;">
+                <strong>Themes:</strong> Press <kbd class="key-inline">T</kbd> to cycle through Catppuccin, Gruvbox, Nord, Tokyo Night, Dracula, and more
+            </p>
         </div>
     </section>
 
@@ -1321,6 +1601,74 @@
                     btn.textContent = originalText;
                 }, 2000);
             });
+        }
+
+        // Demo section terminal typing animation
+        const demoCommand = "joshify";
+        const demoOutput = ["🎵 Starting Joshify...", "✓ Authenticated with Spotify", "✓ Player ready", "✓ UI loaded"];
+        let demoCharIndex = 0;
+        let demoLineIndex = 0;
+
+        function typeDemoCommand() {
+            const commandEl = document.getElementById('demo-command');
+            const outputEl = document.getElementById('demo-output');
+            
+            if (!commandEl) return;
+
+            if (demoCharIndex < demoCommand.length) {
+                commandEl.textContent += demoCommand.charAt(demoCharIndex);
+                demoCharIndex++;
+                setTimeout(typeDemoCommand, 100);
+            } else if (demoLineIndex < demoOutput.length) {
+                // Start showing output
+                setTimeout(() => {
+                    const line = document.createElement('div');
+                    line.className = 'output-line';
+                    line.textContent = demoOutput[demoLineIndex];
+                    line.style.opacity = '0';
+                    line.style.transform = 'translateY(-10px)';
+                    line.style.transition = 'all 0.3s ease';
+                    outputEl.appendChild(line);
+                    
+                    // Trigger animation
+                    setTimeout(() => {
+                        line.style.opacity = '1';
+                        line.style.transform = 'translateY(0)';
+                    }, 50);
+                    
+                    demoLineIndex++;
+                    setTimeout(typeDemoCommand, 400);
+                }, 300);
+            }
+        }
+
+        // Start demo animation when section is visible
+        const demoObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && demoCharIndex === 0) {
+                    setTimeout(typeDemoCommand, 500);
+                }
+            });
+        }, { threshold: 0.5 });
+
+        const demoSection = document.getElementById('demo');
+        if (demoSection) {
+            demoObserver.observe(demoSection);
+        }
+
+        // Animate visualizer bars randomly
+        function animateVisualizer() {
+            const bars = document.querySelectorAll('.viz-bar');
+            bars.forEach((bar, i) => {
+                setInterval(() => {
+                    const height = Math.random() * 60 + 20;
+                    bar.style.height = height + '%';
+                }, 200 + i * 50);
+            });
+        }
+
+        if (document.querySelector('.viz-bar')) {
+            animateVisualizer();
         }
 
         // Smooth scroll for anchor links
