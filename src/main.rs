@@ -64,10 +64,12 @@ struct App {
     nav_stack: joshify::state::navigation_stack::NavigationStack,
     /// Theme registry for managing color themes
     theme_registry: joshify::themes::ThemeRegistry,
+    /// LITE mode - minimal UI with simplified controls
+    lite_mode: bool,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(lite_mode: bool) -> Self {
         Self {
             selected_nav: NavItem::Home,
             is_authenticated: false,
@@ -102,6 +104,7 @@ impl App {
             mouse_state: joshify::ui::MouseState::new(),
             nav_stack: joshify::state::navigation_stack::NavigationStack::new(),
             theme_registry: joshify::themes::ThemeRegistry::default(),
+            lite_mode,
         }
     }
 
@@ -432,7 +435,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
     crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
 
-    let mut app = App::new();
+    let mut app = App::new(args.lite);
 
     // If we have tokens from env/CLI, skip interactive setup
     if has_tokens {
@@ -709,6 +712,52 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         );
                     }
                 }
+                ContentState::RadioRecommendations(entries) => {
+                    // Radio mode: add recommendations to queue and start playing first one
+                    tracing::info!("Received {} radio recommendations", entries.len());
+                    
+                    if !entries.is_empty() {
+                        // Add all entries to queue
+                        for entry in entries.iter().skip(1) {
+                            app.queue_state.add(joshify::state::queue_state::QueueEntry {
+                                uri: entry.uri.clone(),
+                                name: entry.name.clone(),
+                                artist: entry.artist.clone(),
+                                added_by_user: false,
+                                is_recommendation: true,
+                            });
+                        }
+                        
+                        // Play first recommendation immediately
+                        let first_entry = &entries[0];
+                        if let Some(ref player) = app.local_player {
+                            match player.load_uri(&first_entry.uri, true, 0) {
+                                Ok(_) => {
+                                    app.player_state.current_track_name = Some(first_entry.name.clone());
+                                    app.player_state.current_artist_name = Some(first_entry.artist.clone());
+                                    app.player_state.current_track_uri = Some(first_entry.uri.clone());
+                                    app.player_state.is_playing = true;
+                                    app.player_state.progress_ms = 0;
+                                    app.status_message = Some(format!(
+                                        "Radio: {} - {}",
+                                        first_entry.name, first_entry.artist
+                                    ));
+                                    tracing::info!(
+                                        "Started radio playback: {} ({} more in queue)",
+                                        first_entry.name,
+                                        entries.len() - 1
+                                    );
+                                }
+                                Err(e) => {
+                                    app.status_message = Some(format!("Radio playback error: {}", e));
+                                    tracing::warn!("Failed to start radio track: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        app.status_message = Some("No recommendations found".to_string());
+                    }
+                }
                 other => {
                     app.loading_more_liked_songs = false;
                     if let ContentState::LikedSongsPage {
@@ -748,6 +797,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     total,
                                     next_offset,
                                 };
+                            }
+                            ContentState::RadioRecommendations(_) => {
+                                // Radio recommendations handled separately, not in this branch
                             }
                             _ => {
                                 // Discard stale LikedSongsPage — user navigated away
@@ -954,10 +1006,59 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 );
                             }
                         }
-                        // PHASE 3: Nothing left to play
+                        // PHASE 3: Radio mode - fetch recommendations when queue is empty
+                        else if app.queue_state.radio_mode {
+                            if let Some(ref current_uri) = app.player_state.current_track_uri {
+                                if let Some(track_id) = current_uri.strip_prefix("spotify:track:") {
+                                    tracing::info!(
+                                        "EndOfTrack: Radio mode enabled, fetching recommendations for track {}",
+                                        track_id
+                                    );
+                                    
+                                    if let Some(ref client) = client {
+                                        let c = client.clone();
+                                        let seed_id = track_id.to_string();
+                                        let tx_clone = tx.clone();
+                                        
+                                        tokio::spawn(async move {
+                                            let guard = c.lock().await;
+                                            match guard.get_recommendations(vec![seed_id], Some(20)).await {
+                                                Ok(tracks) if !tracks.is_empty() => {
+                            let entries: Vec<_> = tracks.iter().map(|track| {
+                                joshify::playback::domain::QueueEntry {
+                                    uri: format!("spotify:track:{}", track.id.as_ref().map(|id| id.id()).unwrap_or("")),
+                                    name: track.name.clone(),
+                                    artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+                                    album: track.album.as_ref().map(|a| a.name.clone()),
+                                    duration_ms: Some(track.duration.num_milliseconds() as u32),
+                                    added_by_user: false,
+                                    is_recommendation: true,
+                                }
+                            }).collect();
+                                                    
+                                                    // Send recommendation entries back to main loop
+                                                    let _ = tx_clone.send(ContentState::RadioRecommendations(entries)).await;
+                                                }
+                                                Ok(_) => {
+                                                    tracing::warn!("Radio mode: No recommendations returned");
+                                                    let _ = tx_clone.send(ContentState::Error("No recommendations available".to_string())).await;
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Radio mode: Failed to get recommendations: {}", e);
+                                                    let _ = tx_clone.send(ContentState::Error(format!("Radio error: {}", e))).await;
+                                                }
+                                            }
+                                        });
+                                        
+                                        app.status_message = Some("Fetching recommendations...".to_string());
+                                    }
+                                }
+                            }
+                        }
+                        // PHASE 4: Nothing left to play and radio disabled
                         else {
                             tracing::info!(
-                                "EndOfTrack: No more tracks to play (queue empty, context exhausted)"
+                                "EndOfTrack: No more tracks to play (queue empty, context exhausted, radio disabled)"
                             );
                             app.status_message = Some("Playback ended".to_string());
                         }
@@ -1124,129 +1225,174 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             terminal.draw(|frame| {
                 let area = frame.area();
 
-                // Clear layout cache at start of each frame for fresh hit testing
-                app.layout_cache.clear();
+                if app.lite_mode {
+                    // LITE Mode: Minimal UI with simplified layout
+                    app.layout_cache.clear(); // Still clear for any mouse usage
 
-                // Check minimum terminal size
-                if area.width < 50 || area.height < 20 {
-                    let warning = Paragraph::new(
-                        "Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.",
-                    )
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::Yellow));
-                    frame.render_widget(warning, area);
-                    return;
-                }
+                    // Check minimum terminal size (smaller for lite mode)
+                    if area.width < 40 || area.height < 10 {
+                        let warning = Paragraph::new(
+                            "Terminal too small!\n\nMinimum: 40x10\n\nPlease resize your terminal.",
+                        )
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::Yellow));
+                        frame.render_widget(warning, area);
+                        return;
+                    }
 
-                // Status bar at top (if present)
-                let top_area = if let Some(ref msg) = app.status_message {
-                    let [top, rest] =
-                        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-                    let status = Paragraph::new(msg.as_str())
-                        .style(Style::default().fg(Color::Black).bg(Color::Blue));
-                    frame.render_widget(status, top);
-                    rest
+                    // Use LITE mode renderer
+                    joshify::ui::render_lite_mode(
+                        frame,
+                        &app.player_state,
+                        &app.queue_state,
+                        &app.status_message,
+                    );
+
+                    // LITE mode help overlay
+                    if app.help_content.is_some() {
+                        joshify::ui::render_lite_help(frame, area);
+                    }
+
+                    // Search overlay (simplified inline)
+                    if app.search_state.is_active {
+                        // Simple inline search - just show the query at bottom
+                        let search_text = format!(
+                            "Search: {}_",
+                            app.search_state.query
+                        );
+                        let search_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
+                        let search_para = Paragraph::new(search_text)
+                            .style(Style::default().fg(Color::Cyan));
+                        frame.render_widget(search_para, search_area);
+                    }
+
+                    app.area = Some(area);
                 } else {
-                    area
-                };
+                    // Full Mode: Original complex UI
+                    // Clear layout cache at start of each frame for fresh hit testing
+                    app.layout_cache.clear();
 
-                // Sidebar: fixed width for logo + nav
-                let sidebar_width = 20u16;
+                    // Check minimum terminal size
+                    if area.width < 50 || area.height < 20 {
+                        let warning = Paragraph::new(
+                            "Terminal too small!\n\nMinimum: 50x20\n\nPlease resize your terminal.",
+                        )
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::Yellow));
+                        frame.render_widget(warning, area);
+                        return;
+                    }
 
-                // Split into sidebar and main content
-                let [sidebar, main] =
-                    Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)])
-                        .areas(top_area);
-
-                // Player bar: 6 rows at bottom (includes album art)
-                let player_bar_height = 6u16;
-                let [main_content, player_bar] =
-                    Layout::vertical([Constraint::Min(0), Constraint::Length(player_bar_height)])
-                        .areas(main);
-
-                // Render all components with focus highlighting
-                let sidebar_focused = app.focus == FocusTarget::Sidebar;
-                let main_focused = app.focus == FocusTarget::MainContent;
-                let player_focused = app.focus == FocusTarget::PlayerBar;
-
-                joshify::ui::render_sidebar(
-                    frame,
-                    sidebar,
-                    app.selected_nav,
-                    sidebar_focused,
-                    &mut app.layout_cache,
-                );
-                joshify::ui::render_main_view(
-                    frame,
-                    main_content,
-                    &app.content_state,
-                    app.selected_index,
-                    app.scroll_offset,
-                    app.is_authenticated,
-                    if main_focused {
-                        Color::Yellow
+                    // Status bar at top (if present)
+                    let top_area = if let Some(ref msg) = app.status_message {
+                        let [top, rest] =
+                            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+                        let status = Paragraph::new(msg.as_str())
+                            .style(Style::default().fg(Color::Black).bg(Color::Blue));
+                        frame.render_widget(status, top);
+                        rest
                     } else {
-                        Color::Green
-                    },
-                    app.player_state.current_track_uri.as_deref(),
-                    &mut app.layout_cache,
-                    Some(&app.nav_stack.breadcrumb()),
-                );
+                        area
+                    };
 
-                let track_name = app
-                    .player_state
-                    .current_track_name
-                    .as_deref()
-                    .unwrap_or("Not Playing");
-                let artist_name = app
-                    .player_state
-                    .current_artist_name
-                    .as_deref()
-                    .unwrap_or("");
+                    // Sidebar: fixed width for logo + nav
+                    let sidebar_width = 20u16;
 
-                joshify::ui::render_player_bar(
-                    frame,
-                    player_bar,
-                    track_name,
-                    artist_name,
-                    app.player_state.is_playing,
-                    app.player_state.progress_ms,
-                    app.player_state.duration_ms,
-                    app.player_state.volume,
-                    app.player_state.current_album_art_url.as_deref(),
-                    app.player_state.current_album_art_ascii.as_deref(),
-                    app.queue_state.local_queue.len(),
-                    player_focused,
-                    app.player_state.shuffle,
-                    app.player_state.repeat_mode,
-                    app.queue_state.radio_mode,
-                    &app.player_state.title_scroll_state,
-                    &mut app.layout_cache,
-                );
+                    // Split into sidebar and main content
+                    let [sidebar, main] =
+                        Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(0)])
+                            .areas(top_area);
 
-                // Overlays (rendered last so they appear on top)
-                if app.show_queue {
-                    joshify::ui::render_queue_overlay(frame, area, &app.queue_state);
-                }
-                if let (Some(ref content), Some(ref mut state)) =
-                    (&app.help_content, &mut app.help_state)
-                {
-                    joshify::ui::render_help_overlay(frame, area, content, state);
-                }
+                    // Player bar: 6 rows at bottom (includes album art)
+                    let player_bar_height = 6u16;
+                    let [main_content, player_bar] =
+                        Layout::vertical([Constraint::Min(0), Constraint::Length(player_bar_height)])
+                            .areas(main);
 
-                // Search overlay - clean modal with live results
-                if app.search_state.is_active {
-                    joshify::ui::render_search_overlay(frame, area, &app.search_state);
-                }
+                    // Render all components with focus highlighting
+                    let sidebar_focused = app.focus == FocusTarget::Sidebar;
+                    let main_focused = app.focus == FocusTarget::MainContent;
+                    let player_focused = app.focus == FocusTarget::PlayerBar;
 
-                // Store frame area for mouse handling
-                app.area = Some(area);
+                    joshify::ui::render_sidebar(
+                        frame,
+                        sidebar,
+                        app.selected_nav,
+                        sidebar_focused,
+                        &mut app.layout_cache,
+                    );
+                    joshify::ui::render_main_view(
+                        frame,
+                        main_content,
+                        &app.content_state,
+                        app.selected_index,
+                        app.scroll_offset,
+                        app.is_authenticated,
+                        if main_focused {
+                            Color::Yellow
+                        } else {
+                            Color::Green
+                        },
+                        app.player_state.current_track_uri.as_deref(),
+                        &mut app.layout_cache,
+                        Some(&app.nav_stack.breadcrumb()),
+                    );
 
-                // Show cursor only when search overlay is active
-                if app.search_state.is_active {
-                    let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
-                } else {
-                    let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Hide);
+                    let track_name = app
+                        .player_state
+                        .current_track_name
+                        .as_deref()
+                        .unwrap_or("Not Playing");
+                    let artist_name = app
+                        .player_state
+                        .current_artist_name
+                        .as_deref()
+                        .unwrap_or("");
+
+                    joshify::ui::render_player_bar(
+                        frame,
+                        player_bar,
+                        track_name,
+                        artist_name,
+                        app.player_state.is_playing,
+                        app.player_state.progress_ms,
+                        app.player_state.duration_ms,
+                        app.player_state.volume,
+                        app.player_state.current_album_art_url.as_deref(),
+                        app.player_state.current_album_art_ascii.as_deref(),
+                        app.queue_state.local_queue.len(),
+                        player_focused,
+                        app.player_state.shuffle,
+                        app.player_state.repeat_mode,
+                        app.queue_state.radio_mode,
+                        &app.player_state.title_scroll_state,
+                        &mut app.layout_cache,
+                    );
+
+                    // Overlays (rendered last so they appear on top)
+                    if app.show_queue {
+                        joshify::ui::render_queue_overlay(frame, area, &app.queue_state);
+                    }
+                    if let (Some(ref content), Some(ref mut state)) =
+                        (&app.help_content, &mut app.help_state)
+                    {
+                        joshify::ui::render_help_overlay(frame, area, content, state);
+                    }
+
+                    // Search overlay - clean modal with live results
+                    if app.search_state.is_active {
+                        joshify::ui::render_search_overlay(frame, area, &app.search_state);
+                    }
+
+                    // Store frame area for mouse handling
+                    app.area = Some(area);
+
+                    // Show cursor only when search overlay is active
+                    if app.search_state.is_active {
+                        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+                    } else {
+                        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Hide);
+                    }
                 }
             })?;
         }
@@ -1257,32 +1403,36 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         // Kitty images persist on screen until explicitly deleted. On resize, we use
         // the Kitty delete protocol command which removes only the image pixels without
         // affecting surrounding text content.
-        if let Some(ref kitty_data) = app.player_state.current_album_art_kitty {
-            // Delete the old Kitty image using the Kitty graphics protocol delete command.
-            // This only removes the image in the specified area, not surrounding text.
-            if let Some(old_area) = app.player_state.last_kitty_render_area {
-                let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
-                // Also clear the area with spaces as a fallback for non-Kitty terminals
-                let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
-            }
-            let _ = joshify::ui::image_renderer::write_prepared_kitty_image(kitty_data);
-            // Record where we just rendered so we can delete it next time
-            if let Some(frame_area) = app.area {
-                let player_bar_height = 6u16;
-                let sidebar_width = 20u16;
-                let album_art_width = 12u16;
-                app.player_state.last_kitty_render_area = Some(Rect::new(
-                    sidebar_width,
-                    frame_area.height.saturating_sub(player_bar_height),
-                    album_art_width,
-                    player_bar_height,
-                ));
-            }
-        } else {
-            // No current image - clear any previous render area
-            if let Some(old_area) = app.player_state.last_kitty_render_area.take() {
-                let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
-                let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+        // 
+        // NOTE: Album art is disabled in LITE mode for cleaner terminal output
+        if !app.lite_mode {
+            if let Some(ref kitty_data) = app.player_state.current_album_art_kitty {
+                // Delete the old Kitty image using the Kitty graphics protocol delete command.
+                // This only removes the image in the specified area, not surrounding text.
+                if let Some(old_area) = app.player_state.last_kitty_render_area {
+                    let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
+                    // Also clear the area with spaces as a fallback for non-Kitty terminals
+                    let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+                }
+                let _ = joshify::ui::image_renderer::write_prepared_kitty_image(kitty_data);
+                // Record where we just rendered so we can delete it next time
+                if let Some(frame_area) = app.area {
+                    let player_bar_height = 6u16;
+                    let sidebar_width = 20u16;
+                    let album_art_width = 12u16;
+                    app.player_state.last_kitty_render_area = Some(Rect::new(
+                        sidebar_width,
+                        frame_area.height.saturating_sub(player_bar_height),
+                        album_art_width,
+                        player_bar_height,
+                    ));
+                }
+            } else {
+                // No current image - clear any previous render area
+                if let Some(old_area) = app.player_state.last_kitty_render_area.take() {
+                    let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
+                    let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+                }
             }
         }
 

@@ -100,6 +100,54 @@ impl SpotifyClient {
         }
     }
 
+    /// Get track recommendations based on seed tracks
+    /// Used for radio mode - generates similar tracks to the current track
+    ///
+    /// # Arguments
+    /// * `seed_track_ids` - Up to 5 track IDs (not full URIs, just the ID part)
+    /// * `limit` - Number of recommendations to return (max 100, default 20)
+    ///
+    /// # Returns
+    /// List of recommended tracks
+    pub async fn get_recommendations(
+        &self,
+        seed_track_ids: Vec<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<rspotify::model::SimplifiedTrack>> {
+        let effective_limit = limit.unwrap_or(20).min(100);
+        tracing::info!(
+            "Fetching recommendations for {} seed tracks (limit={})",
+            seed_track_ids.len(),
+            effective_limit
+        );
+
+        // Convert string IDs to TrackId objects
+        let track_ids: Vec<rspotify::model::TrackId<'_>> = seed_track_ids
+            .iter()
+            .filter_map(|id| rspotify::model::TrackId::from_id(id).ok())
+            .collect();
+
+        if track_ids.is_empty() {
+            return Err(anyhow::anyhow!("No valid seed track IDs provided"));
+        }
+
+        let result = self
+            .oauth
+            .recommendations(
+                Vec::new(), // No audio feature attributes
+                None::<Vec<rspotify::model::ArtistId<'_>>>, // No seed artists
+                None::<Vec<&str>>, // No seed genres
+                Some(track_ids),
+                Some(rspotify::model::Market::FromToken),
+                Some(effective_limit),
+            )
+            .await
+            .context("Failed to get recommendations")?;
+
+        tracing::info!("Got {} recommendations", result.tracks.len());
+        Ok(result.tracks)
+    }
+
     /// Search Spotify
     pub async fn search(
         &self,

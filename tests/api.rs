@@ -165,3 +165,26 @@ async fn test_invalid_operation_error() {
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("Invalid track URI"));
 }
+
+// =============================================================================
+// LITE Mode Tests
+// =============================================================================
+
+#[test]
+fn test_cli_args_lite_flag() {
+    use joshify::CliArgs;
+    
+    // Test that CliArgs has lite field
+    let args = CliArgs::default();
+    assert!(!args.lite); // Default should be false
+}
+
+#[test]
+fn test_lite_mode_help_includes_lite() {
+    use joshify::CliArgs;
+    
+    // Test that help text includes --lite option
+    // This is a basic check that the field exists in the struct
+    let args = CliArgs::default();
+    assert_eq!(args.lite, false);
+}

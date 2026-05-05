@@ -973,6 +973,10 @@ pub fn render_main_view(
         ContentState::Loading(_) => {
             // Already handled above, but match requires this arm
         }
+        // Radio recommendations are handled in main.rs, not rendered in main view
+        ContentState::RadioRecommendations(_) => {
+            // These are processed and loaded into the queue, not displayed here
+        }
     }
 }
 

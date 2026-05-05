@@ -29,6 +29,8 @@ pub struct CliArgs {
     pub redirect_uri: Option<String>,
     pub help: bool,
     pub test_search: bool,
+    /// Enable LITE mode - minimal terminal UI with simplified controls
+    pub lite: bool,
 }
 
 impl CliArgs {
@@ -87,6 +89,10 @@ impl CliArgs {
                     args.test_search = true;
                     i += 1;
                 }
+                "--lite" => {
+                    args.lite = true;
+                    i += 1;
+                }
                 _ => {
                     i += 1;
                 }
@@ -107,9 +113,10 @@ impl CliArgs {
         println!("    --client-secret <SEC>  Spotify Client Secret (or SPOTIFY_CLIENT_SECRET)");
         println!("    --access-token <TOK>   Spotify Access Token (or SPOTIFY_ACCESS_TOKEN)");
         println!("    --refresh-token <TOK>  Spotify Refresh Token (or SPOTIFY_REFRESH_TOKEN)");
-        println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
-        println!("    --test-search          Test search API and exit");
-        println!("    --help, -h             Show this help message");
+    println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
+    println!("    --test-search          Test search API and exit");
+    println!("    --lite                 Enable minimal UI mode (simplified controls, no sidebar)");
+    println!("    --help, -h             Show this help message");
         println!();
         println!("ENVIRONMENT VARIABLES:");
         println!("    SPOTIFY_CLIENT_ID      Spotify Client ID");
