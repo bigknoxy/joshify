@@ -1930,7 +1930,25 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         match key.code {
                             crossterm::event::KeyCode::Enter => {
                                 if let Some(track) = app.search_state.selected_track() {
-                                    if let Some(ref client) = client {
+                                    // Try local playback first (for LITE mode with local player)
+                                    if let Some(ref player) = app.local_player {
+                                        match player.load_uri(&track.uri, true, 0) {
+                                            Ok(_) => {
+                                                app.player_state.current_track_name = Some(track.name.clone());
+                                                app.player_state.current_artist_name = Some(track.artist.clone());
+                                                app.player_state.current_track_uri = Some(track.uri.clone());
+                                                app.player_state.is_playing = true;
+                                                app.player_state.progress_ms = 0;
+                                                app.status_message = Some(format!("Playing: {}", track.name));
+                                                tracing::info!("Playing track via local player: {}", track.name);
+                                            }
+                                            Err(e) => {
+                                                app.status_message = Some(format!("Playback error: {}", e));
+                                                tracing::error!("Local playback error: {}", e);
+                                            }
+                                        }
+                                    } else if let Some(ref client) = client {
+                                        // Fallback to Spotify API if no local player
                                         let c = client.clone();
                                         let uri = track.uri.clone();
                                         let tx_clone = tx.clone();
@@ -1957,14 +1975,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     .await;
                                             }
                                         });
+                                        // Update player_state so UI shows the track immediately
+                                        app.player_state.current_track_name = Some(track.name.clone());
+                                        app.player_state.current_artist_name = Some(track.artist.clone());
+                                        app.player_state.current_track_uri = Some(track.uri.clone());
+                                        app.player_state.is_playing = true;
+                                        app.player_state.progress_ms = 0;
+                                        app.status_message = Some(format!("Playing: {}", track.name));
                                     }
-                                    // Update player_state so UI shows the track immediately
-                                    app.player_state.current_track_name = Some(track.name.clone());
-                                    app.player_state.current_artist_name = Some(track.artist.clone());
-                                    app.player_state.current_track_uri = Some(track.uri.clone());
-                                    app.player_state.is_playing = true;
-                                    app.player_state.progress_ms = 0;
-                                    app.status_message = Some(format!("Playing: {}", track.name));
                                 }
                                 app.search_state.deactivate();
                             }
