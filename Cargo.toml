@@ -42,7 +42,7 @@ rand = "0.8"
 realfft = "3.4"
 
 # librespot for local playback (dev branch - crates.io 0.8.0 has vergen build bug)
-librespot = { git = "https://github.com/librespot-org/librespot", branch = "dev", features = ["alsa-backend", "rodio-backend"] }
+librespot = { git = "https://github.com/librespot-org/librespot", branch = "dev", features = ["rodio-backend"] }
 librespot-oauth = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
 hostname = "0.4.2"
 

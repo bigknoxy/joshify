@@ -65,18 +65,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alsa"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c88dbbce13b232b26250e1e2e6ac18b6a891a646b8148285036ebce260ac5c3"
-dependencies = [
- "alsa-sys",
- "bitflags 2.11.0",
- "cfg-if",
- "libc",
-]
-
-[[package]]
 name = "alsa-sys"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -797,7 +785,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbd307f43cc2a697e2d1f8bc7a1d824b5269e052209e28883e5bc04d095aaa3f"
 dependencies = [
- "alsa 0.9.1",
+ "alsa",
  "coreaudio-rs",
  "dasp_sample",
  "jni",
@@ -2715,7 +2703,6 @@ name = "librespot-playback"
 version = "0.8.0"
 source = "git+https://github.com/librespot-org/librespot?branch=dev#33bf3a77ed4b549df67e8347d7d6e55b007b3ec2"
 dependencies = [
- "alsa 0.10.0",
  "cpal",
  "form_urlencoded",
  "futures-util",
