@@ -373,7 +373,8 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     frame.render_widget(widget, inner);
 
     // Set cursor position using display width (not character count)
-    let cursor_y = inner.y;
+    // Line 0 is empty (breathing room), Line 1 is the search input
+    let cursor_y = inner.y + 1;
     let cursor_x = {
         // Use the SearchState helper methods for display width calculations
         let cursor_display_offset = search_state.cursor_display_offset();

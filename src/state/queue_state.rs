@@ -34,7 +34,7 @@ impl QueueState {
             spotify_queue: None,
             local_queue: Vec::new(),
             playback_queue: PlaybackQueue::new(),
-            radio_mode: false,
+            radio_mode: true, // Enabled by default for continuous playback
             persistence_path: None,
         }
     }
