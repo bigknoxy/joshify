@@ -1253,17 +1253,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         joshify::ui::render_lite_help(frame, area);
                     }
 
-                    // Search overlay (simplified inline)
+                    // Search overlay - use full search UI even in LITE mode
+                    // (users need to see results to select tracks)
                     if app.search_state.is_active {
-                        // Simple inline search - just show the query at bottom
-                        let search_text = format!(
-                            "Search: {}_",
-                            app.search_state.query
-                        );
-                        let search_area = Rect::new(0, area.height.saturating_sub(1), area.width, 1);
-                        let search_para = Paragraph::new(search_text)
-                            .style(Style::default().fg(Color::Cyan));
-                        frame.render_widget(search_para, search_area);
+                        joshify::ui::render_search_overlay(frame, area, &app.search_state);
                     }
 
                     app.area = Some(area);

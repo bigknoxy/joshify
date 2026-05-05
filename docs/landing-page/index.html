@@ -382,6 +382,19 @@
             color: var(--text-muted);
         }
 
+        .terminal-badge {
+            margin-left: 1rem;
+            padding: 0.2rem 0.6rem;
+            background: linear-gradient(135deg, var(--accent-mauve), var(--accent-blue));
+            border-radius: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: var(--bg-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .terminal-demo {
             position: relative;
             overflow: hidden;
@@ -1334,6 +1347,39 @@
         </div>
     </section>
 
+    <section class="lite-mode" id="lite">
+        <div class="section-header scroll-reveal" style="text-align: center; margin-bottom: 3rem;">
+            <span class="section-label">New Feature</span>
+            <h2>LITE Mode</h2>
+            <p class="section-subtitle">
+                Minimal. Fast. Distraction-free.
+            </p>
+        </div>
+        
+        <div class="lite-features" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; max-width: 1000px; margin: 0 auto 3rem;">
+            <div class="lite-card scroll-reveal" style="background: var(--bg-secondary); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border);">
+                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⚡</div>
+                <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-primary);">Zero Distractions</h3>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">No sidebar, no borders, no clutter. Just you and your music in a clean terminal interface.</p>
+            </div>
+            <div class="lite-card scroll-reveal" style="background: var(--bg-secondary); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border);">
+                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🎵</div>
+                <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-primary);">Radio Mode</h3>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">Queue empty? No problem. Auto-generates Spotify recommendations based on current track.</p>
+            </div>
+            <div class="lite-card scroll-reveal" style="background: var(--bg-secondary); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border);">
+                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⌨️</div>
+                <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--text-primary);">Simple Controls</h3>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;"><kbd class="key-inline">Space</kbd> play · <kbd class="key-inline">/</kbd> search · <kbd class="key-inline">a</kbd> queue · <kbd class="key-inline">r</kbd> radio</p>
+            </div>
+        </div>
+        
+        <div class="lite-cta scroll-reveal" style="text-align: center; margin-bottom: 4rem;">
+            <code style="background: var(--bg-secondary); padding: 1rem 1.5rem; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; color: var(--accent-green);">joshify --lite</code>
+            <p style="color: var(--text-secondary); margin-top: 1rem; font-size: 0.9rem;">Perfect for minimal setups, servers, or when you just want the essentials</p>
+        </div>
+    </section>
+
     <section class="demo" id="demo">
         <div class="section-header scroll-reveal" style="text-align: center; margin-bottom: 3rem;">
             <span class="section-label">Live Demo</span>
@@ -1348,7 +1394,8 @@
                     <div class="terminal-dot red"></div>
                     <div class="terminal-dot yellow"></div>
                     <div class="terminal-dot green"></div>
-                    <span class="terminal-title">joshify -- demo</span>
+                    <span class="terminal-title">joshify --lite -- demo</span>
+                    <span class="terminal-badge">LITE MODE</span>
                 </div>
                 <div class="terminal-body" id="demo-terminal">
                     <div class="terminal-line">
