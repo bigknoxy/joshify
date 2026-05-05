@@ -1958,6 +1958,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             }
                                         });
                                     }
+                                    // Update player_state so UI shows the track immediately
+                                    app.player_state.current_track_name = Some(track.name.clone());
+                                    app.player_state.current_artist_name = Some(track.artist.clone());
+                                    app.player_state.current_track_uri = Some(track.uri.clone());
+                                    app.player_state.is_playing = true;
+                                    app.player_state.progress_ms = 0;
                                     app.status_message = Some(format!("Playing: {}", track.name));
                                 }
                                 app.search_state.deactivate();
