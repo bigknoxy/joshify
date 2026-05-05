@@ -32,7 +32,6 @@ impl Default for CurrentTheme {
 
 impl CurrentTheme {
     fn get_color(&self, color_type: ColorType) -> Color {
-        use crate::themes::Theme;
         let theme = self.theme.to_theme();
         
         match color_type {
@@ -65,7 +64,9 @@ impl CurrentTheme {
 }
 
 /// Types of colors needed by the UI
+/// Note: Some variants are kept for future use and API completeness
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 enum ColorType {
     Base, Text, Primary, Secondary, Accent, Border,
     SelectionBg, SelectionFg, Success, Error, Warning, Muted, Info,

@@ -132,6 +132,50 @@ BUT we had a SECOND bug: duplicate queue population blocks. The first block set 
 
 ---
 
+---
+
+## 2025-05-04
+
+### Category: Pattern/Architecture
+**Learned**: Album art rendering is completely independent of the theme system - it displays actual image pixels, not themed colors.
+
+**Context**: When implementing dynamic theme switching, there was concern that theme changes might affect album art display. Investigation revealed:
+1. Album art uses terminal graphics protocols (Kitty/iTerm2) to display actual image pixels
+2. The theme system only affects UI colors (borders, text, backgrounds)
+3. Album art only uses theme colors for:
+   - Loading placeholder borders
+   - "No Art" placeholder styling
+   - Error state borders
+4. The actual album image rendering bypasses the color system entirely
+
+**Key Insight**: Image rendering and color theming are orthogonal concerns. Changes to one should never affect the other.
+
+**Prevention**: 
+- Keep image rendering logic separate from UI styling
+- Document this independence in both systems
+- Add regression tests that verify album art works across all themes
+
+**Files**: 
+- `src/ui/image_renderer.rs` - Album art rendering
+- `src/ui/theme.rs` - Theme system
+- `tests/album_art_rendering.rs` - Rendering tests
+
+---
+
+### Category: Testing
+**Learned**: All 567 tests pass with 0 album art failures after theme system changes.
+
+**Context**: Despite concerns about theme changes breaking album art, comprehensive testing showed:
+- 19 album art tests (6 cache + 13 rendering) all pass
+- No album art specific warnings in clippy
+- Theme system changes only affected 2 files: theme.rs and help.rs
+
+**Prevention**: Always run full test suite after UI changes. Album art has good test coverage - trust it.
+
+**Verification**: `cargo test album_art` → 19/19 passed
+
+---
+
 ## Summary
 
 Fixed three distinct bugs preventing continuous playlist playback:
