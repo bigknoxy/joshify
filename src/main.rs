@@ -717,7 +717,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     tracing::info!("Received {} radio recommendations", entries.len());
                     
                     if !entries.is_empty() {
-                        // Add all entries to queue
+                        // Add all entries to queue (skip first since we're playing it now)
                         for entry in entries.iter().skip(1) {
                             app.queue_state.add(joshify::state::queue_state::QueueEntry {
                                 uri: entry.uri.clone(),
@@ -727,9 +727,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 is_recommendation: true,
                             });
                         }
+                        tracing::info!("Added {} tracks to queue", entries.len() - 1);
                         
                         // Play first recommendation immediately
                         let first_entry = &entries[0];
+                        tracing::info!("Playing first radio recommendation: {} - {}", first_entry.name, first_entry.uri);
+                        
                         if let Some(ref player) = app.local_player {
                             match player.load_uri(&first_entry.uri, true, 0) {
                                 Ok(_) => {
@@ -750,11 +753,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                                 Err(e) => {
                                     app.status_message = Some(format!("Radio playback error: {}", e));
-                                    tracing::warn!("Failed to start radio track: {}", e);
+                                    tracing::error!("Failed to start radio track: {} - Error: {}", first_entry.uri, e);
                                 }
                             }
+                        } else {
+                            tracing::error!("No local player available for radio playback");
+                            app.status_message = Some("Radio error: No player available".to_string());
                         }
                     } else {
+                        tracing::warn!("Received empty radio recommendations");
                         app.status_message = Some("No recommendations found".to_string());
                     }
                 }
@@ -1024,20 +1031,28 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             let guard = c.lock().await;
                                             match guard.get_recommendations(vec![seed_id], Some(20)).await {
                                                 Ok(tracks) if !tracks.is_empty() => {
-                            let entries: Vec<_> = tracks.iter().map(|track| {
-                                joshify::playback::domain::QueueEntry {
-                                    uri: format!("spotify:track:{}", track.id.as_ref().map(|id| id.id()).unwrap_or("")),
-                                    name: track.name.clone(),
-                                    artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
-                                    album: track.album.as_ref().map(|a| a.name.clone()),
-                                    duration_ms: Some(track.duration.num_milliseconds() as u32),
-                                    added_by_user: false,
-                                    is_recommendation: true,
-                                }
-                            }).collect();
+                                                    // Filter out tracks with no ID and map to QueueEntry
+                                                    let entries: Vec<_> = tracks.iter().filter_map(|track| {
+                                                        track.id.as_ref().map(|id| {
+                                                            joshify::playback::domain::QueueEntry {
+                                                                uri: format!("spotify:track:{}", id.id()),
+                                                                name: track.name.clone(),
+                                                                artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+                                                                album: track.album.as_ref().map(|a| a.name.clone()),
+                                                                duration_ms: Some(track.duration.num_milliseconds() as u32),
+                                                                added_by_user: false,
+                                                                is_recommendation: true,
+                                                            }
+                                                        })
+                                                    }).collect();
                                                     
-                                                    // Send recommendation entries back to main loop
-                                                    let _ = tx_clone.send(ContentState::RadioRecommendations(entries)).await;
+                                                    if !entries.is_empty() {
+                                                        tracing::info!("Sending {} valid radio recommendations", entries.len());
+                                                        let _ = tx_clone.send(ContentState::RadioRecommendations(entries)).await;
+                                                    } else {
+                                                        tracing::warn!("Radio mode: All recommendations had missing track IDs");
+                                                        let _ = tx_clone.send(ContentState::Error("No valid recommendations".to_string())).await;
+                                                    }
                                                 }
                                                 Ok(_) => {
                                                     tracing::warn!("Radio mode: No recommendations returned");
