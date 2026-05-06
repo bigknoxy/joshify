@@ -162,7 +162,7 @@ mod tests {
         let queue = QueueState::new();
         assert!(queue.local_queue.is_empty());
         assert!(queue.spotify_queue.is_none());
-        assert!(!queue.radio_mode);
+        assert!(queue.radio_mode); // Radio mode enabled by default
         assert!(queue.persistence_path.is_none());
     }
 
