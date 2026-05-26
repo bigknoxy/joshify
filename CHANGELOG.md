@@ -1,3 +1,39 @@
+## [0.6.0](https://github.com/bigknoxy/joshify/compare/v0.5.0...v0.6.0) (2026-05-25)
+
+### Features
+
+- **LITE Mode**: Minimal UI (`--lite`) with simplified layout, search, and radio auto-recommendations. Help overlay, `/` search shortcut, queue indicator.
+- **Radio Mode**: Auto-play similar tracks after queue exhaustion. Uses non-deprecated search API (Spotify deprecated recommendations endpoint). Seed-track exclusion, configurable mix of artist top tracks + related artists.
+- **Theme Switching**: Press `T` to cycle through 7 built-in themes at runtime. No restart needed.
+- **Landing Page**: Project website at `docs/index.html` with VHS demo recordings, CI/CD badge, interactive demo section.
+
+### Bug Fixes
+
+- **Radio not triggering**: Captured `ending_track_uri` before player state mutations in EndOfTrack handler. Radio now properly activates when queue or context is exhausted.
+- **Radio stuck on "Fetching recommendations..."**: Added `ContentState::Error` handler that clears the loading status and shows the actual error message.
+- **Repeated same-song playback**: Fixed seed track exclusion — `TrackId.to_string()` returns the full URI, not the raw ID. Comparison never matched. Now uses `id.id()` via the `Id` trait.
+- **400 Bad Request on radio search**: Spotify reduced search limit max to 10 (Feb 2026). Was requesting 40 results — capped at 10.
+- **Search cursor misalignment**: Cursor position now accounts for leading space in search prompt. Works correctly in lite mode and full UI.
+- **Search overlay crash on narrow terminals**: `f32::clamp(min, max)` panicked when terminal < 50 wide because min > max. Now clamps lower bound to `min(50, area.width)`.
+- **Theme clippy warnings**: Cleaned up theme-related warnings, added album art independence test.
+- **LITE mode search UX**: Search results now display properly in lite mode. Player state updates correctly when playing from search results.
+
+### Code Quality
+
+- Extracted `fetch_radio_tracks` helper — eliminated ~80 lines of duplication between PHASE 2/3 radio blocks
+- New SOLID radio module (`TrackSource` trait, `RadioService`, `RadioMixConfig`) with mixing and dedup
+- Removed `eprintln!` debug noise, converted to structured `tracing::debug!`
+- Replaced `.unwrap()` on `TrackId::from_id` with proper error handling
+- Cleaned imports, removed dead variables, inlined helper functions
+
+### Documentation
+
+- `CLAUDE.md` — Spotify Web API guidelines (auth flows, scopes, rate limits, deprecated endpoints, ToS)
+- `AGENTS.md` — Updated to reference CLAUDE.md
+- Landing page with VHS demo recordings
+
+---
+
 ## [0.5.0](https://github.com/bigknoxy/joshify/compare/v0.4.0...v0.5.0) (2026-05-04)
 
 ### Bug Fixes
