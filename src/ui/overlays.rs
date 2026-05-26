@@ -240,8 +240,10 @@ mod tests {
 
 /// Render search overlay with live results
 pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_state: &SearchState) {
-    let overlay_width = (area.width as f32 * 0.7).clamp(50.0, area.width as f32) as u16;
-    let overlay_height = (area.height as f32 * 0.7).clamp(12.0, area.height as f32) as u16;
+    let overlay_width = (area.width as f32 * 0.7)
+        .clamp((50.0_f32).min(area.width as f32), area.width as f32) as u16;
+    let overlay_height = (area.height as f32 * 0.7)
+        .clamp((12.0_f32).min(area.height as f32), area.height as f32) as u16;
     let overlay_x = (area.width - overlay_width) / 2;
     let overlay_y = (area.height - overlay_height) / 2;
     let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
@@ -259,14 +261,14 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     let inner = bg.inner(overlay_area);
     frame.render_widget(bg, overlay_area);
 
-    // Prefix for search input: "  / " = 4 display columns (all ASCII width-1)
-    const SEARCH_PREFIX: &str = "  / ";
+    // Prefix for search input: "/ " = 2 display columns
+    const SEARCH_PREFIX: &str = "/ ";
     let prefix_width = display_width(SEARCH_PREFIX);
 
-    // Calculate available widths for content
-    let input_max_width = inner.width.saturating_sub(prefix_width as u16) as usize;
-    let separator_width = inner.width.saturating_sub(4) as usize;
-    let result_max_width = inner.width.saturating_sub(6) as usize;
+    // Calculate available widths for content with better padding
+    let input_max_width = inner.width.saturating_sub(prefix_width as u16 + 2) as usize;
+    let separator_width = inner.width.saturating_sub(2) as usize;
+    let result_max_width = inner.width.saturating_sub(4) as usize;
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -283,47 +285,53 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
         Catppuccin::search_input().add_modifier(Modifier::BOLD)
     };
 
+    // Add empty line at top for breathing room
+    lines.push(Line::from(""));
+    
     lines.push(Line::styled(
-        format!("{}{}", SEARCH_PREFIX, display_query),
+        format!(" {}{}", SEARCH_PREFIX, display_query),
         input_style,
     ));
 
     // Dynamic separator width
     lines.push(Line::styled(
-        format!("  {}", "─".repeat(separator_width)),
+        format!(" {}", "─".repeat(separator_width)),
         Catppuccin::dim(),
     ));
 
+    // Add spacing before content
+    lines.push(Line::from(""));
+    
     // Loading indicator
     if search_state.is_loading {
         lines.push(Line::styled(
-            "  ⏳ Searching...",
+            " ⏳ Searching...",
             Catppuccin::loading().add_modifier(Modifier::BOLD),
         ));
     } else if let Some(ref error) = search_state.error {
         let error_text = truncate_from_start(error, result_max_width);
         lines.push(Line::styled(
-            format!("  ❌ {}", error_text),
+            format!(" ❌ {}", error_text),
             Catppuccin::error(),
         ));
     } else if search_state.query.is_empty() {
         lines.push(Line::styled(
-            "  Start typing to search Spotify...",
+            " Start typing to search Spotify...",
             Catppuccin::dim(),
         ));
     } else if search_state.results.is_empty() {
-        lines.push(Line::styled("  No results found", Catppuccin::warning()));
+        lines.push(Line::styled(" No results found", Catppuccin::warning()));
     } else {
         // Results header
         lines.push(Line::styled(
-            format!("  {} results", search_state.results.len()),
+            format!(" {} results", search_state.results.len()),
             Catppuccin::secondary().add_modifier(Modifier::BOLD),
         ));
         lines.push(Line::from(""));
 
         // Render results with selection
-        let max_visible = (inner.height as usize).saturating_sub(6);
-        let results_to_show = search_state.results.iter().take(15).enumerate();
+        let max_visible = (inner.height as usize).saturating_sub(8);
+        let results_to_show = search_state.results.iter().take(20).enumerate();
 
         for (i, track) in results_to_show {
             if i < search_state.scroll_offset {
@@ -334,21 +342,23 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             }
 
             let is_selected = i == search_state.selected_index;
-            let marker = if is_selected { "▶" } else { "  " };
+            let marker = if is_selected { "▶" } else { " " };
+            let number = format!("{}.", i + 1);
             let style = if is_selected {
                 Catppuccin::primary().add_modifier(Modifier::BOLD)
             } else {
                 Catppuccin::text()
             };
 
-            let text = format!("{} {}. {} - {}", marker, i + 1, track.name, track.artist);
+            // Format: ▶ 1. Track Name - Artist
+            let text = format!("{}{} {} - {}", marker, number, track.name, track.artist);
             let truncated = truncate_from_start(&text, result_max_width);
             lines.push(Line::styled(truncated, style));
         }
 
-        if search_state.results.len() > 15 {
+        if search_state.results.len() > 20 {
             lines.push(Line::styled(
-                format!("  ... and {} more", search_state.results.len() - 10),
+                format!(" ... and {} more", search_state.results.len() - 20),
                 Catppuccin::dim(),
             ));
         }
@@ -357,7 +367,7 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     // Footer with key hints
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        "  Enter: Play  │  Tab: Queue  │  ↑↓: Navigate  │  Esc: Close",
+        " Enter: Play │ Tab: Queue │ ↑↓: Navigate │ Esc: Close",
         Catppuccin::help(),
     ));
 
@@ -365,7 +375,8 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
     frame.render_widget(widget, inner);
 
     // Set cursor position using display width (not character count)
-    let cursor_y = inner.y;
+    // Line 0 is empty (breathing room), Line 1 is the search input
+    let cursor_y = inner.y + 1;
     let cursor_x = {
         // Use the SearchState helper methods for display width calculations
         let cursor_display_offset = search_state.cursor_display_offset();
@@ -376,11 +387,12 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             // Need to compute how much display width was skipped
             let visible_start_width = query_width.saturating_sub(input_max_width.saturating_sub(1));
             let visible_cursor_offset = cursor_display_offset.saturating_sub(visible_start_width);
-            // +1 for the "…" prefix
-            inner.x + prefix_width as u16 + 1 + visible_cursor_offset as u16
+            // +1 for the leading space, +1 for the "…" prefix
+            inner.x + 1 + prefix_width as u16 + 1 + visible_cursor_offset as u16
         } else {
             // No truncation - use raw display offset
-            inner.x + prefix_width as u16 + cursor_display_offset as u16
+            // +1 for the leading space in " / query" format
+            inner.x + 1 + prefix_width as u16 + cursor_display_offset as u16
         }
     };
     frame.set_cursor_position((cursor_x, cursor_y));

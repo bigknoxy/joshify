@@ -14,6 +14,7 @@ pub mod help;
 pub mod home_view;
 pub mod image_renderer;
 pub mod layout_cache;
+pub mod lite_mode;
 pub mod main_view;
 pub mod mouse_handler;
 pub mod overlays;
@@ -24,6 +25,7 @@ pub mod theme;
 pub use device_selector::render_device_selector;
 pub use help::{render_help_overlay, HelpContent, HelpOverlayState};
 pub use layout_cache::{ClickableArea, LayoutCache};
+pub use lite_mode::{render_lite_help, render_lite_mode};
 pub use main_view::render_main_view;
 pub use mouse_handler::{
     handle_left_click, handle_mouse_event, handle_scroll_down, handle_scroll_up, MouseAction,

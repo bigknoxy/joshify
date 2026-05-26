@@ -103,6 +103,8 @@ pub enum ContentState {
     ArtistDetail {
         artist: ArtistListItem,
     },
+    /// Radio recommendations (for radio mode)
+    RadioRecommendations(Vec<crate::playback::domain::QueueEntry>),
 }
 
 /// Library tab selection

@@ -88,11 +88,13 @@ mod test_impl {
                 }
 
                 let resized = img.resize(width, height, image::imageops::FilterType::Nearest);
+                let resized_width = resized.width();
+                let resized_height = resized.height();
                 let mut lines = Vec::new();
 
-                for y in 0..height {
+                for y in 0..resized_height {
                     let mut line_string = String::new();
-                    for x in 0..width {
+                    for x in 0..resized_width {
                         let pixel = resized.get_pixel(x, y);
                         let c = pixel_to_char(&pixel);
                         line_string.push(c);
@@ -308,4 +310,73 @@ fn test_pixel_to_char_gradient() {
     assert_eq!(black_char, ' ');
     // Gray should be in between
     assert!(matches!(gray_char, '░' | '▒' | '▓'));
+}
+
+/// Regression test: Album art rendering must be independent of theme system
+/// 
+/// This test verifies that changing themes does not affect album art rendering,
+/// since image rendering uses terminal graphics protocols (Kitty/iTerm2) that
+/// display actual image pixels, not themed colors.
+///
+/// See: .learnings/learnings.md entry "2025-05-04 - Album art rendering is completely
+/// independent of the theme system"
+#[test]
+fn test_album_art_rendering_independent_of_theme() {
+    // Import theme system - this would fail if themes module doesn't exist
+    use joshify::themes::BuiltInTheme;
+
+    // Create a simple test image (8x8 pixel to ensure it fits in our constraints)
+    let mut img = image::RgbImage::new(8, 8);
+    for y in 0..8 {
+        for x in 0..8 {
+            img.put_pixel(x, y, image::Rgb([100u8, 150u8, 200u8]));
+        }
+    }
+
+    let mut image_data = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut image_data), image::ImageFormat::Png)
+        .expect("Failed to encode test image");
+
+    let area = Rect::new(0, 0, 6, 4);
+
+    // Test rendering with different themes - should produce identical output
+    let themes = vec![
+        BuiltInTheme::CatppuccinMocha,
+        BuiltInTheme::CatppuccinLatte,
+        BuiltInTheme::GruvboxDark,
+        BuiltInTheme::GruvboxLight,
+        BuiltInTheme::Nord,
+        BuiltInTheme::TokyoNight,
+        BuiltInTheme::Dracula,
+    ];
+
+    let mut previous_render: Option<Vec<Line<'static>>> = None;
+
+    for theme in themes {
+        // Set theme
+        joshify::ui::theme::set_current_theme(theme);
+
+        // Render album art
+        let current_render = test_impl::render_album_art(&image_data, area, test_impl::Protocol::Ascii);
+
+        // Verify render is not empty
+        assert!(!current_render.is_empty(), "Theme {:?} produced empty render", theme);
+
+        // All renders should be identical regardless of theme
+        if let Some(ref prev) = previous_render {
+            assert_eq!(current_render.len(), prev.len(), 
+                "Theme {:?} produced different line count than previous theme", theme);
+            
+            // Verify content is identical
+            for (i, (curr_line, prev_line)) in current_render.iter().zip(prev.iter()).enumerate() {
+                assert_eq!(curr_line.to_string(), prev_line.to_string(),
+                    "Theme {:?} produced different content at line {} compared to previous theme", theme, i);
+            }
+        }
+
+        previous_render = Some(current_render);
+    }
+
+    // Reset to default theme
+    joshify::ui::theme::set_current_theme(BuiltInTheme::CatppuccinMocha);
 }

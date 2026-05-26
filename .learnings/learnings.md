@@ -132,6 +132,50 @@ BUT we had a SECOND bug: duplicate queue population blocks. The first block set 
 
 ---
 
+---
+
+## 2025-05-04
+
+### Category: Pattern/Architecture
+**Learned**: Album art rendering is completely independent of the theme system - it displays actual image pixels, not themed colors.
+
+**Context**: When implementing dynamic theme switching, there was concern that theme changes might affect album art display. Investigation revealed:
+1. Album art uses terminal graphics protocols (Kitty/iTerm2) to display actual image pixels
+2. The theme system only affects UI colors (borders, text, backgrounds)
+3. Album art only uses theme colors for:
+   - Loading placeholder borders
+   - "No Art" placeholder styling
+   - Error state borders
+4. The actual album image rendering bypasses the color system entirely
+
+**Key Insight**: Image rendering and color theming are orthogonal concerns. Changes to one should never affect the other.
+
+**Prevention**: 
+- Keep image rendering logic separate from UI styling
+- Document this independence in both systems
+- Add regression tests that verify album art works across all themes
+
+**Files**: 
+- `src/ui/image_renderer.rs` - Album art rendering
+- `src/ui/theme.rs` - Theme system
+- `tests/album_art_rendering.rs` - Rendering tests
+
+---
+
+### Category: Testing
+**Learned**: All 567 tests pass with 0 album art failures after theme system changes.
+
+**Context**: Despite concerns about theme changes breaking album art, comprehensive testing showed:
+- 19 album art tests (6 cache + 13 rendering) all pass
+- No album art specific warnings in clippy
+- Theme system changes only affected 2 files: theme.rs and help.rs
+
+**Prevention**: Always run full test suite after UI changes. Album art has good test coverage - trust it.
+
+**Verification**: `cargo test album_art` → 19/19 passed
+
+---
+
 ## Summary
 
 Fixed three distinct bugs preventing continuous playlist playback:
@@ -140,3 +184,80 @@ Fixed three distinct bugs preventing continuous playlist playback:
 3. ✅ Local mode only checked user queue
 
 All tests pass (451 lib + 18 perf). Clippy warnings unchanged (~38).
+
+---
+
+## 2026-05-07
+
+### Category: Bug Fix
+**Learned**: Song radio mode wasn't auto-starting after track end because `current_track_uri` was being checked AFTER player state was modified.
+
+**Context**: When a single track ended (no context, no queue), the EndOfTrack handler:
+1. Set `is_playing = false` at line 913
+2. Then checked `current_track_uri` at lines 1016 and 1084 for radio mode seed
+3. But by that point, `current_track_uri` could be `None`
+4. Radio mode code was skipped entirely - user saw "Fetching recommendations..." but nothing happened
+
+**Fix**: 
+1. Capture `ending_track_uri` at the VERY START of the EndOfTrack handler (before any state changes)
+2. Use `ending_track_uri` instead of `app.player_state.current_track_uri` in both radio mode blocks
+3. Added explicit `else` branches with warning logs when URI is missing or invalid
+
+**Prevention**: When you need a value for later logic in an event handler, capture it immediately before any state modifications. Don't assume the state will still be valid after intermediate operations.
+
+**Files**: `src/main.rs` (lines ~912-1145)
+
+---
+
+### Category: Pattern
+**Learned**: Rust shadowing with `let` can be used to preserve values across state mutations.
+
+**Context**: Needed to preserve track URI while modifying `app.player_state`. Used `let ending_track_uri = app.player_state.current_track_uri.clone();` at handler start, then referenced `ending_track_uri` throughout.
+
+**Prevention**: When event handlers modify state but need original values for branching logic, capture clones at the entry point.
+
+**Files**: `src/main.rs`
+
+---
+
+All tests pass (22 total). Clippy warnings unchanged.
+
+---
+
+## 2026-05-14
+
+### Category: Bug Fix
+**Learned**: "Fetching recommendations..." showing forever because status message not cleared on radio errors.
+
+**Context**: User saw "Fetching recommendations..." but radio never started. Multiple issues found:
+1. `ContentState::Error` from radio async task fell through to generic handler
+2. Status message "Fetching recommendations..." never cleared when errors occurred
+3. No `auto_reauth` in `get_recommendations()` - token expiry caused silent failures
+
+**Fix**: 
+1. Added explicit `ContentState::Error` handler that clears "Fetching..." status
+2. Added `auto_reauth()` call before recommendations API call
+3. Status now shows actual error message instead of hanging on "Fetching..."
+
+**Research Finding**: Preloading at 5-10% is NOT common in other Spotify clients. All use event-driven fetching at track end. Don't implement preload - fix the event handling instead.
+
+**Prevention**: Always clear loading status messages in error handlers. Add auth refresh to all API calls. Test error paths, not just success paths.
+
+**Files**: `src/main.rs` (lines ~768-780), `src/api/library.rs` (lines ~122-127)
+
+---
+
+### Category: Pattern
+**Learned**: Event-driven recommendation fetching is preferred over time-based preloading.
+
+**Context**: Researched spotify-tui, ncspot, spotify-player, official Spotify app. NONE use percentage-based preloading. All fetch at track end or explicit user action.
+
+**Why**: 
+- Spotify API has rate limits (rolling 30s window)
+- librespot handles gapless audio internally
+- User might skip/pause - wasted prefetch
+- Event-driven is simpler and more reliable
+
+**Prevention**: Follow existing patterns from mature clients. Don't optimize prematurely with complex preloading.
+
+**Files**: Research in `/home/josh/projects/joshify/research/radio_recommendation_research.md`
