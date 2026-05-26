@@ -240,8 +240,10 @@ mod tests {
 
 /// Render search overlay with live results
 pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_state: &SearchState) {
-    let overlay_width = (area.width as f32 * 0.7).clamp(50.0, area.width as f32) as u16;
-    let overlay_height = (area.height as f32 * 0.7).clamp(12.0, area.height as f32) as u16;
+    let overlay_width = (area.width as f32 * 0.7)
+        .clamp((50.0_f32).min(area.width as f32), area.width as f32) as u16;
+    let overlay_height = (area.height as f32 * 0.7)
+        .clamp((12.0_f32).min(area.height as f32), area.height as f32) as u16;
     let overlay_x = (area.width - overlay_width) / 2;
     let overlay_y = (area.height - overlay_height) / 2;
     let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
