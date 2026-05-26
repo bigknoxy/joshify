@@ -385,11 +385,12 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             // Need to compute how much display width was skipped
             let visible_start_width = query_width.saturating_sub(input_max_width.saturating_sub(1));
             let visible_cursor_offset = cursor_display_offset.saturating_sub(visible_start_width);
-            // +1 for the "…" prefix
-            inner.x + prefix_width as u16 + 1 + visible_cursor_offset as u16
+            // +1 for the leading space, +1 for the "…" prefix
+            inner.x + 1 + prefix_width as u16 + 1 + visible_cursor_offset as u16
         } else {
             // No truncation - use raw display offset
-            inner.x + prefix_width as u16 + cursor_display_offset as u16
+            // +1 for the leading space in " / query" format
+            inner.x + 1 + prefix_width as u16 + cursor_display_offset as u16
         }
     };
     frame.set_cursor_position((cursor_x, cursor_y));

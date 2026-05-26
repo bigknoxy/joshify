@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use rspotify::clients::{BaseClient, OAuthClient};
+use rspotify::prelude::Id;
 
 use super::SpotifyClient;
 
@@ -100,52 +101,94 @@ impl SpotifyClient {
         }
     }
 
-    /// Get track recommendations based on seed tracks
-    /// Used for radio mode - generates similar tracks to the current track
-    ///
+    /// Get similar tracks based on a seed track using search
+    /// 
+    /// Uses Spotify's search API to find more tracks by the same artist.
+    /// This replaces the deprecated recommendations API which returns 404 errors.
+    /// 
     /// # Arguments
-    /// * `seed_track_ids` - Up to 5 track IDs (not full URIs, just the ID part)
-    /// * `limit` - Number of recommendations to return (max 100, default 20)
+    /// * `artist_name` - The name of the artist to search for
+    /// * `exclude_track_id` - Track ID to exclude from results (the seed track)
+    /// * `limit` - Number of tracks to return (max 50, default 20)
     ///
     /// # Returns
-    /// List of recommended tracks
-    pub async fn get_recommendations(
+    /// List of tracks by the artist (as FullTrack since search returns FullTrack)
+    pub async fn get_similar_tracks(
         &self,
-        seed_track_ids: Vec<String>,
+        artist_name: &str,
+        exclude_track_id: &str,
         limit: Option<u32>,
-    ) -> Result<Vec<rspotify::model::SimplifiedTrack>> {
-        let effective_limit = limit.unwrap_or(20).min(100);
+    ) -> Result<Vec<rspotify::model::FullTrack>> {
+        // NOTE: Spotify reduced search limit max to 10 as of Feb 2026
+        let effective_limit = limit.unwrap_or(10).min(10);
         tracing::info!(
-            "Fetching recommendations for {} seed tracks (limit={})",
-            seed_track_ids.len(),
+            "Searching for tracks by artist '{}' (limit={})",
+            artist_name,
             effective_limit
         );
 
-        // Convert string IDs to TrackId objects
-        let track_ids: Vec<rspotify::model::TrackId<'_>> = seed_track_ids
-            .iter()
-            .filter_map(|id| rspotify::model::TrackId::from_id(id).ok())
-            .collect();
+        // Refresh token before API call
+        self.oauth.auto_reauth().await
+            .context("Token refresh failed")?;
 
-        if track_ids.is_empty() {
-            return Err(anyhow::anyhow!("No valid seed track IDs provided"));
-        }
-
+        // Search for tracks by this artist using the non-deprecated search endpoint
+        // Format: "artist:ArtistName" to search specifically by artist
+        let query = format!("artist:{}", artist_name);
+        // Request 2x limit to have room to filter out the seed track, capped at 10
+        let request_limit = (effective_limit * 2).min(10);
         let result = self
             .oauth
-            .recommendations(
-                Vec::new(), // No audio feature attributes
-                None::<Vec<rspotify::model::ArtistId<'_>>>, // No seed artists
-                None::<Vec<&str>>, // No seed genres
-                Some(track_ids),
+            .search(
+                &query,
+                rspotify::model::SearchType::Track,
                 Some(rspotify::model::Market::FromToken),
-                Some(effective_limit),
+                None,
+                Some(request_limit),
+                None,
             )
-            .await
-            .context("Failed to get recommendations")?;
+            .await;
 
-        tracing::info!("Got {} recommendations", result.tracks.len());
-        Ok(result.tracks)
+        match result {
+            Ok(rspotify::model::SearchResult::Tracks(page)) => {
+                // Filter out the seed track
+                let tracks: Vec<rspotify::model::FullTrack> = page
+                    .items
+                    .into_iter()
+                    .filter(|track| {
+                        // Exclude the seed track — id.to_string() returns the URI
+                        // (spotify:track:xxx), use id.id() for the raw base62 ID
+                        track.id.as_ref()
+                            .map(|id| id.id() != exclude_track_id)
+                            .unwrap_or(false) // Tracks without IDs don't count toward limit
+                    })
+                    .take(effective_limit as usize)
+                    .collect();
+                
+                tracing::info!("Found {} tracks by {}", tracks.len(), artist_name);
+                Ok(tracks)
+            }
+            Ok(_) => {
+                tracing::warn!("Search returned unexpected result type");
+                Ok(vec![])
+            }
+            Err(e) => {
+                tracing::error!("Search failed: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// DEPRECATED: Get track recommendations based on seed tracks
+    /// 
+    /// NOTE: This endpoint is deprecated by Spotify and returns 404 errors.
+    /// Use get_similar_tracks() instead which uses the search API.
+    #[deprecated(since = "0.5.1", note = "Use get_similar_tracks instead. The recommendations endpoint is deprecated by Spotify.")]
+    pub async fn get_recommendations(
+        &self,
+        _seed_track_ids: Vec<String>,
+        _limit: Option<u32>,
+    ) -> Result<Vec<rspotify::model::SimplifiedTrack>> {
+        Err(anyhow::anyhow!("get_recommendations is deprecated. Use get_similar_tracks instead."))
     }
 
     /// Search Spotify
@@ -154,8 +197,6 @@ impl SpotifyClient {
         query: &str,
         track_limit: u32,
     ) -> Result<Vec<rspotify::model::FullTrack>> {
-        use rspotify::clients::BaseClient;
-
         tracing::info!("Searching Spotify for: '{}'", query);
 
         if let Err(e) = self.oauth.auto_reauth().await {

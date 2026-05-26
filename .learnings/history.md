@@ -369,3 +369,82 @@
 - What we learned
 - What to remember for next time
 ```
+
+---
+
+## 2026-05-07: Fix Song Radio Mode Auto-Start Bug
+
+**Status**: Complete
+
+**What**:
+- Fixed bug where song radio mode didn't auto-start after a track ended with empty queue
+- Root cause: `current_track_uri` was being checked AFTER player state was modified in EndOfTrack handler
+- Captured `ending_track_uri` at handler start before any state changes
+- Updated both radio mode blocks (PHASE 2 fallback and PHASE 3) to use captured URI
+- Added explicit warning logs when URI is missing or invalid for radio mode
+
+**Decisions**:
+- Use shadowing pattern (`let ending_track_uri = ...`) to preserve value across state mutations
+- Add `else` branches with descriptive warnings for missing/invalid URIs
+- Keep existing async recommendation fetching pattern (works correctly once triggered)
+
+**Files**:
+- `src/main.rs` - EndOfTrack handler (lines ~912-1145)
+- `.learnings/learnings.md` - Added bug fix documentation
+- `.learnings/history.md` - This entry
+
+**Testing**:
+- `cargo check` - Passes
+- `cargo test --bin joshify --test performance_tests` - All 22 tests pass
+- `cargo clippy` - No new warnings (existing 100 warnings unchanged)
+
+**Learnings**:
+- Capture state values at event handler start before any mutations
+- Don't assume state will be valid after intermediate operations
+- Shadowing with `let` is effective for preserving values across state changes
+
+---
+
+## 2026-05-14: Fix Radio Mode "Fetching recommendations..." Hang
+
+**Status**: Complete
+
+**What**:
+- Fixed "Fetching recommendations..." showing forever when radio mode fails
+- Root causes identified through subagent investigation:
+  1. Status message not cleared when `ContentState::Error` received from async task
+  2. Missing `auto_reauth()` in `get_recommendations()` - token expiry caused silent failures
+  3. Error fell through to generic handler instead of being handled explicitly
+- Added explicit `ContentState::Error` handler that detects radio errors and clears status
+- Added `auto_reauth()` call before recommendations API call in `library.rs`
+- Research showed preloading at 5-10% is NOT common - event-driven is standard
+
+**Research Findings**:
+- spotify-tui, ncspot, spotify-player: NONE use percentage-based preloading
+- All use event-driven fetching at track end or explicit user action
+- Official Spotify app uses server-side queue management
+- librespot handles gapless audio internally - TUI just needs to provide next URI
+- Rate limit best practice: minimum 30s between radio fetches
+
+**Decisions**:
+- DON'T implement 5-10% preload (not a common pattern)
+- DO fix error handling to clear status messages properly
+- DO add auth refresh to prevent silent token expiry failures
+- Keep event-driven architecture (simpler, more reliable)
+
+**Files**:
+- `src/main.rs` - Added `ContentState::Error` handler (lines ~768-780)
+- `src/api/library.rs` - Added `auto_reauth()` to `get_recommendations()` (lines ~122-127)
+- `.learnings/learnings.md` - Added bug pattern and research findings
+- `.learnings/history.md` - This entry
+
+**Testing**:
+- `cargo check` - Passes
+- `cargo test --bin joshify --test performance_tests` - All 22 tests pass
+- `cargo clippy` - No new warnings
+
+**Learnings**:
+- Always clear loading status messages in error handlers
+- Add auth refresh to all API calls, not just some
+- Research existing patterns before implementing novel solutions
+- Event-driven > time-based polling for recommendation fetching

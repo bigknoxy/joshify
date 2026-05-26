@@ -14,6 +14,7 @@ use joshify::CliArgs;
 use librespot::core::authentication::Credentials;
 use rspotify::clients::OAuthClient;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 /// Highlighted item in the current view (for queue operations)
 #[derive(Debug, Clone)]
@@ -414,6 +415,73 @@ async fn main() -> Result<()> {
     result
 }
 
+/// Fetch similar tracks for radio mode and send results via channel.
+/// Used by both PHASE 2 and PHASE 3 of EndOfTrack handling.
+async fn fetch_radio_tracks(
+    client: &joshify::api::SpotifyClient,
+    seed_id: &str,
+    limit: u32,
+    tx: mpsc::Sender<ContentState>,
+) {
+    let track_id = match rspotify::model::TrackId::from_id(seed_id) {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Radio: Invalid seed track ID '{}': {}", seed_id, e);
+            let _ = tx.send(ContentState::Error("Radio: Invalid track ID".to_string())).await;
+            return;
+        }
+    };
+
+    let track = match client.oauth.track(track_id, None).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Radio: Failed to fetch seed track: {}", e);
+            let _ = tx.send(ContentState::Error("Radio: Failed to get track details".to_string())).await;
+            return;
+        }
+    };
+
+    let artist_name = track.artists.first()
+        .map(|a| a.name.as_str())
+        .unwrap_or("");
+
+    match client.get_similar_tracks(artist_name, seed_id, Some(limit)).await {
+        Ok(tracks) if !tracks.is_empty() => {
+            let entries: Vec<_> = tracks.into_iter().filter_map(|track| {
+                track.id.as_ref().map(|id| {
+                    joshify::playback::domain::QueueEntry {
+                        uri: format!("spotify:track:{}", id.id()),
+                        name: track.name,
+                        artist: track.artists.first()
+                            .map(|a| a.name.clone())
+                            .unwrap_or_default(),
+                        album: Some(track.album.name),
+                        duration_ms: Some(track.duration.num_milliseconds() as u32),
+                        added_by_user: false,
+                        is_recommendation: true,
+                    }
+                })
+            }).collect();
+
+            if !entries.is_empty() {
+                tracing::info!("Radio: Sending {} valid tracks", entries.len());
+                let _ = tx.send(ContentState::RadioRecommendations(entries)).await;
+            } else {
+                tracing::warn!("Radio: No valid tracks after filtering");
+                let _ = tx.send(ContentState::Error("No similar tracks found".to_string())).await;
+            }
+        }
+        Ok(_) => {
+            tracing::warn!("Radio: No similar tracks found for artist '{}'", artist_name);
+            let _ = tx.send(ContentState::Error("No similar tracks available".to_string())).await;
+        }
+        Err(e) => {
+            tracing::warn!("Radio: Failed to fetch similar tracks: {}", e);
+            let _ = tx.send(ContentState::Error(format!("Radio error: {}", e))).await;
+        }
+    }
+}
+
 async fn run_with_args(args: CliArgs) -> Result<()> {
     // Load config from CLI args (args take precedence over env vars and config file)
     let config = OAuthConfig::from_args(&args);
@@ -765,6 +833,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.status_message = Some("No recommendations found".to_string());
                     }
                 }
+                ContentState::Error(msg) => {
+                    if app.status_message.as_deref().is_some_and(|s| s.contains("Fetching recommendations")) {
+                        let display_msg = if msg.starts_with("Radio error:") {
+                            msg.clone()
+                        } else {
+                            format!("Radio error: {}", msg)
+                        };
+                        app.status_message = Some(display_msg);
+                        tracing::warn!("Radio mode failed: {}", msg);
+                    }
+                    app.content_state = ContentState::Error(msg);
+                }
                 other => {
                     app.loading_more_liked_songs = false;
                     if let ContentState::LikedSongsPage {
@@ -910,6 +990,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.player_state.progress_ms = *position_ms;
                     }
                     PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
+                        // CAPTURE the current track URI BEFORE any state changes
+                        // This is needed for radio mode to get recommendations based on the ending track
+                        let ending_track_uri = app.player_state.current_track_uri.clone();
+                        tracing::debug!(
+                            "EndOfTrack event: ending_track_uri={:?}, current_track_uri={:?}",
+                            ending_track_uri,
+                            app.player_state.current_track_uri
+                        );
+                        
                         app.player_state.is_playing = false;
 
                         // PHASE 1: Check user-added queue (up_next) first - highest priority
@@ -1011,12 +1100,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     "EndOfTrack: advance() returned None despite {} remaining tracks",
                                     remaining
                                 );
-                                // Fall through to radio mode if enabled
+                                // Fall through to radio mode if enabled - use ending_track_uri captured at start
                                 if app.queue_state.radio_mode {
-                                    if let Some(ref current_uri) = app.player_state.current_track_uri {
-                                        if let Some(track_id) = current_uri.strip_prefix("spotify:track:") {
+                                    if let Some(ref uri) = ending_track_uri {
+                                        if let Some(track_id) = uri.strip_prefix("spotify:track:") {
                                             tracing::info!(
-                                                "EndOfTrack: Radio mode enabled, fetching recommendations for track {}",
+                                                "EndOfTrack: Radio mode (PHASE 2), fetching similar tracks for track {}",
                                                 track_id
                                             );
                                             
@@ -1027,55 +1116,26 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 
                                                 tokio::spawn(async move {
                                                     let guard = c.lock().await;
-                                                    match guard.get_recommendations(vec![seed_id], Some(20)).await {
-                                                        Ok(tracks) if !tracks.is_empty() => {
-                                                            // Filter out tracks with no ID and map to QueueEntry
-                                                            let entries: Vec<_> = tracks.iter().filter_map(|track| {
-                                                                track.id.as_ref().map(|id| {
-                                                                    joshify::playback::domain::QueueEntry {
-                                                                        uri: format!("spotify:track:{}", id.id()),
-                                                                        name: track.name.clone(),
-                                                                        artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
-                                                                        album: track.album.as_ref().map(|a| a.name.clone()),
-                                                                        duration_ms: Some(track.duration.num_milliseconds() as u32),
-                                                                        added_by_user: false,
-                                                                        is_recommendation: true,
-                                                                    }
-                                                                })
-                                                            }).collect();
-                                                            
-                                                            if !entries.is_empty() {
-                                                                tracing::info!("Sending {} valid radio recommendations", entries.len());
-                                                                let _ = tx_clone.send(ContentState::RadioRecommendations(entries)).await;
-                                                            } else {
-                                                                tracing::warn!("Radio mode: All recommendations had missing track IDs");
-                                                                let _ = tx_clone.send(ContentState::Error("No valid recommendations".to_string())).await;
-                                                            }
-                                                        }
-                                                        Ok(_) => {
-                                                            tracing::warn!("Radio mode: No recommendations returned");
-                                                            let _ = tx_clone.send(ContentState::Error("No recommendations available".to_string())).await;
-                                                        }
-                                                        Err(e) => {
-                                                            tracing::warn!("Radio mode: Failed to get recommendations: {}", e);
-                                                            let _ = tx_clone.send(ContentState::Error(format!("Radio error: {}", e))).await;
-                                                        }
-                                                    }
+                                                    fetch_radio_tracks(&*guard, &seed_id, 10, tx_clone).await;
                                                 });
                                                 
                                                 app.status_message = Some("Fetching recommendations...".to_string());
                                             }
+                                        } else {
+                                            tracing::warn!("EndOfTrack: Cannot start radio - ending track URI is not a spotify:track: {:?}", uri);
                                         }
+                                    } else {
+                                        tracing::warn!("EndOfTrack: Cannot start radio - no ending track URI available (was None when track ended)");
                                     }
                                 }
                             }
                         }
                         // PHASE 3: Radio mode - fetch recommendations when queue is empty
                         else if app.queue_state.radio_mode {
-                            if let Some(ref current_uri) = app.player_state.current_track_uri {
-                                if let Some(track_id) = current_uri.strip_prefix("spotify:track:") {
+                            if let Some(ref uri) = ending_track_uri {
+                                if let Some(track_id) = uri.strip_prefix("spotify:track:") {
                                     tracing::info!(
-                                        "EndOfTrack: Radio mode enabled, fetching recommendations for track {}",
+                                        "EndOfTrack: Radio mode (PHASE 3), fetching similar tracks for track {}",
                                         track_id
                                     );
                                     
@@ -1086,45 +1146,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         
                                         tokio::spawn(async move {
                                             let guard = c.lock().await;
-                                            match guard.get_recommendations(vec![seed_id], Some(20)).await {
-                                                Ok(tracks) if !tracks.is_empty() => {
-                                                    // Filter out tracks with no ID and map to QueueEntry
-                                                    let entries: Vec<_> = tracks.iter().filter_map(|track| {
-                                                        track.id.as_ref().map(|id| {
-                                                            joshify::playback::domain::QueueEntry {
-                                                                uri: format!("spotify:track:{}", id.id()),
-                                                                name: track.name.clone(),
-                                                                artist: track.artists.first().map(|a| a.name.clone()).unwrap_or_default(),
-                                                                album: track.album.as_ref().map(|a| a.name.clone()),
-                                                                duration_ms: Some(track.duration.num_milliseconds() as u32),
-                                                                added_by_user: false,
-                                                                is_recommendation: true,
-                                                            }
-                                                        })
-                                                    }).collect();
-                                                    
-                                                    if !entries.is_empty() {
-                                                        tracing::info!("Sending {} valid radio recommendations", entries.len());
-                                                        let _ = tx_clone.send(ContentState::RadioRecommendations(entries)).await;
-                                                    } else {
-                                                        tracing::warn!("Radio mode: All recommendations had missing track IDs");
-                                                        let _ = tx_clone.send(ContentState::Error("No valid recommendations".to_string())).await;
-                                                    }
-                                                }
-                                                Ok(_) => {
-                                                    tracing::warn!("Radio mode: No recommendations returned");
-                                                    let _ = tx_clone.send(ContentState::Error("No recommendations available".to_string())).await;
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!("Radio mode: Failed to get recommendations: {}", e);
-                                                    let _ = tx_clone.send(ContentState::Error(format!("Radio error: {}", e))).await;
-                                                }
-                                            }
+                                            fetch_radio_tracks(&*guard, &seed_id, 10, tx_clone).await;
                                         });
                                         
                                         app.status_message = Some("Fetching recommendations...".to_string());
                                     }
+                                } else {
+                                    tracing::warn!("EndOfTrack: Cannot start radio - ending track URI is not a spotify:track: {:?}", uri);
                                 }
+                            } else {
+                                tracing::warn!("EndOfTrack: Cannot start radio - no ending track URI available (was None when track ended)");
                             }
                         }
                         // PHASE 4: Nothing left to play and radio disabled

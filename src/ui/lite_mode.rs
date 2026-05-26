@@ -238,7 +238,7 @@ fn render_queue_indicator(frame: &mut Frame, area: Rect, queue_count: usize) {
 
 /// Render help hint
 fn render_help_hint(frame: &mut Frame, area: Rect) {
-    let text = "# Press ? for help, q to quit";
+    let text = "# Press / to search, ? for help, q to quit";
     let line = Line::from(vec![Span::styled(
         text,
         Catppuccin::dim().add_modifier(Modifier::ITALIC),

@@ -2,6 +2,21 @@
 
 Remote Spotify Client TUI with local playback support.
 
+## Important References
+
+- **CLAUDE.md** - Spotify Web API guidelines that MUST be followed. See [CLAUDE.md](CLAUDE.md) for:
+  - OpenAPI spec reference
+  - Authorization flows
+  - Redirect URI requirements
+  - Scopes guidelines
+  - Token management
+  - Rate limiting
+  - Deprecated endpoints
+  - Error handling
+  - Developer Terms of Service
+
+## Quick Commands
+
 ## Quick Commands
 
 ```bash

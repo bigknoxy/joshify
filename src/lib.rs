@@ -12,6 +12,7 @@ pub mod media_control;
 pub mod notifications;
 pub mod playback;
 pub mod player;
+pub mod radio;
 pub mod search;
 pub mod session;
 pub mod setup;
