@@ -129,16 +129,30 @@ JOSHIFY_MOCK=1 cargo run
 
 ### CLI Mode
 
+CLI commands control your Spotify account directly and **require authentication**
+(Spotify Client ID/Secret, plus an access or refresh token). Provide credentials via
+environment variables (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`,
+`SPOTIFY_ACCESS_TOKEN`/`SPOTIFY_REFRESH_TOKEN`) or `--client-id`/`--client-secret` flags.
+
 ```bash
 # Control playback
 joshify play
+joshify play spotify:track:4uLU6hMCjMI75M1A2tKUQC
 joshify pause
+joshify resume
 joshify next
 joshify previous
 
 # Get status
 joshify status
+joshify status --format json
 joshify current
+
+# Volume, seek, shuffle, repeat
+joshify volume 50
+joshify seek 60000
+joshify shuffle on
+joshify repeat track
 
 # Search and queue
 joshify search "never gonna give you up"

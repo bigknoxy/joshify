@@ -30,6 +30,14 @@ pub struct PlaybackState {
     pub volume: u16, // 0-65535
 }
 
+/// Convert a 0-100 volume percentage to the 0-65535 range used by librespot.
+///
+/// Arithmetic is done in `u32` to avoid overflow before the cast to `u16`.
+/// Values above 100 are clamped.
+pub fn percent_to_volume(percent: u32) -> u16 {
+    (percent.min(100) * 65535 / 100) as u16
+}
+
 /// Local audio player backed by librespot
 pub struct LocalPlayer {
     player: Arc<Player>,
@@ -211,6 +219,20 @@ mod tests {
         assert_eq!(state.progress_ms, 0);
         assert_eq!(state.duration_ms, 0);
         assert_eq!(state.volume, 0);
+    }
+
+    #[test]
+    fn percent_to_volume_full_range() {
+        assert_eq!(percent_to_volume(0), 0);
+        assert_eq!(percent_to_volume(1), 655);
+        assert_eq!(percent_to_volume(50), 32767);
+        assert_eq!(percent_to_volume(100), 65535);
+    }
+
+    #[test]
+    fn percent_to_volume_clamps_above_100() {
+        assert_eq!(percent_to_volume(150), 65535);
+        assert_eq!(percent_to_volume(200), 65535);
     }
 
     #[test]

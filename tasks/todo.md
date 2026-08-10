@@ -1,77 +1,60 @@
-# Continuous Playback Fix - PLAN MODE
+# Audit Backlog — 2026-08-08
 
 ## Goal
-Fix Spotify-style continuous playback so playing a track from a playlist continues through the rest of the playlist.
+Full audit of the repo: code review, feature review, build/install tooling, CI health, docs drift. Findings filed as GitHub issues #10-#26 with testable AC.
 
-## Root Cause Analysis
+## Audit Findings (prioritized)
 
-After investigation, there are **three distinct issues**:
+### P0 — High severity
+| # | Issue | GH |
+|---|-------|----|
+| P0-1 | Volume controls panic in debug / garbage volume in release (u16 overflow at main.rs:2675,2734,2818,2836) | #10 |
+| P0-2 | install.sh never downloads prebuilt binaries + misses chafa dep -> install fails | #11 |
+| P0-3 | CLI mode is a stub - play/pause/status do not control Spotify | #12 |
+| P0-4 | Daemon mode is a complete stub - daemon-send does nothing real | #13 |
 
-### Issue 1: Queue Never Populated (Remote Mode)
-In `main.rs` lines 2174-2251, when Enter is pressed on a playlist track:
-- Sets `current_context` with playlist info and `start_index`
-- Calls `start_context_playback()` with `Offset::Uri`
-- **NEVER calls `queue.set_context()` to populate context tracks**
-- Result: `playback_queue.context_tracks` is empty, can't track position
+### P1 — High
+| # | Issue | GH |
+|---|-------|----|
+| P1-1 | Remote mode silently ignores user-queued tracks on auto-advance | #14 |
+| P1-2 | Left arrow in remote mode changes volume instead of seeking back | #15 |
+| P1-3 | Queue removal/next_track desync between local_queue and PlaybackQueue | #16 |
+| P1-4 | current_playback() masks every deserialization/API error as no playback | #17 |
+| P1-5 | poll_playback holds client Mutex across network await, serializing API work | #18 |
 
-### Issue 2: Silent Fallback to Single Track (Remote Mode)
-In `playback/service.rs` lines 274-327:
-- If `PlaylistId::from_id()` fails, silently falls through to `play_track_simple()`
-- `play_track_simple()` uses `start_uris_playback()` with single track URI
-- Result: No context, no auto-advance, plays just one track
+### P2 — Medium
+| # | Issue | GH |
+|---|-------|----|
+| P2-1 | CI is red on main - fmt check and security audit fail | #19 |
+| P2-2 | Docs/version drift - README, VERSION, Cargo.toml, release tags disagree | #20 |
+| P2-3 | Artist library and artist top-tracks views are unimplemented | #21 |
+| P2-4 | EndOfTrack context-advance shows previous track's name in status message | #22 |
+| P2-5 | media_control.rs and notifications.rs are stubs but advertised as working | #23 |
 
-### Issue 3: Local Mode Only Checks local_queue (Local Mode)
-In `main.rs` lines 826-859:
-- `EndOfTrack` handler only checks `!app.queue_state.local_queue.is_empty()`
-- Never checks `playback_queue.remaining_context_tracks()`
-- Result: When playing playlist (empty local_queue), no auto-advance
+### P3 — Low
+| # | Issue | GH |
+|---|-------|----|
+| P3-1 | Album-art 2s cooldown keyed on URI starves art on rapid track changes | #24 |
+| P3-2 | OAuth callback server aborts after 100ms before browser response finishes | #25 |
+| P3-3 | SearchState requests 15 results but API clamps to 10 | #26 |
 
-## Implementation Plan
+Full AC for each item: `tasks/AUDIT_BACKLOG.md`
 
-### Phase 1: Populate Queue When Starting Playback
-**File**: `src/main.rs` around lines 2174-2251
-
-When user presses Enter on a track in `PlaylistTracks` view:
-1. Get the full track list URIs from `ContentState::PlaylistTracks`
-2. Call `app.queue_state.playback_queue_mut().set_context()` with:
-   - The `PlaybackContext::Playlist`
-   - Full list of track URIs from the playlist
-3. Add debug logging to confirm queue population
-
-### Phase 2: Fix Silent Fallback
-**File**: `src/playback/service.rs` lines 274-327
-
-Change `play_with_context()` to:
-1. Return error instead of falling back to simple playback on parse failure
-2. Only fallback to `play_track_simple()` on API call failure (after trying context)
-3. Add explicit warning log when fallback occurs
-
-### Phase 3: Fix Local Mode Auto-Advance
-**File**: `src/main.rs` lines 826-859
-
-In `EndOfTrack` event handler:
-1. First check `local_queue` (existing behavior - user-added tracks)
-2. If empty, check `playback_queue.remaining_context_tracks() > 0`
-3. If context tracks remain, call `playback_queue.advance()` to get next URI
-4. Load that URI via `player.load_uri()`
-
-### Phase 4: Add Comprehensive Debug Logging
-Add logging at key points:
-- When `set_context()` is called (with track count)
-- When playback starts (with context info)
-- When fallback to simple playback occurs
-- When track ends and what advance decision is made
-- Queue state before/after advance
-
-### Phase 5: Write Tests
-- Test queue population on playlist playback start
-- Test local mode auto-advance through context tracks
-- Test fallback behavior logs warning
-- Test queue + context interleaving
+## Suggested Execution Order
+1. P0-1 volume overflow (smallest, highest blast radius)
+2. P0-2 installer (unblocks all users; pair with release.yml fix)
+3. P0-3 + P0-4 CLI/daemon stubs (shared client wiring decision)
+4. P1-1, P1-2, P1-3 playback/queue correctness
+5. P1-4, P1-5 API masking, lock contention
+6. P2-1 CI green (every later task needs green baseline)
+7. P2-2 docs drift, P2-3 artist views, P2-4, P2-5
+8. P3 as time allows
 
 ## Verification Checklist
-- [ ] Play track 3 of playlist, verify track 4 plays automatically
-- [ ] Verify logs show queue population and advance decisions
-- [ ] Add track to queue mid-playlist, verify it plays next then resumes playlist
+- [x] P0-1: percent_to_volume helper + unit tests; no `as u16 * 65535` remains
+- [x] P0-2: installer downloads prebuilt release binary; chafa installed on source fallback
+- [x] P0-3: CLI routes real commands via mockall-tested client (CliClient trait + CliHandler wired into main)
+- [ ] P0-4: daemon routes real commands via mockall-tested client
 - [ ] All 451 library tests pass
 - [ ] All 18 performance tests pass
+- [ ] cargo fmt --check clean, clippy no new warnings

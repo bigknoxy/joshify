@@ -299,6 +299,75 @@
 
 ---
 
+### 2026-08-08: Full Repo Audit — Code, Features, CI, Docs
+**Branch**: main
+**Status**: Complete (audit + issue filing); fixes pending
+**Owner**: AI Agent
+
+**What**:
+- Reviewed full source tree: main.rs (3706 lines), playback/domain.rs, player/mod.rs, api/{playback,library}.rs, auth.rs, keyring_store.rs, daemon.rs, cli.rs, notifications.rs, media_control.rs, state/*, lyrics.rs
+- Verified build tooling: install.sh source-build path fails (missing chafa), prebuilt release binaries ignored
+- Verified CI health: fmt + security audit + release workflow failing on main
+- Confirmed docs drift: VERSION=0.2.0 vs Cargo.toml=0.5.0 vs release v0.6.0; README links to non-existent LICENSE/CONTRIBUTING.md/assets
+- Filed 17 GitHub issues (#10-#26) with testable AC, labels, and priorities
+- Wrote `tasks/AUDIT_BACKLOG.md` with full AC + DoD for every item
+
+**Decisions**:
+- Priorities: P0 (crash/install/feature-stub), P1 (wrong behavior), P2 (degradation/cleanup), P3 (nice-to-have)
+- Issues carry mockall-based unit-test AC so memoryless agents can implement with TDD
+- Backlog kept in GH issues as source of truth; `tasks/` docs mirror them
+- CLI/daemon stubs (#12/#13) and media-control/notifications stubs (#23) filed as "implement OR de-scope" so direction can be chosen per fix
+
+**Files**:
+- Created: `tasks/AUDIT_BACKLOG.md`
+- Modified: `tasks/todo.md`, `.learnings/learnings.md`, `.learnings/history.md`
+
+**Testing**:
+- Audit verification via `gh` CLI (issues/releases/runs) and direct source reads
+- Local `cargo test`/`clippy` blocked by missing `libchafa-dev` (ratatui-image build.rs); fix = `sudo pacman -S chafa` (issue #11)
+
+**Learnings**:
+- Never hold a shared client Mutex across a network await (issue #18)
+- Advertised features must be verified against real API/OS calls, not just code presence (issues #12,#13,#23)
+- u16 scaling must be done in a wider type (issue #10)
+
+---
+
+### 2026-08-09: P0-3 CLI Mode Wired to Real Spotify API (issue #12)
+**Branch**: main
+**Status**: Complete
+**Owner**: AI Agent
+
+**What**:
+- Added `CliClient` async trait (`src/api/cli_client.rs`) abstracting the playback/library methods the CLI needs, implemented for `SpotifyClient`
+- Refactored `CliHandler` to hold a `CliClient`, made `execute`/`cmd_*` async, and wired every command to the real API (pause/resume/next/previous/volume/seek/shuffle/repeat/play/search/queue-add)
+- Added `PlaybackStatus::from_context` converting `CurrentPlaybackContext` → CLI status (track/episode aware)
+- Added mockall-based unit tests asserting correct API method invocation + output format + error propagation
+- Wired CLI dispatch into `main()`: positional subcommands (`joshify play`, `joshify status`, ...) run before TUI init; non-zero exit on error
+- Added `CliArgs.command` positional capture and `SpotifyClient::dummy()` for help/version
+- Updated README CLI section to note commands require auth
+
+**Decisions**:
+- Used a mockable `CliClient` trait (async-trait) rather than mocking `SpotifyClient` directly, since `SpotifyClient` is a concrete struct wrapping `AuthCodeSpotify`
+- `seek` takes `Option<String>` (not `Option<&str>`) to avoid lifetime issues in mockall's `mock!` macro
+- CLI dispatch happens before TUI init so commands never touch the terminal
+
+**Files**:
+- Created: `src/api/cli_client.rs`
+- Modified: `src/api/mod.rs`, `src/api/client.rs`, `src/cli.rs`, `src/lib.rs`, `src/main.rs`, `README.md`, `tasks/todo.md`
+
+**Testing**:
+- 38 cli tests pass (10 new mockall-based); full lib suite 462 passed (1 pre-existing env-dependent `test_protocol_detection` failure)
+- 18 performance tests pass
+- Manual: `joshify version`, `joshify help`, `joshify bogus` (exit 1), `joshify pause` without creds (exit 1)
+- `cargo fmt --check` clean; clippy no new warnings
+
+**Learnings**:
+- mockall `mock!` for async traits requires `async_trait` in scope and cannot mock `Option<&str>` params without explicit lifetimes
+- `Box<dyn Write>` cannot be downcast; use a shared `Arc<Mutex<Vec<u8>>>` writer to capture CLI output in tests
+
+---
+
 ## Template for New Entries
 
 ```markdown

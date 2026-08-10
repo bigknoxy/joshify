@@ -34,14 +34,14 @@ jobs:
           VHS_VERSION="0.11.0"
           TTYD_VERSION="1.7.7"
           
-          wget -q "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_linux_amd64.deb" -O vhs.deb
+          wget -q "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_amd64.deb" -O vhs.deb
           sudo dpkg -i vhs.deb || sudo apt-get install -f -y
           
           wget -q "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" -O ttyd
           chmod +x ttyd
           sudo mv ttyd /usr/local/bin/
           
-          vhs version
+          vhs --help
           ttyd --version
 
       - name: Cache dependencies

@@ -1,0 +1,13 @@
+[advisories]
+# RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quick-xml 0.38.4 (high)
+# Fixed in quick-xml >=0.41.0, which is a breaking major bump (Reader API changed).
+# librespot-core (git dev branch, pinned at 9c7d756) requires quick-xml = "0.38".
+# Tracked in issue #19. Re-evaluate when librespot upstream bumps quick-xml.
+ignore = [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # RUSTSEC-2023-0071: rsa 0.9.10 (medium) - Marvin Attack timing sidechannel.
+    # No fixed upgrade is available (rsa 0.9.x has no patched release; 0.10 is not
+    # API-compatible and librespot-core depends on 0.9). Transitive via librespot-core.
+    "RUSTSEC-2023-0071",
+]

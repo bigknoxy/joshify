@@ -351,6 +351,11 @@ async fn main() -> Result<()> {
         return run_search_test(args).await;
     }
 
+    // Handle CLI subcommands (e.g. joshify play, joshify status) without TUI
+    if args.command.is_some() {
+        return run_cli_command(args).await;
+    }
+
     // Initialize tracing to file (before terminal init to avoid polluting TUI)
     let log_dir = std::env::var("HOME")
         .map(|h| format!("{}/.cache/joshify", h))
@@ -2672,7 +2677,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.player_state.volume = app.player_state.volume.saturating_sub(5);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                        let new_vol = joshify::player::percent_to_volume(
+                                            app.player_state.volume,
+                                        );
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -2731,7 +2738,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.player_state.volume = (app.player_state.volume + 5).min(100);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                        let new_vol = joshify::player::percent_to_volume(
+                                            app.player_state.volume,
+                                        );
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -2815,7 +2824,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             app.player_state.volume = (app.player_state.volume + 5).min(100);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                    let new_vol =
+                                        joshify::player::percent_to_volume(app.player_state.volume);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -2833,7 +2843,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             app.player_state.volume = app.player_state.volume.saturating_sub(5);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                    let new_vol =
+                                        joshify::player::percent_to_volume(app.player_state.volume);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -3396,8 +3407,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 // Use local player for volume control
                                 if let Some(ref player) = app.local_player {
                                     // Convert 0-100 percentage to 0-65535 for librespot
-                                    // Use u32 for calculation to prevent overflow, then cast to u16
-                                    let new_vol = (new_volume as u32 * 65535 / 100) as u16;
+                                    let new_vol = joshify::player::percent_to_volume(new_volume);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -3450,6 +3460,68 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 _ => {}
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Execute a CLI subcommand (e.g. `joshify play`, `joshify status`) without TUI
+async fn run_cli_command(args: CliArgs) -> Result<()> {
+    use joshify::api::SpotifyClient;
+    use joshify::auth::OAuthConfig;
+    use joshify::cli::{parse_args, CliHandler};
+
+    let command_args = args.command.clone().unwrap_or_default();
+
+    // Parse the subcommand
+    let command = match parse_args(&command_args) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Help/version don't need a client
+    use joshify::cli::CliCommand;
+    match &command {
+        CliCommand::Help => {
+            let mut handler = CliHandler::new(SpotifyClient::dummy());
+            handler.execute(command).await?;
+            return Ok(());
+        }
+        CliCommand::Version => {
+            let mut handler = CliHandler::new(SpotifyClient::dummy());
+            handler.execute(command).await?;
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    // Load config
+    let config = OAuthConfig::from_args(&args);
+
+    // Check for credentials
+    if config.client_id.is_empty() || config.client_secret.is_empty() {
+        eprintln!("Error: Client ID and Secret required");
+        eprintln!("   Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars");
+        eprintln!("   Or use --client-id and --client-secret flags");
+        std::process::exit(1);
+    }
+
+    // Create client
+    let client = match SpotifyClient::new(&config).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: Failed to connect to Spotify: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let mut handler = CliHandler::new(client);
+    if let Err(e) = handler.execute(command).await {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
     }
 
     Ok(())
