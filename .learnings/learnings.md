@@ -140,3 +140,124 @@ Fixed three distinct bugs preventing continuous playlist playback:
 3. ✅ Local mode only checked user queue
 
 All tests pass (451 lib + 18 perf). Clippy warnings unchanged (~38).
+
+---
+
+## 2026-08-08
+
+### Category: Bug
+**Learned**: Volume arithmetic `volume as u16 * 65535` overflows `u16` for any volume >= 2 (panic in debug, garbage in release). Must compute in `u32` then cast: `((volume * 65535) / 100) as u16`.
+
+**Context**: All four keyboard volume paths in `src/main.rs` (2675, 2734, 2818, 2836) cast `u32` volume to `u16` before multiplying by 65535. The mouse path (3400) already used `u32` correctly.
+
+**Prevention**: When scaling into `u16` (0-65535) from a percent, always do arithmetic in a wider type; grep for `as u16 * 65535`. Extract a single `percent_to_volume()` helper.
+
+**File**: `src/main.rs`, filed as issue #10
+
+---
+
+### Category: Bug
+**Learned**: The project advertises features that are stubs — CLI playback commands, daemon playback, desktop notifications, and MPRIS media control all print/log placeholder text and never touch Spotify or the OS. The README/CHANGELOG claim them as working.
+
+**Context**: `src/cli.rs` `cmd_play`/`cmd_pause`/`cmd_status` etc. just `writeln!`; `src/daemon.rs` `execute_command` fabricates `Track from {uri}` / `Unknown Artist` / `duration_ms: 180000`; `src/notifications.rs:152` returns `StubNotifier`; `src/media_control.rs` logs "would initialize here".
+
+**Prevention**: During code review, always verify advertised features actually call the real API/OS — grep for stub markers (`"would initialize"`, `"for now"`, `"Mock status"`, fabricated data). File as issues with mockall-based AC.
+
+**File**: `src/cli.rs`, `src/daemon.rs`, `src/notifications.rs`, `src/media_control.rs`, filed as issues #12, #13, #23
+
+---
+
+### Category: Bug
+**Learned**: `current_playback()` in `src/api/playback.rs` swallows real API errors (parse failures, 401/429, schema drift) by converting any error containing "player"/"device"/"404"/"400" into `Ok(None)`, so the TUI shows "Nothing playing" instead of the real error.
+
+**Context**: The "any deserialization error = no playback" fallback (lines 60-61) would hide playback entirely if the Spotify schema changed.
+
+**Prevention**: Distinguish genuine "no active playback" (empty/null/204/NO_ACTIVE_DEVICE) from parse/network/auth errors; propagate the latter.
+
+**File**: `src/api/playback.rs`, filed as issue #17
+
+---
+
+### Category: Bug
+**Learned**: Remote mode auto-advance pops the local queue (`queue.advance()` -> `next_uri`) but then calls Spotify's `playback_next()` instead of playing `next_uri`, silently discarding the user's queued track.
+
+**Context**: `trigger_remote_advance` at `src/main.rs:296-330`. Spotify's server-side queue advances instead of the local entry.
+
+**Prevention**: When a local queue entry is advanced, play that exact URI via `start_playback(vec![next_uri], None)`; only use `playback_next()` when no local items remain.
+
+**File**: `src/main.rs`, filed as issue #14
+
+---
+
+### Category: Bug
+**Learned**: The `'D'` remove-from-queue handler removes from `local_queue` only, never from `playback_queue.up_next`, so the two mirrors diverge and `next_track()` pops mismatched entries.
+
+**Context**: `src/main.rs:1858-1875`, `src/state/queue_state.rs:55-64`. `next_track()` uses `local_queue.remove(0)` (O(n)) with no reconciliation.
+
+**Prevention**: Removal must be atomic across both stores — add `QueueState::remove(uri)` that removes from both and unit test ordering consistency after removal.
+
+**File**: `src/state/queue_state.rs`, `src/main.rs`, filed as issue #16
+
+---
+
+### Category: Pattern
+**Learned**: `poll_playback` holds the shared `Arc<Mutex<SpotifyClient>>` across the entire network await every 2s, blocking all other API tasks (search, liked-songs, playlist loads) for the request duration.
+
+**Context**: `src/main.rs:153-275`. Every background task needs the same lock.
+
+**Prevention**: Never hold a client Mutex across a network await; release after setup or snapshot the needed data, or run poll in its own scoped task.
+
+**File**: `src/main.rs`, filed as issue #18
+
+---
+
+### Category: Gotcha
+**Learned**: `install.sh` fails on machines without `chafa` because `ratatui-image`'s `build.rs` hard-requires `chafa >= 1.8.0` via pkg-config, and the installer neither installs it nor uses the prebuilt release tarballs that `release.yml` already publishes.
+
+**Context**: Live failure: 504 crates compiled (~6 min) then panicked with `Failed to find chafa via pkg-config`. CI installs `libchafa-dev` but `install.sh` does not.
+
+**Prevention**: Installers should prefer downloading prebuilt release assets; when falling back to source builds, install native deps per distro (`libchafa-dev`/`chafa`). Reproduce installer in Docker containers in CI.
+
+**File**: `install.sh`, `.github/workflows/release.yml`, filed as issue #11
+
+---
+
+### Category: Pattern
+**Learned**: GitHub issue backlog is the source of truth for the audit. No issues existed before this audit; 17 were filed (#10-#26) with testable AC and labels (bug/build/cli/daemon/playback/queue/api/performance/priority:high|medium|low).
+
+**Context**: Full repo audit on 2026-08-08 covering code review, feature review (stubs), build tooling, CI health, and docs drift.
+
+**Prevention**: Keep `tasks/AUDIT_BACKLOG.md` and `tasks/todo.md` in sync with the GH issues; mark issues closed only when AC is verified by tests.
+
+**File**: `tasks/AUDIT_BACKLOG.md`, `tasks/todo.md`
+
+---
+
+## 2026-08-09
+
+### Category: Pattern
+**Learned**: To unit-test a concrete struct that wraps a network client (e.g. `SpotifyClient` wrapping `AuthCodeSpotify`), introduce a small mockable async trait (`CliClient`) implemented by the concrete type, and have the consumer (`CliHandler`) depend on the trait. This lets mockall generate a mock without touching the real client.
+
+**Context**: P0-3 (issue #12) — CLI commands were stubs printing mock text. Wired them to the real API via a `CliClient` trait + mockall tests.
+
+**Prevention**: When a feature needs to be testable against a network client, abstract the needed methods behind a trait first. Use `async-trait` for async trait methods.
+
+**File**: `src/api/cli_client.rs`, `src/cli.rs`
+
+### Category: Gotcha
+**Learned**: mockall's `mock!` macro for async traits requires `async_trait` to be in scope, and cannot mock methods with `Option<&str>` parameters without explicit lifetime annotations. Use owned types (`Option<String>`) in the trait signature instead.
+
+**Context**: P0-3 — `seek(&self, position_ms, device_id: Option<&str>)` failed to compile in the mock with E0106/E0637.
+
+**Prevention**: Keep trait method params owned (`Option<String>`) and convert to borrowed form inside the impl.
+
+**File**: `src/api/cli_client.rs`
+
+### Category: Gotcha
+**Learned**: `Box<dyn Write>` cannot be downcast to recover a test buffer. To capture CLI output in tests, use a writer that shares an `Arc<Mutex<Vec<u8>>>` and read the buffer through the Arc.
+
+**Context**: P0-3 — tried `downcast::<Cursor<Vec<u8>>>()` on the boxed output; `Box<dyn Write>` has no `downcast`.
+
+**Prevention**: For output-capturing tests, use a shared-buffer writer (`Arc<Mutex<Vec<u8>>>`) rather than trying to downcast the boxed trait object.
+
+**File**: `src/cli.rs`

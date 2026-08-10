@@ -4,9 +4,13 @@
 //! joshify play, joshify pause, joshify status, etc.
 
 use anyhow::{Context, Result};
+use rspotify::model::{CurrentPlaybackContext, PlayableItem, RepeatState};
+use rspotify::prelude::Id;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use tracing::{debug, info, warn};
+
+use crate::api::CliClient;
 
 /// CLI command types
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,125 +97,170 @@ pub struct TrackInfo {
 }
 
 /// CLI command handler
-pub struct CliHandler {
+pub struct CliHandler<C: CliClient> {
+    /// Spotify client used to execute commands
+    client: C,
     /// Output stream (usually stdout)
     output: Box<dyn Write>,
 }
 
-impl CliHandler {
+impl<C: CliClient> CliHandler<C> {
     /// Create new CLI handler
-    pub fn new() -> Self {
+    pub fn new(client: C) -> Self {
         Self {
+            client,
             output: Box::new(std::io::stdout()),
         }
     }
 
     /// Create with custom output
-    pub fn with_output<W: Write>(output: W) -> Self
+    pub fn with_output<W>(client: C, output: W) -> Self
     where
-        W: 'static,
+        W: Write + 'static,
     {
         Self {
+            client,
             output: Box::new(output),
         }
     }
 
     /// Create with a static writer reference for testing
-    pub fn with_static_output(output: Box<dyn Write>) -> Self {
-        Self { output }
+    pub fn with_static_output(client: C, output: Box<dyn Write>) -> Self {
+        Self { client, output }
     }
 
     /// Execute a CLI command
-    pub fn execute(&mut self, command: CliCommand) -> Result<()> {
+    pub async fn execute(&mut self, command: CliCommand) -> Result<()> {
         info!("Executing CLI command: {:?}", command);
 
         match command {
-            CliCommand::Play { uri } => self.cmd_play(uri),
-            CliCommand::Pause => self.cmd_pause(),
-            CliCommand::Resume => self.cmd_resume(),
-            CliCommand::PlayPause => self.cmd_play_pause(),
-            CliCommand::Next => self.cmd_next(),
-            CliCommand::Previous => self.cmd_previous(),
-            CliCommand::Stop => self.cmd_stop(),
-            CliCommand::Status { format } => self.cmd_status(format),
-            CliCommand::Volume { value } => self.cmd_volume(value),
-            CliCommand::Seek { position_ms } => self.cmd_seek(position_ms),
-            CliCommand::SeekForward { duration_ms } => self.cmd_seek_forward(duration_ms),
-            CliCommand::SeekBackward { duration_ms } => self.cmd_seek_backward(duration_ms),
-            CliCommand::Shuffle { enabled } => self.cmd_shuffle(enabled),
-            CliCommand::Repeat { mode } => self.cmd_repeat(mode),
-            CliCommand::Current { format } => self.cmd_current(format),
-            CliCommand::Search { query, limit } => self.cmd_search(query, limit),
-            CliCommand::QueueAdd { uri } => self.cmd_queue_add(uri),
-            CliCommand::QueueClear => self.cmd_queue_clear(),
+            CliCommand::Play { uri } => self.cmd_play(uri).await,
+            CliCommand::Pause => self.cmd_pause().await,
+            CliCommand::Resume => self.cmd_resume().await,
+            CliCommand::PlayPause => self.cmd_play_pause().await,
+            CliCommand::Next => self.cmd_next().await,
+            CliCommand::Previous => self.cmd_previous().await,
+            CliCommand::Stop => self.cmd_stop().await,
+            CliCommand::Status { format } => self.cmd_status(format).await,
+            CliCommand::Volume { value } => self.cmd_volume(value).await,
+            CliCommand::Seek { position_ms } => self.cmd_seek(position_ms).await,
+            CliCommand::SeekForward { duration_ms } => self.cmd_seek_forward(duration_ms).await,
+            CliCommand::SeekBackward { duration_ms } => self.cmd_seek_backward(duration_ms).await,
+            CliCommand::Shuffle { enabled } => self.cmd_shuffle(enabled).await,
+            CliCommand::Repeat { mode } => self.cmd_repeat(mode).await,
+            CliCommand::Current { format } => self.cmd_current(format).await,
+            CliCommand::Search { query, limit } => self.cmd_search(query, limit).await,
+            CliCommand::QueueAdd { uri } => self.cmd_queue_add(uri).await,
+            CliCommand::QueueClear => self.cmd_queue_clear().await,
             CliCommand::Help => self.cmd_help(),
             CliCommand::Version => self.cmd_version(),
         }
     }
 
-    fn cmd_play(&mut self, uri: Option<String>) -> Result<()> {
+    async fn cmd_play(&mut self, uri: Option<String>) -> Result<()> {
         if let Some(track_uri) = uri {
             debug!("Playing track: {}", track_uri);
+            self.client
+                .start_playback(vec![track_uri.clone()], None)
+                .await
+                .context("Failed to start playback")?;
             writeln!(self.output, "Playing: {}", track_uri)?;
         } else {
             debug!("Resuming playback");
+            self.client
+                .playback_resume()
+                .await
+                .context("Failed to resume playback")?;
             writeln!(self.output, "Resuming playback")?;
         }
         Ok(())
     }
 
-    fn cmd_pause(&mut self) -> Result<()> {
+    async fn cmd_pause(&mut self) -> Result<()> {
         debug!("Pausing playback");
+        self.client
+            .playback_pause()
+            .await
+            .context("Failed to pause playback")?;
         writeln!(self.output, "Paused")?;
         Ok(())
     }
 
-    fn cmd_resume(&mut self) -> Result<()> {
+    async fn cmd_resume(&mut self) -> Result<()> {
         debug!("Resuming playback");
+        self.client
+            .playback_resume()
+            .await
+            .context("Failed to resume playback")?;
         writeln!(self.output, "Resumed")?;
         Ok(())
     }
 
-    fn cmd_play_pause(&mut self) -> Result<()> {
+    async fn cmd_play_pause(&mut self) -> Result<()> {
         debug!("Toggling play/pause");
-        writeln!(self.output, "Toggled play/pause")?;
+        let ctx = self.client.current_playback().await?;
+        match ctx {
+            Some(ctx) if ctx.is_playing => {
+                self.client
+                    .playback_pause()
+                    .await
+                    .context("Failed to pause playback")?;
+                writeln!(self.output, "Paused")?;
+            }
+            _ => {
+                self.client
+                    .playback_resume()
+                    .await
+                    .context("Failed to resume playback")?;
+                writeln!(self.output, "Resumed")?;
+            }
+        }
         Ok(())
     }
 
-    fn cmd_next(&mut self) -> Result<()> {
+    async fn cmd_next(&mut self) -> Result<()> {
         debug!("Skipping to next track");
+        self.client
+            .playback_next()
+            .await
+            .context("Failed to skip to next track")?;
         writeln!(self.output, "Next track")?;
         Ok(())
     }
 
-    fn cmd_previous(&mut self) -> Result<()> {
+    async fn cmd_previous(&mut self) -> Result<()> {
         debug!("Going to previous track");
+        self.client
+            .playback_previous()
+            .await
+            .context("Failed to skip to previous track")?;
         writeln!(self.output, "Previous track")?;
         Ok(())
     }
 
-    fn cmd_stop(&mut self) -> Result<()> {
+    async fn cmd_stop(&mut self) -> Result<()> {
         debug!("Stopping playback");
+        self.client
+            .playback_pause()
+            .await
+            .context("Failed to stop playback")?;
         writeln!(self.output, "Stopped")?;
         Ok(())
     }
 
-    fn cmd_status(&mut self, format: OutputFormat) -> Result<()> {
-        // Mock status for now
-        let status = PlaybackStatus {
-            is_playing: true,
-            track: Some(TrackInfo {
-                name: "Test Track".to_string(),
-                artists: vec!["Test Artist".to_string()],
-                album: "Test Album".to_string(),
-                uri: "spotify:track:test".to_string(),
-                duration_ms: 180000,
-            }),
-            progress_ms: 60000,
-            duration_ms: 180000,
-            shuffle: false,
-            repeat: "off".to_string(),
-            volume_percent: 70,
+    async fn cmd_status(&mut self, format: OutputFormat) -> Result<()> {
+        let ctx = self.client.current_playback().await?;
+        let status = match ctx {
+            Some(ctx) => PlaybackStatus::from_context(&ctx),
+            None => PlaybackStatus {
+                is_playing: false,
+                track: None,
+                progress_ms: 0,
+                duration_ms: 0,
+                shuffle: false,
+                repeat: "off".to_string(),
+                volume_percent: 0,
+            },
         };
 
         match format {
@@ -267,89 +316,175 @@ impl CliHandler {
         Ok(())
     }
 
-    fn cmd_volume(&mut self, value: Option<u8>) -> Result<()> {
+    async fn cmd_volume(&mut self, value: Option<u8>) -> Result<()> {
         match value {
             Some(v) => {
                 let clamped = v.min(100);
                 debug!("Setting volume to {}%", clamped);
+                self.client
+                    .set_volume(clamped as u32)
+                    .await
+                    .context("Failed to set volume")?;
                 writeln!(self.output, "Volume set to {}%", clamped)?;
             }
             None => {
-                writeln!(self.output, "Current volume: 70%")?;
+                let ctx = self.client.current_playback().await?;
+                let volume = ctx
+                    .as_ref()
+                    .and_then(|c| c.device.volume_percent)
+                    .unwrap_or(0);
+                writeln!(self.output, "Current volume: {}%", volume)?;
             }
         }
         Ok(())
     }
 
-    fn cmd_seek(&mut self, position_ms: u32) -> Result<()> {
+    async fn cmd_seek(&mut self, position_ms: u32) -> Result<()> {
         debug!("Seeking to {}ms", position_ms);
+        self.client
+            .seek(position_ms, None)
+            .await
+            .context("Failed to seek")?;
         writeln!(self.output, "Seeked to {}", format_duration(position_ms))?;
         Ok(())
     }
 
-    fn cmd_seek_forward(&mut self, duration_ms: u32) -> Result<()> {
+    async fn cmd_seek_forward(&mut self, duration_ms: u32) -> Result<()> {
         debug!("Seeking forward {}ms", duration_ms);
+        let ctx = self.client.current_playback().await?;
+        let current = ctx
+            .as_ref()
+            .and_then(|c| c.progress)
+            .map(|d| d.num_milliseconds() as u32)
+            .unwrap_or(0);
+        let target = current.saturating_add(duration_ms);
+        self.client
+            .seek(target, None)
+            .await
+            .context("Failed to seek forward")?;
         writeln!(self.output, "Seeked forward {}s", duration_ms / 1000)?;
         Ok(())
     }
 
-    fn cmd_seek_backward(&mut self, duration_ms: u32) -> Result<()> {
+    async fn cmd_seek_backward(&mut self, duration_ms: u32) -> Result<()> {
         debug!("Seeking backward {}ms", duration_ms);
+        let ctx = self.client.current_playback().await?;
+        let current = ctx
+            .as_ref()
+            .and_then(|c| c.progress)
+            .map(|d| d.num_milliseconds() as u32)
+            .unwrap_or(0);
+        let target = current.saturating_sub(duration_ms);
+        self.client
+            .seek(target, None)
+            .await
+            .context("Failed to seek backward")?;
         writeln!(self.output, "Seeked backward {}s", duration_ms / 1000)?;
         Ok(())
     }
 
-    fn cmd_shuffle(&mut self, enabled: Option<bool>) -> Result<()> {
+    async fn cmd_shuffle(&mut self, enabled: Option<bool>) -> Result<()> {
         match enabled {
             Some(true) => {
                 debug!("Enabling shuffle");
+                self.client
+                    .toggle_shuffle(true)
+                    .await
+                    .context("Failed to enable shuffle")?;
                 writeln!(self.output, "Shuffle: on")?;
             }
             Some(false) => {
                 debug!("Disabling shuffle");
+                self.client
+                    .toggle_shuffle(false)
+                    .await
+                    .context("Failed to disable shuffle")?;
                 writeln!(self.output, "Shuffle: off")?;
             }
             None => {
-                writeln!(self.output, "Shuffle: off")?;
+                let ctx = self.client.current_playback().await?;
+                let shuffle = ctx.as_ref().map(|c| c.shuffle_state).unwrap_or(false);
+                writeln!(
+                    self.output,
+                    "Shuffle: {}",
+                    if shuffle { "on" } else { "off" }
+                )?;
             }
         }
         Ok(())
     }
 
-    fn cmd_repeat(&mut self, mode: Option<String>) -> Result<()> {
+    async fn cmd_repeat(&mut self, mode: Option<String>) -> Result<()> {
         match mode {
             Some(m) => {
+                let state = match m.as_str() {
+                    "off" => RepeatState::Off,
+                    "track" => RepeatState::Track,
+                    "context" => RepeatState::Context,
+                    other => anyhow::bail!(
+                        "Invalid repeat mode: {} (use off, track, or context)",
+                        other
+                    ),
+                };
                 debug!("Setting repeat mode to: {}", m);
+                self.client
+                    .set_repeat(state)
+                    .await
+                    .context("Failed to set repeat mode")?;
                 writeln!(self.output, "Repeat: {}", m)?;
             }
             None => {
-                writeln!(self.output, "Repeat: off")?;
+                let ctx = self.client.current_playback().await?;
+                let repeat = ctx
+                    .as_ref()
+                    .map(|c| repeat_to_string(c.repeat_state))
+                    .unwrap_or_else(|| "off".to_string());
+                writeln!(self.output, "Repeat: {}", repeat)?;
             }
         }
         Ok(())
     }
 
-    fn cmd_current(&mut self, format: OutputFormat) -> Result<()> {
+    async fn cmd_current(&mut self, format: OutputFormat) -> Result<()> {
         // Same as status but only shows track info
-        self.cmd_status(format)?;
+        self.cmd_status(format).await?;
         Ok(())
     }
 
-    fn cmd_search(&mut self, query: String, limit: usize) -> Result<()> {
+    async fn cmd_search(&mut self, query: String, limit: usize) -> Result<()> {
         debug!("Searching for: {} (limit: {})", query, limit);
-        writeln!(self.output, "Searching for: {}", query)?;
-        writeln!(self.output, "Results: (mock)")?;
-        writeln!(self.output, "  1. Test Track - Test Artist")?;
+        let tracks = self
+            .client
+            .search(&query, limit.min(50) as u32)
+            .await
+            .context("Search failed")?;
+        if tracks.is_empty() {
+            writeln!(self.output, "No results for: {}", query)?;
+            return Ok(());
+        }
+        for (i, track) in tracks.iter().enumerate() {
+            let artists = track
+                .artists
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(self.output, "{}. {} - {}", i + 1, track.name, artists)?;
+        }
         Ok(())
     }
 
-    fn cmd_queue_add(&mut self, uri: String) -> Result<()> {
+    async fn cmd_queue_add(&mut self, uri: String) -> Result<()> {
         debug!("Adding to queue: {}", uri);
+        self.client
+            .add_to_queue(&uri)
+            .await
+            .context("Failed to add to queue")?;
         writeln!(self.output, "Added to queue: {}", uri)?;
         Ok(())
     }
 
-    fn cmd_queue_clear(&mut self) -> Result<()> {
+    async fn cmd_queue_clear(&mut self) -> Result<()> {
         debug!("Clearing queue");
         writeln!(self.output, "Queue cleared")?;
         Ok(())
@@ -414,18 +549,77 @@ ENVIRONMENT:
     }
 }
 
-impl Default for CliHandler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Format milliseconds as MM:SS
 fn format_duration(ms: u32) -> String {
     let total_seconds = ms / 1000;
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{:02}:{:02}", minutes, seconds)
+}
+
+/// Convert a Spotify repeat state to a string
+fn repeat_to_string(state: RepeatState) -> String {
+    match state {
+        RepeatState::Off => "off".to_string(),
+        RepeatState::Track => "track".to_string(),
+        RepeatState::Context => "context".to_string(),
+    }
+}
+
+impl PlaybackStatus {
+    /// Build a CLI playback status from a Spotify playback context
+    pub fn from_context(ctx: &CurrentPlaybackContext) -> Self {
+        let (track, duration_ms) = match &ctx.item {
+            Some(PlayableItem::Track(track)) => {
+                let artists = track.artists.iter().map(|a| a.name.clone()).collect();
+                let uri = track
+                    .id
+                    .as_ref()
+                    .map(|id| format!("spotify:track:{}", id.id()))
+                    .unwrap_or_default();
+                let duration_ms = track.duration.num_milliseconds().max(0) as u32;
+                (
+                    Some(TrackInfo {
+                        name: track.name.clone(),
+                        artists,
+                        album: track.album.name.clone(),
+                        uri,
+                        duration_ms,
+                    }),
+                    duration_ms,
+                )
+            }
+            Some(PlayableItem::Episode(episode)) => {
+                #[allow(deprecated)]
+                let artist = episode.show.publisher.clone();
+                let duration_ms = episode.duration.num_milliseconds().max(0) as u32;
+                (
+                    Some(TrackInfo {
+                        name: episode.name.clone(),
+                        artists: vec![artist],
+                        album: episode.show.name.clone(),
+                        uri: format!("spotify:episode:{}", episode.id.id()),
+                        duration_ms,
+                    }),
+                    duration_ms,
+                )
+            }
+            Some(PlayableItem::Unknown(_)) | None => (None, 0),
+        };
+
+        Self {
+            is_playing: ctx.is_playing,
+            track,
+            progress_ms: ctx
+                .progress
+                .map(|d| d.num_milliseconds() as u32)
+                .unwrap_or(0),
+            duration_ms,
+            shuffle: ctx.shuffle_state,
+            repeat: repeat_to_string(ctx.repeat_state),
+            volume_percent: ctx.device.volume_percent.unwrap_or(0) as u8,
+        }
+    }
 }
 
 /// Parse CLI arguments
@@ -561,6 +755,64 @@ fn parse_limit_flag(args: &[String]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use mockall::mock;
+    use mockall::predicate::eq;
+    use rspotify::model::FullTrack;
+    use std::io::Cursor;
+
+    mock! {
+        pub CliClient {}
+        #[async_trait]
+        impl CliClient for CliClient {
+            async fn current_playback(&self) -> Result<Option<CurrentPlaybackContext>>;
+            async fn playback_pause(&self) -> Result<()>;
+            async fn playback_resume(&self) -> Result<()>;
+            async fn playback_next(&self) -> Result<()>;
+            async fn playback_previous(&self) -> Result<()>;
+            async fn set_volume(&self, volume_percent: u32) -> Result<()>;
+            async fn seek(&self, position_ms: u32, device_id: Option<String>) -> Result<()>;
+            async fn toggle_shuffle(&self, shuffle: bool) -> Result<()>;
+            async fn set_repeat(&self, state: RepeatState) -> Result<()>;
+            async fn start_playback(&self, uris: Vec<String>, offset: Option<u32>) -> Result<()>;
+            async fn search(&self, query: &str, limit: u32) -> Result<Vec<FullTrack>>;
+            async fn add_to_queue(&self, track_uri: &str) -> Result<()>;
+        }
+    }
+
+    /// Test writer that captures output into a shared Vec<u8>
+    #[derive(Clone, Default)]
+    struct TestWriter {
+        buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.buf.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Build a handler with a mock client and capture its output
+    fn handler_with_buf(
+        mock: MockCliClient,
+    ) -> (
+        CliHandler<MockCliClient>,
+        std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    ) {
+        let writer = TestWriter::default();
+        let buf = writer.buf.clone();
+        let handler = CliHandler::with_output(mock, writer);
+        (handler, buf)
+    }
+
+    /// Read the captured output as a String
+    fn read_buf(buf: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>) -> String {
+        String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+    }
 
     #[test]
     fn test_cli_command_variants() {
@@ -769,11 +1021,12 @@ mod tests {
         assert_eq!(parse_limit_flag(&args), None);
     }
 
-    #[test]
-    fn test_cli_handler_execute() {
-        let mut handler = CliHandler::new();
+    #[tokio::test]
+    async fn test_cli_handler_execute() {
+        let mock = MockCliClient::new();
+        let mut handler = CliHandler::new(mock);
         let cmd = CliCommand::Version;
-        let result = handler.execute(cmd);
+        let result = handler.execute(cmd).await;
         assert!(result.is_ok());
     }
 
@@ -835,17 +1088,145 @@ mod tests {
         assert_eq!(cmd, CliCommand::Previous);
     }
 
-    #[test]
-    fn test_cli_handler_with_output() {
-        use std::io::Cursor;
+    #[tokio::test]
+    async fn test_cli_handler_with_output() {
+        let mock = MockCliClient::new();
         let buf: Vec<u8> = Vec::new();
         let cursor = Cursor::new(buf);
         {
-            let mut handler = CliHandler::with_output(cursor);
-            let cmd = CliCommand::Pause;
-            handler.execute(cmd).unwrap();
+            let mut handler = CliHandler::with_output(mock, cursor);
+            let cmd = CliCommand::Version;
+            handler.execute(cmd).await.unwrap();
         }
         // The test just verifies the handler was created and executed without error
-        // The output is lost but we can't easily capture it with the current API
+    }
+
+    #[tokio::test]
+    async fn test_cmd_pause_calls_api() {
+        let mut mock = MockCliClient::new();
+        mock.expect_playback_pause().times(1).returning(|| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler.execute(CliCommand::Pause).await.unwrap();
+        assert_eq!(read_buf(&buf), "Paused\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_resume_calls_api() {
+        let mut mock = MockCliClient::new();
+        mock.expect_playback_resume().times(1).returning(|| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler.execute(CliCommand::Resume).await.unwrap();
+        assert_eq!(read_buf(&buf), "Resumed\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_next_calls_api() {
+        let mut mock = MockCliClient::new();
+        mock.expect_playback_next().times(1).returning(|| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler.execute(CliCommand::Next).await.unwrap();
+        assert_eq!(read_buf(&buf), "Next track\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_previous_calls_api() {
+        let mut mock = MockCliClient::new();
+        mock.expect_playback_previous()
+            .times(1)
+            .returning(|| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler.execute(CliCommand::Previous).await.unwrap();
+        assert_eq!(read_buf(&buf), "Previous track\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_volume_set_calls_api() {
+        let mut mock = MockCliClient::new();
+        mock.expect_set_volume()
+            .with(eq(50u32))
+            .times(1)
+            .returning(|_| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler
+            .execute(CliCommand::Volume { value: Some(50) })
+            .await
+            .unwrap();
+        assert_eq!(read_buf(&buf), "Volume set to 50%\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_volume_get_reads_playback() {
+        let mut mock = MockCliClient::new();
+        mock.expect_current_playback()
+            .times(1)
+            .returning(|| Ok(None));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler
+            .execute(CliCommand::Volume { value: None })
+            .await
+            .unwrap();
+        assert_eq!(read_buf(&buf), "Current volume: 0%\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_status_json_output() {
+        let mut mock = MockCliClient::new();
+        mock.expect_current_playback()
+            .times(1)
+            .returning(|| Ok(None));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler
+            .execute(CliCommand::Status {
+                format: OutputFormat::Json,
+            })
+            .await
+            .unwrap();
+        let out = read_buf(&buf);
+        assert!(out.contains("\"is_playing\": false"));
+    }
+
+    #[tokio::test]
+    async fn test_cmd_play_with_uri_calls_start_playback() {
+        let mut mock = MockCliClient::new();
+        mock.expect_start_playback()
+            .with(eq(vec!["spotify:track:abc".to_string()]), eq(None))
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler
+            .execute(CliCommand::Play {
+                uri: Some("spotify:track:abc".to_string()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(read_buf(&buf), "Playing: spotify:track:abc\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_queue_add_calls_api() {
+        let mut mock = MockCliClient::new();
+        mock.expect_add_to_queue()
+            .with(eq("spotify:track:abc".to_string()))
+            .times(1)
+            .returning(|_| Ok(()));
+        let (mut handler, buf) = handler_with_buf(mock);
+        handler
+            .execute(CliCommand::QueueAdd {
+                uri: "spotify:track:abc".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(read_buf(&buf), "Added to queue: spotify:track:abc\n");
+    }
+
+    #[tokio::test]
+    async fn test_cmd_pause_error_propagates() {
+        let mut mock = MockCliClient::new();
+        mock.expect_playback_pause()
+            .times(1)
+            .returning(|| Err(anyhow::anyhow!("no active device")));
+        let (mut handler, _buf) = handler_with_buf(mock);
+        let result = handler.execute(CliCommand::Pause).await;
+        assert!(result.is_err());
     }
 }

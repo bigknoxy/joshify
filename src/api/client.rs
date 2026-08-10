@@ -12,6 +12,18 @@ pub struct SpotifyClient {
 }
 
 impl SpotifyClient {
+    /// Create a dummy client for commands that don't need the API (help/version)
+    pub fn dummy() -> Self {
+        let creds = Credentials::new("", "");
+        let oauth_config = OAuth {
+            redirect_uri: "http://127.0.0.1:8888/callback".to_string(),
+            scopes: HashSet::new(),
+            ..Default::default()
+        };
+        let oauth = AuthCodeSpotify::with_config(creds, oauth_config, Config::default());
+        Self { oauth }
+    }
+
     /// Create a new Spotify client with auto token refresh enabled
     pub async fn new(config: &OAuthConfig) -> Result<Self> {
         let creds = Credentials::new(&config.client_id, &config.client_secret);

@@ -91,6 +91,9 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v1.4.1
@@ -110,6 +113,35 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
       - name: Build documentation
         run: cargo doc --no-deps --all-features 2>&1 | tail -20
+
+  # Verify the one-line installer works on supported distros
+  installer:
+    name: Installer Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - ubuntu:24.04
+          - archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer and verify binary
+        run: |
+          docker run --rm -v "$(pwd)":/repo -w /repo "${{ matrix.image }}" \
+            bash -euxo pipefail -c '
+              # Ensure required tools exist (no sudo in containers; we run as root)
+              if command -v apt-get >/dev/null 2>&1; then
+                apt-get update -qq && apt-get install -y -qq curl tar git >/dev/null 2>&1
+              elif command -v pacman >/dev/null 2>&1; then
+                pacman -Sy --noconfirm curl tar git >/dev/null 2>&1
+              fi
+              bash install.sh
+              if [ -x "$HOME/.local/bin/joshify" ]; then
+                "$HOME/.local/bin/joshify" --help
+              else
+                "$HOME/.cargo/bin/joshify" --help
+              fi
+            ' 2>&1 | tail -10
 
   # Summary job for required status checks (only check critical jobs)
   ci-success:

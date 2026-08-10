@@ -29,6 +29,8 @@ pub struct CliArgs {
     pub redirect_uri: Option<String>,
     pub help: bool,
     pub test_search: bool,
+    /// Positional CLI subcommand (e.g. `play`, `pause`, `status`) and its args
+    pub command: Option<Vec<String>>,
 }
 
 impl CliArgs {
@@ -36,6 +38,7 @@ impl CliArgs {
         let mut args = CliArgs::default();
         let mut i = 1;
         let cli_args: Vec<String> = std::env::args().collect();
+        let mut positional: Vec<String> = Vec::new();
 
         while i < cli_args.len() {
             match cli_args[i].as_str() {
@@ -87,10 +90,20 @@ impl CliArgs {
                     args.test_search = true;
                     i += 1;
                 }
-                _ => {
+                arg if arg.starts_with('-') => {
+                    // Unknown flag - skip it and its value
+                    i += 1;
+                }
+                arg => {
+                    // Positional argument (CLI subcommand)
+                    positional.push(arg.to_string());
                     i += 1;
                 }
             }
+        }
+
+        if !positional.is_empty() {
+            args.command = Some(positional);
         }
 
         args
