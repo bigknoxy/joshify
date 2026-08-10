@@ -35,9 +35,14 @@ pub struct CliArgs {
 
 impl CliArgs {
     pub fn parse() -> Self {
+        let cli_args: Vec<String> = std::env::args().collect();
+        Self::parse_from(&cli_args)
+    }
+
+    /// Parse CLI arguments from an argv slice (argv[0] is the program name).
+    fn parse_from(cli_args: &[String]) -> Self {
         let mut args = CliArgs::default();
         let mut i = 1;
-        let cli_args: Vec<String> = std::env::args().collect();
         let mut positional: Vec<String> = Vec::new();
 
         while i < cli_args.len() {
@@ -89,6 +94,16 @@ impl CliArgs {
                 "--test-search" => {
                     args.test_search = true;
                     i += 1;
+                }
+                "--format" | "-f" | "--limit" | "-l" => {
+                    // CLI subcommand flags that take a value - keep the flag
+                    // and its value in the positional command so parse_args
+                    // can process them (e.g. `status --format json`).
+                    positional.push(cli_args[i].clone());
+                    if i + 1 < cli_args.len() {
+                        positional.push(cli_args[i + 1].clone());
+                    }
+                    i += 2;
                 }
                 arg if arg.starts_with('-') => {
                     // Unknown flag - skip it and its value
@@ -142,5 +157,55 @@ impl CliArgs {
         println!();
         println!("    # Non-interactive with CLI flags");
         println!("    joshify --client-id xxx --access-token zzz");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{parse_args, CliCommand, OutputFormat};
+
+    /// Parse a command line (excluding argv[0]) into a CliCommand via the
+    /// full CliArgs::parse() -> parse_args() pipeline.
+    fn parse_cli(args: &[&str]) -> CliCommand {
+        let mut argv = vec!["joshify".to_string()];
+        argv.extend(args.iter().map(|s| s.to_string()));
+        let cli_args = CliArgs::parse_from(&argv);
+        let command = cli_args.command.expect("expected a CLI subcommand");
+        parse_args(&command).expect("command should parse")
+    }
+
+    #[test]
+    fn test_cli_status_format_json_flag_value_not_leaked() {
+        let cmd = parse_cli(&["status", "--format", "json"]);
+        assert_eq!(
+            cmd,
+            CliCommand::Status {
+                format: OutputFormat::Json
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_search_limit_flag_value_not_leaked() {
+        let cmd = parse_cli(&["search", "foo", "--limit", "5"]);
+        assert_eq!(
+            cmd,
+            CliCommand::Search {
+                query: "foo".to_string(),
+                limit: 5
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_play_uri_positional() {
+        let cmd = parse_cli(&["play", "spotify:track:abc"]);
+        assert_eq!(
+            cmd,
+            CliCommand::Play {
+                uri: Some("spotify:track:abc".to_string())
+            }
+        );
     }
 }
