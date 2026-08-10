@@ -41,7 +41,7 @@ jobs:
           chmod +x ttyd
           sudo mv ttyd /usr/local/bin/
           
-          vhs version
+          vhs --help
           ttyd --version
 
       - name: Cache dependencies
