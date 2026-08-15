@@ -15,11 +15,8 @@
   <a href="https://github.com/bigknoxy/joshify/actions/workflows/visual-tests.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/bigknoxy/joshify/visual-tests.yml?branch=main&style=for-the-badge&logo=github&label=Visual%20Tests" alt="Visual Tests">
   </a>
-  <a href="#testing">
-    <img src="https://img.shields.io/badge/tests-339%20passing-success?style=for-the-badge&logo=rust" alt="Tests">
-  </a>
-  <a href="https://crates.io/crates/joshify">
-    <img src="https://img.shields.io/crates/v/joshify?style=for-the-badge&logo=rust&color=orange" alt="Crates.io">
+  <a href="https://github.com/bigknoxy/joshify/releases/latest">
+    <img src="https://img.shields.io/github/v/release/bigknoxy/joshify?style=for-the-badge&logo=rust&color=orange" alt="Latest Release">
   </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License">
@@ -82,11 +79,10 @@
 curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
 ```
 
-### Via Cargo
+### Pre-built Binaries
 
-```bash
-cargo install joshify
-```
+Download the latest release for Linux x86_64 or macOS (Apple Silicon) from the
+[releases page](https://github.com/bigknoxy/joshify/releases/latest).
 
 ### From Source
 
@@ -172,7 +168,7 @@ joshify daemon-send pause
 
 ## 🧪 Testing
 
-Joshify has comprehensive test coverage with **339 tests**:
+Joshify has comprehensive test coverage (unit, integration, and doc tests — run `cargo test` for the current count):
 
 ```bash
 # Run all tests
