@@ -33,19 +33,20 @@ echo "📦 Checking system dependencies..."
 if command -v apt-get &> /dev/null; then
     echo -e "${YELLOW}Detected Debian/Ubuntu - installing audio dependencies...${NC}"
     sudo apt-get update -qq
-    sudo apt-get install -y -qq libasound2-dev pkg-config libssl-dev build-essential
+    sudo apt-get install -y -qq libasound2-dev pkg-config libssl-dev build-essential libchafa-dev libglib2.0-dev
 elif command -v dnf &> /dev/null; then
     echo -e "${YELLOW}Detected Fedora/RHEL - installing audio dependencies...${NC}"
-    sudo dnf install -y alsa-lib-devel pkgconfig openssl-devel gcc
+    sudo dnf install -y alsa-lib-devel pkgconfig openssl-devel gcc chafa-devel glib2-devel
 elif command -v pacman &> /dev/null; then
     echo -e "${YELLOW}Detected Arch - installing audio dependencies...${NC}"
-    sudo pacman -S --noconfirm alsa-lib pkg-config openssl base-devel
+    sudo pacman -S --noconfirm alsa-lib pkg-config openssl base-devel chafa glib2
 elif command -v brew &> /dev/null; then
-    echo -e "${GREEN}Detected macOS - no additional system dependencies needed${NC}"
+    echo -e "${YELLOW}Detected macOS - installing terminal graphics dependencies...${NC}"
+    brew install pkgconf chafa
 else
     echo -e "${YELLOW}Unknown OS - you may need to install audio dependencies manually${NC}"
-    echo "   Linux: libasound2-dev pkg-config libssl-dev build-essential"
-    echo "   macOS: No extra deps needed"
+    echo "   Linux: libasound2-dev pkg-config libssl-dev build-essential libchafa-dev libglib2.0-dev"
+    echo "   macOS: brew install pkgconf chafa"
 fi
 
 # Clone and install

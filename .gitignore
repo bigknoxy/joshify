@@ -47,4 +47,5 @@ oauth_tokens.json
 screenshots/current/
 screenshots/diffs/
 *.gif
+!screenshots/reference/demo.gif
 vhs_test/
