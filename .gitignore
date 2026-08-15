@@ -49,3 +49,11 @@ screenshots/diffs/
 *.gif
 !screenshots/reference/demo.gif
 vhs_test/
+
+# Local dev-notes / AI-agent scratch (kept out of the published repo)
+.learnings/
+.opencode/
+plans/
+tasks/
+research/
+milestones/
