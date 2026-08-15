@@ -90,7 +90,8 @@ src/
 7. **Commit** → Clean commit with descriptive message
 
 ### Required Documentation
-All work must update these files:
+All work must update these files (they are git-ignored local scratch —
+never commit them):
 
 1. **tasks/todo.md** - Running task list with status
 2. **.learnings/learnings.md** - New patterns, bugs, gotchas discovered
