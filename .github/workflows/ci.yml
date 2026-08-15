@@ -41,8 +41,7 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
       - name: Run clippy
-        # Project has pre-existing warnings; check doesn't block build
-        run: cargo clippy --all-targets --all-features 2>&1 | tail -20
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   # Run all tests
   test:
