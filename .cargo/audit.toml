@@ -1,0 +1,15 @@
+# cargo-audit configuration
+#
+# Ignored advisories are all in transitive dependencies we cannot upgrade
+# from this crate. Revisit whenever librespot (git dev branch) updates.
+[advisories]
+ignore = [
+    # quick-xml < 0.41 DoS (quadratic attribute check / unbounded namespace
+    # allocation). Pulled in by librespot-core; joshify does not parse
+    # untrusted XML directly.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # rsa Marvin timing sidechannel - no patched release exists yet.
+    # Pulled in by librespot-core.
+    "RUSTSEC-2023-0071",
+]
