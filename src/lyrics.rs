@@ -88,7 +88,7 @@ impl TrackLyrics {
             .enumerate()
             .filter(|(_, line)| line.timestamp_ms <= position_ms)
             .map(|(idx, _)| idx)
-            .last()
+            .next_back()
     }
 
     /// Get lines around current position (for display)

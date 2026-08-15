@@ -367,7 +367,7 @@ pub fn render_help_overlay(
         // Category items
         for item in &category.items {
             let key_text = format!("  {:<16}", item.keys);
-            let truncated_desc = truncate(&item.description, desc_col_width);
+            let truncated_desc = truncate(item.description, desc_col_width);
 
             let mut spans = vec![
                 Span::styled(key_text, Catppuccin::primary()),

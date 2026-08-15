@@ -45,6 +45,8 @@ fn load_action_display_owned(action: &LoadAction) -> String {
 }
 
 /// Render a list of tracks with optional "load more" indicator
+// Render functions thread individual state slices; grouping them into a struct is tracked in #29.
+#[allow(clippy::too_many_arguments)]
 fn render_track_list(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -194,6 +196,8 @@ fn render_track_list(
 }
 
 /// Render library view with albums grid and artists list
+// Render functions thread individual state slices; grouping them into a struct is tracked in #29.
+#[allow(clippy::too_many_arguments)]
 fn render_library(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -374,6 +378,8 @@ fn render_library(
 }
 
 /// Render a list of playlists
+// Render functions thread individual state slices; grouping them into a struct is tracked in #29.
+#[allow(clippy::too_many_arguments)]
 fn render_playlist_list(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -514,6 +520,8 @@ fn render_breadcrumb(frame: &mut ratatui::Frame, area: Rect, trail: &[String]) {
 }
 
 /// Render album detail view
+// Render functions thread individual state slices; grouping them into a struct is tracked in #29.
+#[allow(clippy::too_many_arguments)]
 fn render_album_detail(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -568,7 +576,7 @@ fn render_album_detail(
     let header = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!(" Album "))
+            .title(" Album ".to_string())
             .border_style(Catppuccin::primary().add_modifier(Modifier::BOLD))
             .title_style(Catppuccin::primary()),
     );
@@ -692,7 +700,7 @@ fn render_artist_detail(
     let widget = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!(" Artist "))
+            .title(" Artist ".to_string())
             .border_style(Catppuccin::secondary().add_modifier(Modifier::BOLD))
             .title_style(Catppuccin::secondary()),
     );
@@ -700,6 +708,8 @@ fn render_artist_detail(
 }
 
 /// Render the main view
+// Render functions thread individual state slices; grouping them into a struct is tracked in #29.
+#[allow(clippy::too_many_arguments)]
 pub fn render_main_view(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -991,7 +1001,7 @@ mod tests {
 
     #[test]
     fn test_playing_uri_matches_track() {
-        let tracks = vec![
+        let tracks = [
             make_track("Song A", "Artist A", "spotify:track:1"),
             make_track("Song B", "Artist B", "spotify:track:2"),
             make_track("Song C", "Artist C", "spotify:track:3"),
@@ -1009,7 +1019,7 @@ mod tests {
 
     #[test]
     fn test_playing_uri_no_match() {
-        let tracks = vec![
+        let tracks = [
             make_track("Song A", "Artist A", "spotify:track:1"),
             make_track("Song B", "Artist B", "spotify:track:2"),
         ];
@@ -1024,7 +1034,7 @@ mod tests {
 
     #[test]
     fn test_playing_uri_none() {
-        let tracks = vec![make_track("Song A", "Artist A", "spotify:track:1")];
+        let tracks = [make_track("Song A", "Artist A", "spotify:track:1")];
 
         let playing_uri: Option<&str> = None;
 
@@ -1036,7 +1046,7 @@ mod tests {
 
     #[test]
     fn test_playing_uri_highlights_correct_track() {
-        let tracks = vec![
+        let tracks = [
             make_track("Track 1", "Artist 1", "spotify:track:100"),
             make_track("Track 2", "Artist 2", "spotify:track:200"),
             make_track("Track 3", "Artist 3", "spotify:track:300"),
@@ -1070,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_playing_uri_different_from_selection() {
-        let tracks = vec![
+        let tracks = [
             make_track("Track 1", "Artist 1", "spotify:track:100"),
             make_track("Track 2", "Artist 2", "spotify:track:200"),
             make_track("Track 3", "Artist 3", "spotify:track:300"),

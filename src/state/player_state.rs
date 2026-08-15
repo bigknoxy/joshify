@@ -245,8 +245,10 @@ mod tests {
 
     #[test]
     fn test_track_changed() {
-        let mut state = PlayerState::default();
-        state.current_track_uri = Some("spotify:track:abc".to_string());
+        let mut state = PlayerState {
+            current_track_uri: Some("spotify:track:abc".to_string()),
+            ..Default::default()
+        };
 
         assert!(!state.track_changed(Some("spotify:track:abc")));
         assert!(state.track_changed(Some("spotify:track:def")));
@@ -621,7 +623,7 @@ mod tests {
             duration_ms: u32::MAX,
             ..Default::default()
         };
-        let mut last_tick_ms = 0u64;
+        let last_tick_ms = 0u64;
         let current_ms = 1000u64;
 
         let elapsed = current_ms.saturating_sub(last_tick_ms);
@@ -630,7 +632,6 @@ mod tests {
                 .progress_ms
                 .saturating_add(elapsed as u32)
                 .min(state.duration_ms);
-            last_tick_ms = current_ms;
         }
 
         assert_eq!(state.progress_ms, u32::MAX);

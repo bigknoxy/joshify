@@ -354,8 +354,6 @@ impl SpotifyClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_search_query_validation() {
         let long_query = "a".repeat(50);

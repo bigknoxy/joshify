@@ -823,14 +823,16 @@ mod tests {
 
     #[test]
     fn test_daemon_state_advance_track() {
-        let mut state = DaemonState::default();
-        state.current_track = Some(TrackInfo {
-            name: "Current".to_string(),
-            artists: vec!["Artist".to_string()],
-            album: "Album".to_string(),
-            uri: "spotify:track:current".to_string(),
-            duration_ms: 180000,
-        });
+        let mut state = DaemonState {
+            current_track: Some(TrackInfo {
+                name: "Current".to_string(),
+                artists: vec!["Artist".to_string()],
+                album: "Album".to_string(),
+                uri: "spotify:track:current".to_string(),
+                duration_ms: 180000,
+            }),
+            ..Default::default()
+        };
         state.queue.push("spotify:track:next".to_string());
 
         state.advance_track();
@@ -847,15 +849,17 @@ mod tests {
 
     #[test]
     fn test_daemon_state_rewind_track() {
-        let mut state = DaemonState::default();
-        state.current_track = Some(TrackInfo {
-            name: "Current".to_string(),
-            artists: vec!["Artist".to_string()],
-            album: "Album".to_string(),
-            uri: "spotify:track:current".to_string(),
-            duration_ms: 180000,
-        });
-        state.progress_ms = 10000; // 10 seconds in
+        let mut state = DaemonState {
+            current_track: Some(TrackInfo {
+                name: "Current".to_string(),
+                artists: vec!["Artist".to_string()],
+                album: "Album".to_string(),
+                uri: "spotify:track:current".to_string(),
+                duration_ms: 180000,
+            }),
+            progress_ms: 10000, // 10 seconds in
+            ..Default::default()
+        };
         state.track_history.push("spotify:track:prev".to_string());
 
         // Should go to start of current track since > 5s in

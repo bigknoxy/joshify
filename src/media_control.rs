@@ -101,10 +101,7 @@ impl MediaControlService {
             return None;
         }
 
-        match self.command_rx.try_recv() {
-            Ok(cmd) => Some(cmd),
-            Err(_) => None,
-        }
+        self.command_rx.try_recv().ok()
     }
 
     /// Check if the service is running

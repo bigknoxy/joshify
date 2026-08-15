@@ -76,7 +76,7 @@ impl SimpleFuzzySearch {
             .collect();
 
         // Sort by score descending
-        results.sort_by(|a, b| b.1.cmp(&a.1));
+        results.sort_by_key(|r| std::cmp::Reverse(r.1));
         results.truncate(limit);
         results
     }
@@ -114,21 +114,21 @@ impl SimpleFuzzySearch {
 
         if let Some(first_char) = pattern_chars.next() {
             // Find first character
-            if let Some(pos) = item_lower.find(first_char) {
+            {
+                let pos = item_lower.find(first_char)?;
                 _last_match_pos = pos;
                 match_indices.push(pos);
                 score -= pos as u32; // Penalty for position
-            } else {
-                return None;
             }
 
             // Find remaining characters in order
-            for (_, char) in pattern_chars.enumerate() {
+            for char in pattern_chars {
                 if _last_match_pos + 1 >= item_lower.len() {
                     return None;
                 }
 
-                if let Some(rel_pos) = item_lower[_last_match_pos + 1..].find(char) {
+                {
+                    let rel_pos = item_lower[_last_match_pos + 1..].find(char)?;
                     let pos = _last_match_pos + 1 + rel_pos;
                     match_indices.push(pos);
 
@@ -141,8 +141,6 @@ impl SimpleFuzzySearch {
                     }
 
                     _last_match_pos = pos;
-                } else {
-                    return None;
                 }
             }
         }
@@ -533,7 +531,7 @@ mod tests {
         let results = search.search(10);
 
         // Should find both
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 
     #[test]

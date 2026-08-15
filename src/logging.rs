@@ -4,7 +4,7 @@
 //! Logs are stored in ~/.cache/joshify/logs/ with automatic rotation.
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{info, Level};
 
 /// Default log directory name
@@ -63,10 +63,7 @@ pub fn init(config: LogConfig) -> Result<()> {
     // For this simplified version, we'll use the default subscriber
     // The actual tracing setup would require more complex layer composition
 
-    let log_dir = config
-        .custom_dir
-        .clone()
-        .unwrap_or_else(|| default_log_dir());
+    let log_dir = config.custom_dir.clone().unwrap_or_else(default_log_dir);
     std::fs::create_dir_all(&log_dir)?;
 
     // Set up basic stderr logging if enabled
@@ -121,7 +118,7 @@ pub fn cleanup_old_logs() -> Result<()> {
 }
 
 /// Rotate log files
-pub fn rotate_logs(log_dir: &PathBuf) -> Result<()> {
+pub fn rotate_logs(log_dir: &Path) -> Result<()> {
     // Delete oldest log file if it exists
     let oldest = log_dir.join(format!("{}.{}.{}", LOG_FILE, MAX_LOG_FILES, "old"));
     if oldest.exists() {
@@ -419,7 +416,7 @@ mod tests {
     }
 
     /// Helper function for testing cleanup
-    fn cleanup_old_logs_in_temp(log_dir: &PathBuf) -> Result<()> {
+    fn cleanup_old_logs_in_temp(log_dir: &Path) -> Result<()> {
         let log_file = log_dir.join(LOG_FILE);
 
         if !log_file.exists() {

@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use std::time::Instant;
 
 /// Home dashboard state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HomeState {
     /// Recently played tracks (last 20)
     pub recently_played: Vec<RecentlyPlayedItem>,
@@ -16,17 +16,6 @@ pub struct HomeState {
     pub is_loading: bool,
     /// Last successful fetch timestamp
     pub last_updated: Option<Instant>,
-}
-
-impl Default for HomeState {
-    fn default() -> Self {
-        Self {
-            recently_played: Vec::new(),
-            jump_back_in: Vec::new(),
-            is_loading: false,
-            last_updated: None,
-        }
-    }
 }
 
 impl HomeState {
@@ -179,7 +168,7 @@ pub fn calculate_jump_back_in(
             let progress = ContinueContext::calculate_progress(completed, total);
 
             // Only show if between 10% and 90% complete
-            if progress < 10 || progress > 90 {
+            if !(10..=90).contains(&progress) {
                 return None;
             }
 
@@ -202,7 +191,7 @@ pub fn calculate_jump_back_in(
         .collect();
 
     // Sort by most recently played
-    result.sort_by(|a, b| b.last_played.cmp(&a.last_played));
+    result.sort_by_key(|item| std::cmp::Reverse(item.last_played));
 
     // Limit to 6 items
     result.truncate(6);

@@ -306,6 +306,48 @@ fn pixel_to_char(pixel: &image::Rgba<u8>) -> char {
     GRADIENT[index.min(GRADIENT.len() - 1)]
 }
 
+/// Widget for rendering album art in ratatui
+pub struct AlbumArtWidget<'a> {
+    image_data: Option<&'a [u8]>,
+    _protocol: Protocol,
+}
+
+impl<'a> AlbumArtWidget<'a> {
+    pub fn new(image_data: Option<&'a [u8]>) -> Self {
+        Self {
+            image_data,
+            _protocol: Protocol::detect(),
+        }
+    }
+
+    pub fn with_protocol(image_data: Option<&'a [u8]>, protocol: Protocol) -> Self {
+        Self {
+            image_data,
+            _protocol: protocol,
+        }
+    }
+}
+
+impl Widget for AlbumArtWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if let Some(data) = self.image_data {
+            let lines = render_album_art_as_lines(data, area);
+            for (i, line) in lines.iter().enumerate() {
+                if i < area.height as usize {
+                    buf.set_line(area.x, area.y + i as u16, line, area.width);
+                }
+            }
+        } else {
+            let placeholder = create_ascii_border(area);
+            for (i, line) in placeholder.iter().enumerate() {
+                if i < area.height as usize {
+                    buf.set_line(area.x, area.y + i as u16, line, area.width);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,47 +465,5 @@ mod tests {
         let area = Rect::new(0, 0, 10, 5);
         let result = write_image_to_stdout(b"any data", area, Protocol::Sixel);
         assert!(result.is_ok());
-    }
-}
-
-/// Widget for rendering album art in ratatui
-pub struct AlbumArtWidget<'a> {
-    image_data: Option<&'a [u8]>,
-    _protocol: Protocol,
-}
-
-impl<'a> AlbumArtWidget<'a> {
-    pub fn new(image_data: Option<&'a [u8]>) -> Self {
-        Self {
-            image_data,
-            _protocol: Protocol::detect(),
-        }
-    }
-
-    pub fn with_protocol(image_data: Option<&'a [u8]>, protocol: Protocol) -> Self {
-        Self {
-            image_data,
-            _protocol: protocol,
-        }
-    }
-}
-
-impl Widget for AlbumArtWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if let Some(data) = self.image_data {
-            let lines = render_album_art_as_lines(data, area);
-            for (i, line) in lines.iter().enumerate() {
-                if i < area.height as usize {
-                    buf.set_line(area.x, area.y + i as u16, line, area.width);
-                }
-            }
-        } else {
-            let placeholder = create_ascii_border(area);
-            for (i, line) in placeholder.iter().enumerate() {
-                if i < area.height as usize {
-                    buf.set_line(area.x, area.y + i as u16, line, area.width);
-                }
-            }
-        }
     }
 }

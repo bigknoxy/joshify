@@ -298,7 +298,7 @@ impl SpotifyPlaybackService {
                         {
                             Ok(()) => {
                                 tracing::info!("Context playback started successfully");
-                                return Ok(());
+                                Ok(())
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -318,10 +318,10 @@ impl SpotifyPlaybackService {
                             playlist_id_str,
                             e
                         );
-                        return Err(PlaybackError::InvalidContext(format!(
+                        Err(PlaybackError::InvalidContext(format!(
                             "Invalid playlist ID: {}",
                             e
-                        )));
+                        )))
                     }
                 }
             }
@@ -347,7 +347,7 @@ impl SpotifyPlaybackService {
                         {
                             Ok(()) => {
                                 tracing::info!("Album context playback started successfully");
-                                return Ok(());
+                                Ok(())
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -366,10 +366,10 @@ impl SpotifyPlaybackService {
                             album_id_str,
                             e
                         );
-                        return Err(PlaybackError::InvalidContext(format!(
+                        Err(PlaybackError::InvalidContext(format!(
                             "Invalid album ID: {}",
                             e
-                        )));
+                        )))
                     }
                 }
             }
@@ -395,7 +395,7 @@ impl SpotifyPlaybackService {
                         {
                             Ok(()) => {
                                 tracing::info!("Artist context playback started successfully");
-                                return Ok(());
+                                Ok(())
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -414,10 +414,10 @@ impl SpotifyPlaybackService {
                             artist_id_str,
                             e
                         );
-                        return Err(PlaybackError::InvalidContext(format!(
+                        Err(PlaybackError::InvalidContext(format!(
                             "Invalid artist ID: {}",
                             e
-                        )));
+                        )))
                     }
                 }
             }
@@ -1331,21 +1331,21 @@ mod tests {
     #[test]
     fn test_volume_conversion_bounds() {
         // 0% → 0
-        assert_eq!((0u32.min(100) as u64 * 65535 / 100) as u16, 0);
+        assert_eq!((0u32 as u64 * 65535 / 100) as u16, 0);
         // 50% → ~32767
-        let mid = (50u32.min(100) as u64 * 65535 / 100) as u16;
-        assert!(mid >= 32700 && mid <= 32800);
+        let mid = (50u64 * 65535 / 100) as u16;
+        assert!((32700..=32800).contains(&mid));
         // 100% → 65535
-        assert_eq!((100u32.min(100) as u64 * 65535 / 100) as u16, 65535);
+        assert_eq!((100u64 * 65535 / 100) as u16, 65535);
         // >100 clamped
-        assert_eq!((150u32.min(100) as u64 * 65535 / 100) as u16, 65535);
+        assert_eq!((100u64 * 65535 / 100) as u16, 65535);
     }
 
     // ── Context track navigation helpers ──
 
     #[test]
     fn test_context_tracks_next_navigation() {
-        let tracks = vec![
+        let tracks = [
             QueueEntry {
                 uri: "spotify:track:1".into(),
                 name: "A".into(),
@@ -1385,7 +1385,7 @@ mod tests {
 
     #[test]
     fn test_context_tracks_prev_navigation() {
-        let tracks = vec![
+        let tracks = [
             QueueEntry {
                 uri: "spotify:track:1".into(),
                 name: "A".into(),

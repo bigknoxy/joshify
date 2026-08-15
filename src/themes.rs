@@ -41,8 +41,9 @@ pub trait Theme {
 }
 
 /// Built-in themes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BuiltInTheme {
+    #[default]
     CatppuccinMocha,
     CatppuccinLatte,
     GruvboxDark,
@@ -104,12 +105,6 @@ impl BuiltInTheme {
             Self::TokyoNight => Box::new(TokyoNight),
             Self::Dracula => Box::new(Dracula),
         }
-    }
-}
-
-impl Default for BuiltInTheme {
-    fn default() -> Self {
-        Self::CatppuccinMocha
     }
 }
 

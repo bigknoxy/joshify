@@ -273,7 +273,7 @@ fn render_quick_access_section(frame: &mut ratatui::Frame, area: Rect, content_w
     frame.render_widget(header, Rect::new(area.x, area.y, area.width, header_height));
 
     // Quick access items
-    let items = vec![
+    let items = [
         (symbols::HEART_FILLED, "Liked Songs", 'L'),
         (symbols::MUSIC, "Playlists", 'P'),
         (symbols::DISC, "Albums", 'A'),
@@ -368,48 +368,6 @@ fn render_empty_state(frame: &mut ratatui::Frame, area: Rect, _content_width: us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-
-    fn create_test_track(name: &str, artist: &str) -> crate::state::home_state::TrackSummary {
-        crate::state::home_state::TrackSummary {
-            name: name.to_string(),
-            artist: artist.to_string(),
-            uri: format!("spotify:track:{}", name.replace(' ', "_")),
-            duration_ms: 180000,
-        }
-    }
-
-    fn create_test_home_state() -> HomeState {
-        HomeState {
-            recently_played: vec![
-                RecentlyPlayedItem {
-                    track: create_test_track("Test Track 1", "Artist 1"),
-                    played_at: Utc::now(),
-                    context: None,
-                },
-                RecentlyPlayedItem {
-                    track: create_test_track("Test Track 2", "Artist 2"),
-                    played_at: Utc::now(),
-                    context: Some(crate::state::home_state::PlayContext {
-                        context_type: crate::state::home_state::ContextType::Album,
-                        id: "album1".to_string(),
-                        name: "Test Album".to_string(),
-                    }),
-                },
-            ],
-            jump_back_in: vec![ContinueContext {
-                context_type: crate::state::home_state::ContextType::Playlist,
-                id: "playlist1".to_string(),
-                name: "Test Playlist".to_string(),
-                progress_percent: 45,
-                last_played: Utc::now(),
-                total_tracks: 20,
-                completed_tracks: 9,
-            }],
-            is_loading: false,
-            last_updated: None,
-        }
-    }
 
     #[test]
     fn test_truncate_short_text() {

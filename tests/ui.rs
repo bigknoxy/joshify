@@ -106,7 +106,7 @@ fn test_render_sidebar() {
 
     // Verify render completed without panic
     let output = terminal.backend().buffer();
-    assert!(output.content.len() > 0);
+    assert!(!output.content.is_empty());
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn test_render_player_bar() {
         .unwrap();
 
     let output = terminal.backend().buffer();
-    assert!(output.content.len() > 0);
+    assert!(!output.content.is_empty());
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn test_render_track_list() {
     let backend = ratatui::backend::TestBackend::new(60, 15);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
 
-    let tracks = vec![
+    let tracks = [
         ("Track 1", "Artist 1"),
         ("Track 2", "Artist 2"),
         ("Track 3", "Artist 3"),
@@ -180,7 +180,7 @@ fn test_render_track_list() {
         .unwrap();
 
     let output = terminal.backend().buffer();
-    assert!(output.content.len() > 0);
+    assert!(!output.content.is_empty());
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn test_render_playlist_list() {
     let backend = ratatui::backend::TestBackend::new(60, 15);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
 
-    let playlists = vec![
+    let playlists = [
         ("My Playlist 1", 25),
         ("Liked Songs", 142),
         ("Discover Weekly", 30),
@@ -221,7 +221,7 @@ fn test_render_playlist_list() {
         .unwrap();
 
     let output = terminal.backend().buffer();
-    assert!(output.content.len() > 0);
+    assert!(!output.content.is_empty());
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_search_input_overlay() {
         .unwrap();
 
     let output = terminal.backend().buffer();
-    assert!(output.content.len() > 0);
+    assert!(!output.content.is_empty());
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn test_help_overlay() {
         .unwrap();
 
     let output = terminal.backend().buffer();
-    assert!(output.content.len() > 0);
+    assert!(!output.content.is_empty());
 }
 
 // ============================================================================

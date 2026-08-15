@@ -153,8 +153,8 @@ fn entry_name(entry: &NavigationEntry) -> String {
     match entry {
         NavigationEntry::Home => "Home".to_string(),
         NavigationEntry::Library { .. } => "Library".to_string(),
-        NavigationEntry::AlbumDetail { album, .. } => format!("{}", album.name),
-        NavigationEntry::ArtistDetail { artist, .. } => format!("{}", artist.name),
+        NavigationEntry::AlbumDetail { album, .. } => album.name.to_string(),
+        NavigationEntry::ArtistDetail { artist, .. } => artist.name.to_string(),
         NavigationEntry::Playlists(_) => "Playlists".to_string(),
         NavigationEntry::PlaylistTracks { playlist, .. } => playlist.name.clone(),
         NavigationEntry::LikedSongs(_) => "Liked Songs".to_string(),

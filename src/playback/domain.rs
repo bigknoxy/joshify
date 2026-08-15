@@ -719,6 +719,7 @@ impl PlaybackQueue {
     ///     PlaybackContext::Playlist {
     ///         uri: "spotify:playlist:test".to_string(),
     ///         name: "Test".to_string(),
+    ///         start_index: 0,
     ///     },
     ///     vec![
     ///         "spotify:track:1".to_string(),

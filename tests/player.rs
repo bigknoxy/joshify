@@ -5,6 +5,8 @@
 // Tests for player state - run with: cargo test --test player
 // Note: These tests use the binary crate, so we reference via crate::
 
+// The included module is the full production file; not every item is exercised here.
+#[allow(dead_code)]
 #[path = "../src/state/player_state.rs"]
 mod player_state;
 
@@ -34,8 +36,10 @@ fn test_format_duration_edge_cases() {
 
 #[test]
 fn test_track_changed() {
-    let mut state = PlayerState::default();
-    state.current_track_uri = Some("spotify:track:abc".to_string());
+    let mut state = PlayerState {
+        current_track_uri: Some("spotify:track:abc".to_string()),
+        ..Default::default()
+    };
 
     assert!(!state.track_changed(Some("spotify:track:abc")));
     assert!(state.track_changed(Some("spotify:track:def")));

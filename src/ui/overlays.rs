@@ -166,78 +166,6 @@ fn truncate_from_start(text: &str, max_width: usize) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use unicode_truncate::UnicodeTruncateStr;
-    use unicode_width::UnicodeWidthStr;
-
-    fn test_display_width(s: &str) -> usize {
-        UnicodeWidthStr::width(s)
-    }
-
-    fn test_truncate_from_start(text: &str, max_width: usize) -> String {
-        if test_display_width(text) <= max_width {
-            text.to_string()
-        } else {
-            let (truncated, _) = text.unicode_truncate_start(max_width.saturating_sub(1));
-            format!("…{}", truncated)
-        }
-    }
-
-    #[test]
-    fn test_display_width_ascii() {
-        assert_eq!(test_display_width("hello"), 5);
-        assert_eq!(test_display_width(""), 0);
-        assert_eq!(test_display_width("test123"), 7);
-    }
-
-    #[test]
-    fn test_display_width_emoji() {
-        assert_eq!(test_display_width("🦀"), 2);
-        assert_eq!(test_display_width("h🦀llo"), 6);
-        assert_eq!(test_display_width("🔍"), 2);
-        assert_eq!(test_display_width("🔍🔍"), 4);
-    }
-
-    #[test]
-    fn test_display_width_mixed() {
-        assert_eq!(test_display_width("test🦀"), 6);
-        assert_eq!(test_display_width("🦀test"), 6);
-        assert_eq!(test_display_width("a🦀b"), 4);
-    }
-
-    #[test]
-    fn test_truncate_from_start_no_truncation() {
-        assert_eq!(test_truncate_from_start("hello", 10), "hello");
-        assert_eq!(test_truncate_from_start("test", 4), "test");
-    }
-
-    #[test]
-    fn test_truncate_from_start_with_truncation() {
-        let result = test_truncate_from_start("hello world", 5);
-        assert!(result.starts_with("…"));
-        assert!(test_display_width(&result) <= 5);
-    }
-
-    #[test]
-    fn test_truncate_from_start_with_emoji() {
-        let result = test_truncate_from_start("hello🦀world", 6);
-        assert!(result.starts_with("…"));
-        assert!(test_display_width(&result) <= 6);
-    }
-
-    #[test]
-    fn test_truncate_from_start_empty() {
-        assert_eq!(test_truncate_from_start("", 5), "");
-    }
-
-    #[test]
-    fn test_prefix_width_correct() {
-        const SEARCH_PREFIX: &str = "  / ";
-        assert_eq!(test_display_width(SEARCH_PREFIX), 4);
-    }
-}
-
 /// Render search overlay with live results
 pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_state: &SearchState) {
     let overlay_width = (area.width as f32 * 0.7).clamp(50.0, area.width as f32) as u16;
@@ -384,4 +312,76 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
         }
     };
     frame.set_cursor_position((cursor_x, cursor_y));
+}
+
+#[cfg(test)]
+mod tests {
+    use unicode_truncate::UnicodeTruncateStr;
+    use unicode_width::UnicodeWidthStr;
+
+    fn test_display_width(s: &str) -> usize {
+        UnicodeWidthStr::width(s)
+    }
+
+    fn test_truncate_from_start(text: &str, max_width: usize) -> String {
+        if test_display_width(text) <= max_width {
+            text.to_string()
+        } else {
+            let (truncated, _) = text.unicode_truncate_start(max_width.saturating_sub(1));
+            format!("…{}", truncated)
+        }
+    }
+
+    #[test]
+    fn test_display_width_ascii() {
+        assert_eq!(test_display_width("hello"), 5);
+        assert_eq!(test_display_width(""), 0);
+        assert_eq!(test_display_width("test123"), 7);
+    }
+
+    #[test]
+    fn test_display_width_emoji() {
+        assert_eq!(test_display_width("🦀"), 2);
+        assert_eq!(test_display_width("h🦀llo"), 6);
+        assert_eq!(test_display_width("🔍"), 2);
+        assert_eq!(test_display_width("🔍🔍"), 4);
+    }
+
+    #[test]
+    fn test_display_width_mixed() {
+        assert_eq!(test_display_width("test🦀"), 6);
+        assert_eq!(test_display_width("🦀test"), 6);
+        assert_eq!(test_display_width("a🦀b"), 4);
+    }
+
+    #[test]
+    fn test_truncate_from_start_no_truncation() {
+        assert_eq!(test_truncate_from_start("hello", 10), "hello");
+        assert_eq!(test_truncate_from_start("test", 4), "test");
+    }
+
+    #[test]
+    fn test_truncate_from_start_with_truncation() {
+        let result = test_truncate_from_start("hello world", 5);
+        assert!(result.starts_with("…"));
+        assert!(test_display_width(&result) <= 5);
+    }
+
+    #[test]
+    fn test_truncate_from_start_with_emoji() {
+        let result = test_truncate_from_start("hello🦀world", 6);
+        assert!(result.starts_with("…"));
+        assert!(test_display_width(&result) <= 6);
+    }
+
+    #[test]
+    fn test_truncate_from_start_empty() {
+        assert_eq!(test_truncate_from_start("", 5), "");
+    }
+
+    #[test]
+    fn test_prefix_width_correct() {
+        const SEARCH_PREFIX: &str = "  / ";
+        assert_eq!(test_display_width(SEARCH_PREFIX), 4);
+    }
 }

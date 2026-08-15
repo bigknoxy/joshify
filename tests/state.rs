@@ -5,6 +5,8 @@
 // Re-implement core types for testing (mirroring src/state/app_state.rs)
 
 /// Navigation items for the sidebar
+// Variants mirror the production enum even when a given test doesn't construct them.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum NavItem {
     Home,
@@ -37,22 +39,20 @@ impl NavItem {
 }
 
 /// Focus target for Tab navigation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum FocusTarget {
+    #[default]
     Sidebar,
     MainContent,
     PlayerBar,
 }
 
-impl Default for FocusTarget {
-    fn default() -> Self {
-        FocusTarget::Sidebar
-    }
-}
-
 /// Content state for main view
-#[derive(Clone, PartialEq, Debug)]
+// Variants mirror the production enum even when a given test doesn't construct them.
+#[allow(dead_code)]
+#[derive(Clone, PartialEq, Debug, Default)]
 enum ContentState {
+    #[default]
     Home,
     Loading(String),
     LoadingInProgress(String),
@@ -61,12 +61,6 @@ enum ContentState {
     PlaylistTracks(String, Vec<String>),
     SearchResults(String, Vec<String>),
     Error(String),
-}
-
-impl Default for ContentState {
-    fn default() -> Self {
-        ContentState::Home
-    }
 }
 
 /// Test application state
@@ -306,6 +300,8 @@ struct TrackItem {
 }
 
 /// Content state with LikedSongsPage variant (mirrors app_state.rs structure)
+// Variants mirror the production enum even when a given test doesn't construct them.
+#[allow(dead_code)]
 #[derive(Clone, PartialEq, Debug)]
 enum TestContentStateWithPagination {
     Home,
@@ -435,7 +431,7 @@ fn test_liked_songs_results_discarded_on_navigation() {
     // User navigated away to Home
     let state = TestContentStateWithPagination::Home;
 
-    let new_tracks = vec![TrackItem {
+    let _new_tracks = [TrackItem {
         name: "Track".to_string(),
         artist: "Artist".to_string(),
         uri: "spotify:track:1".to_string(),

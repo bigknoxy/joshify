@@ -12,7 +12,7 @@ const DEFAULT_CONFIG_FOLDER: &str = ".config/joshify";
 const CONFIG_FILE: &str = "config.toml";
 
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// Audio settings
     pub audio: AudioConfig,
@@ -24,18 +24,6 @@ pub struct Config {
     pub ui: UiConfig,
     /// Keybindings (optional overrides)
     pub keybindings: Option<KeybindingsConfig>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            audio: AudioConfig::default(),
-            notifications: NotificationConfig::default(),
-            media_control: MediaControlConfig::default(),
-            ui: UiConfig::default(),
-            keybindings: None,
-        }
-    }
 }
 
 impl Config {

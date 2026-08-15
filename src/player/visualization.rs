@@ -24,11 +24,11 @@ pub struct VisualizationState {
 impl VisualizationState {
     pub fn new(num_bands: usize, smoothing: f32) -> Self {
         assert!(
-            num_bands >= 16 && num_bands <= 128,
+            (16..=128).contains(&num_bands),
             "num_bands must be between 16 and 128"
         );
         assert!(
-            smoothing >= 0.0 && smoothing <= 1.0,
+            (0.0..=1.0).contains(&smoothing),
             "smoothing must be between 0.0 and 1.0"
         );
 
@@ -175,12 +175,12 @@ impl SampleBuffer {
         for (i, &sample) in samples.iter().enumerate().take(fft_size) {
             input[i] = sample;
         }
-        for i in samples.len()..fft_size {
-            input[i] = 0.0;
+        for slot in input.iter_mut().take(fft_size).skip(samples.len()) {
+            *slot = 0.0;
         }
 
         // Perform FFT
-        if let Err(_) = r2c.process(&mut input, &mut output) {
+        if r2c.process(&mut input, &mut output).is_err() {
             return None;
         }
 
@@ -240,8 +240,8 @@ impl FrequencyAnalyzer {
             // Average magnitudes in this band
             let mut sum = 0.0;
             let mut count = 0;
-            for bin in start_bin..=end_bin.min(magnitudes.len() - 1) {
-                sum += magnitudes[bin];
+            for &magnitude in &magnitudes[start_bin..=end_bin.min(magnitudes.len() - 1)] {
+                sum += magnitude;
                 count += 1;
             }
 
@@ -314,7 +314,7 @@ impl VisualizerRenderer {
             (bands.len() as f32 / max_width as f32).ceil() as usize
         };
 
-        let num_chars = (bands.len() + step - 1) / step; // Ceiling division
+        let num_chars = bands.len().div_ceil(step); // Ceiling division
         let num_chars = num_chars.min(max_width);
 
         for i in 0..num_chars {
@@ -498,6 +498,6 @@ mod tests {
         }
 
         let final_state = state.lock().unwrap();
-        assert!(final_state.bands.iter().any(|&v| v == 0.5));
+        assert!(final_state.bands.contains(&0.5));
     }
 }

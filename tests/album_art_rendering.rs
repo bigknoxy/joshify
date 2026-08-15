@@ -260,7 +260,7 @@ fn test_widget_render_with_data() {
     let mut buf = Buffer::empty(area);
 
     widget.render(area, &mut buf);
-    assert!(buf.content.len() > 0);
+    assert!(!buf.content.is_empty());
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn test_widget_render_without_data() {
     let mut buf = Buffer::empty(area);
 
     widget.render(area, &mut buf);
-    assert!(buf.content.len() > 0);
+    assert!(!buf.content.is_empty());
 }
 
 #[test]

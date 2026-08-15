@@ -18,6 +18,8 @@ const REPEAT_BUTTON_WIDTH: u16 = 8;
 const QUEUE_BUTTON_WIDTH: u16 = 8;
 
 /// Render the player bar at the bottom with integrated album art
+// Render functions thread individual state slices; grouping them into a struct is tracked in #29.
+#[allow(clippy::too_many_arguments)]
 pub fn render_player_bar(
     frame: &mut ratatui::Frame,
     area: Rect,

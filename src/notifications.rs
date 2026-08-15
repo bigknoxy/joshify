@@ -444,8 +444,10 @@ mod tests {
 
     #[test]
     fn test_should_notify_rate_limit() {
-        let mut config = NotificationConfig::default();
-        config.cooldown_secs = 1; // Short cooldown for testing
+        let config = NotificationConfig {
+            cooldown_secs: 1, // Short cooldown for testing
+            ..Default::default()
+        };
 
         let mut service = NotificationService::new(config);
         service.reset_rate_limit();
@@ -568,8 +570,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_notification_rate_limit_cooldown() {
-        let mut config = NotificationConfig::default();
-        config.cooldown_secs = 0; // No cooldown
+        let config = NotificationConfig {
+            cooldown_secs: 0, // No cooldown
+            ..Default::default()
+        };
 
         let mut service = NotificationService::new(config);
         service.reset_rate_limit();

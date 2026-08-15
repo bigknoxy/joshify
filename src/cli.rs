@@ -54,20 +54,15 @@ pub enum CliCommand {
 }
 
 /// Output format for CLI commands
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// Human-readable text
+    #[default]
     Text,
     /// JSON for scripting
     Json,
     /// Minimal output (just values)
     Minimal,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Text
-    }
 }
 
 /// Playback status for CLI output
@@ -107,10 +102,7 @@ impl CliHandler {
     }
 
     /// Create with custom output
-    pub fn with_output<W: Write>(output: W) -> Self
-    where
-        W: 'static,
-    {
+    pub fn with_output<W: Write + 'static>(output: W) -> Self {
         Self {
             output: Box::new(output),
         }
@@ -817,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_seek_forward_default() {
-        let args: Vec<String> = vec![];
+        let _args: Vec<String> = vec![];
         let result = parse_args(&["seek-forward".to_string()]);
         assert!(result.is_ok());
     }

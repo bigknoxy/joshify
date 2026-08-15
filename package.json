@@ -1,6 +1,6 @@
 {
   "name": "joshify",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "A beautiful terminal Spotify client",
   "bin": {
     "joshify": "./bin/joshify.js"

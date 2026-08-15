@@ -148,7 +148,7 @@ fn test_frame_rate_limiting() {
     }
 
     assert!(
-        frame_count >= 28 && frame_count <= 32,
+        (28..=32).contains(&frame_count),
         "Should render ~30 frames in 1 second"
     );
 }
@@ -175,14 +175,11 @@ fn test_object_pool_capacity_retention() {
 /// Tests that batch processing handles empty receiver correctly
 #[test]
 fn test_batch_processing_empty_receiver() {
-    let mut batch: Vec<i32> = Vec::with_capacity(32);
+    let batch: Vec<i32> = Vec::with_capacity(32);
     let batch_limit: usize = 32;
 
-    // Simulate empty receiver (try_recv would fail immediately)
-    while batch.len() < batch_limit {
-        break; // No items available
-    }
-
+    // Simulate empty receiver (try_recv would fail immediately, so no items are batched)
+    assert!(batch.len() < batch_limit);
     assert_eq!(batch.len(), 0, "Should process 0 items from empty channel");
 }
 
@@ -279,7 +276,7 @@ fn test_frame_rate_prevents_excessive_rendering() {
 
     // At 30fps for 1 minute, max ~1818 frames (60000/33)
     assert!(
-        max_frames >= 1800 && max_frames <= 1820,
+        (1800..=1820).contains(&max_frames),
         "Should render ~1800 frames per minute"
     );
 

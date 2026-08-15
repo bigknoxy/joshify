@@ -7,6 +7,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Simulated LoadAction for testing
+// Variants mirror the production enum even when a given test doesn't construct them.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum LoadAction {
     PlaylistTracks(String),

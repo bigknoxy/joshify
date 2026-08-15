@@ -1630,7 +1630,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         .images
                                                         .first()
                                                         .map(|i| i.url.clone()),
-                                                    total_tracks: sa.album.tracks.total as u32,
+                                                    total_tracks: sa.album.tracks.total,
                                                     release_year,
                                                 }
                                             })
@@ -1727,9 +1727,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             genres: vec![],
                             follower_count: None,
                         };
-                        let _ = tx.send(ContentState::ArtistDetail {
-                            artist: artist_item,
-                        });
+                        let _ = tx
+                            .send(ContentState::ArtistDetail {
+                                artist: artist_item,
+                            })
+                            .await;
                         app.content_state =
                             ContentState::LoadingInProgress(LoadAction::ArtistTopTracks {
                                 artist_id,
@@ -3341,15 +3343,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         app.selected_nav = nav_items[current_idx - 1];
                                     }
                                 }
-                                FocusTarget::MainContent => {
+                                FocusTarget::MainContent
                                     // Scroll up in list
-                                    if app.selected_index > 0 {
+                                    if app.selected_index > 0 => {
                                         app.selected_index -= 1;
                                         if app.selected_index < app.scroll_offset {
                                             app.scroll_offset = app.selected_index;
                                         }
                                     }
-                                }
                                 _ => {}
                             }
                         }
@@ -3397,7 +3398,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 if let Some(ref player) = app.local_player {
                                     // Convert 0-100 percentage to 0-65535 for librespot
                                     // Use u32 for calculation to prevent overflow, then cast to u16
-                                    let new_vol = (new_volume as u32 * 65535 / 100) as u16;
+                                    let new_vol = (new_volume * 65535 / 100) as u16;
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -3557,7 +3558,7 @@ async fn run_search_test(args: CliArgs) -> Result<()> {
 
 #[cfg(test)]
 mod playback_tests {
-    use super::*;
+
     use joshify::playback::domain::{PlaybackContext, PlaybackQueue, QueueEntry};
 
     /// Test that PlaybackQueue correctly advances through context tracks
