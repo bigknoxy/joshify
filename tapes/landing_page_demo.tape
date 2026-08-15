@@ -12,7 +12,7 @@ Set Padding 20
 
 # Start Joshify with mock data in background
 Hide
-Type "cd /home/josh/projects/joshify && JOSHIFY_MOCK=1 cargo run --release 2>&1 &"
+Type "JOSHIFY_MOCK=1 ./target/release/joshify 2>&1 &"
 Enter
 Sleep 4s
 Show

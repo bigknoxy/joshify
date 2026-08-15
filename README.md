@@ -1,7 +1,7 @@
 # Joshify ⚡
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/bigknoxy/joshify/main/assets/logo.png" alt="Joshify Logo" width="200">
+  <img src="assets/logo.svg" alt="Joshify Logo" width="200">
 </p>
 
 <p align="center">
@@ -66,6 +66,10 @@
 
 ### Screenshots
 
+<p align="center">
+  <img src="screenshots/reference/demo.gif" alt="Joshify demo" width="800">
+</p>
+
 | Home View | Library View | Search |
 |-----------|--------------|--------|
 | <img src="screenshots/reference/home_view.png" alt="Home" width="300"> | <img src="screenshots/reference/library_view.png" alt="Library" width="300"> | <img src="screenshots/reference/search_overlay.png" alt="Search" width="300"> |
@@ -97,6 +101,16 @@ cargo install --path .
 - Spotify Premium account
 - Terminal with UTF-8 support
 - For album art: kitty, iTerm2, or sixel-capable terminal
+
+### Supported Platforms
+
+Pre-built release binaries are provided for **Linux x86_64** and **macOS (Apple Silicon)**.
+Other platforms (Intel macOS, ARM Linux, musl) can build from source; broader
+pre-built coverage is tracked in [#33](https://github.com/bigknoxy/joshify/issues/33).
+
+System libraries needed to build from source (installed automatically by `install.sh`):
+- Linux: `libasound2-dev pkg-config libssl-dev libchafa-dev libglib2.0-dev`
+- macOS: `brew install pkgconf chafa`
 
 ## 🎮 Quick Start
 

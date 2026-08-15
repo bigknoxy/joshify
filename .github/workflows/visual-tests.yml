@@ -48,14 +48,15 @@ jobs:
 
       - name: Install VHS
         run: |
-          mkdir -p ~/.local/bin
-          curl -L https://github.com/charmbracelet/vhs/releases/latest/download/vhs_$(uname -s)_$(uname -m).tar.gz | tar -xz -C ~/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          curl -sL -o vhs.deb https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_amd64.deb
+          sudo dpkg -i vhs.deb || sudo apt-get install -f -y
+          vhs --version
 
       - name: Install ttyd
         run: |
-          curl -L https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.$(uname -m) -o ~/.local/bin/ttyd
-          chmod +x ~/.local/bin/ttyd
+          curl -sL -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          sudo install ttyd /usr/local/bin/ttyd
+          ttyd --version
 
       - name: Build for VHS
         run: cargo build --release
@@ -122,14 +123,15 @@ jobs:
 
       - name: Install VHS
         run: |
-          mkdir -p ~/.local/bin
-          curl -L https://github.com/charmbracelet/vhs/releases/latest/download/vhs_$(uname -s)_$(uname -m).tar.gz | tar -xz -C ~/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          curl -sL -o vhs.deb https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_amd64.deb
+          sudo dpkg -i vhs.deb || sudo apt-get install -f -y
+          vhs --version
 
       - name: Install ttyd
         run: |
-          curl -L https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.$(uname -m) -o ~/.local/bin/ttyd
-          chmod +x ~/.local/bin/ttyd
+          curl -sL -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          sudo install ttyd /usr/local/bin/ttyd
+          ttyd --version
 
       - name: Build for VHS
         run: cargo build --release

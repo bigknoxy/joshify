@@ -407,8 +407,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
     let mut app = App::new();
 
-    // If we have tokens from env/CLI, skip interactive setup
-    if has_tokens {
+    // Mock mode (JOSHIFY_MOCK=1): demo data, no Spotify auth or network
+    let mock_mode = joshify::state::mock_data::is_mock_mode();
+    if mock_mode {
+        joshify::state::mock_data::init_mock_state(
+            &mut app.is_authenticated,
+            &mut app.content_state,
+            &mut app.player_state,
+        );
+        app.status_message = Some("Mock mode - demo data - Press ? for help".to_string());
+    } else if has_tokens {
         app.is_authenticated = true;
         app.status_message =
             Some("Connected to Spotify (non-interactive) - Press ? for help".to_string());
@@ -439,15 +447,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     terminal.clear()?;
 
     // Initialize Spotify client wrapped in Arc<Mutex> for shared access
-    let client = match joshify::api::SpotifyClient::new(&config).await {
-        Ok(client) => {
-            app.is_authenticated = true;
-            app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
-            Some(Arc::new(Mutex::new(client)))
-        }
-        Err(e) => {
-            app.status_message = Some(format!("Spotify auth error: {}", e));
-            None
+    let client = if mock_mode {
+        None
+    } else {
+        match joshify::api::SpotifyClient::new(&config).await {
+            Ok(client) => {
+                app.is_authenticated = true;
+                app.status_message = Some("Connected to Spotify - Press ? for help".to_string());
+                Some(Arc::new(Mutex::new(client)))
+            }
+            Err(e) => {
+                app.status_message = Some(format!("Spotify auth error: {}", e));
+                None
+            }
         }
     };
 
@@ -1021,7 +1033,20 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
         // Live search debounce: trigger search after cooldown
         if app.search_state.is_active && app.search_state.should_search(now) {
-            if let Some(ref client) = client {
+            if mock_mode {
+                let query = app.search_state.query.to_lowercase();
+                if !query.is_empty() {
+                    app.search_state.mark_search_started(now);
+                    let results: Vec<_> = joshify::state::mock_data::get_mock_tracks()
+                        .into_iter()
+                        .filter(|t| {
+                            t.name.to_lowercase().contains(&query)
+                                || t.artist.to_lowercase().contains(&query)
+                        })
+                        .collect();
+                    app.search_state.set_results(results);
+                }
+            } else if let Some(ref client) = client {
                 let query = app.search_state.query.clone();
                 if !query.is_empty() {
                     app.search_state.mark_search_started(now);
@@ -1267,7 +1292,22 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         };
 
         if let Some(action) = load_action {
-            if let Some(ref client) = client {
+            if mock_mode {
+                // Serve demo data instantly instead of spawning API tasks
+                use joshify::state::mock_data::get_mock_content_state;
+                app.content_state = match action {
+                    LoadAction::LikedSongs | LoadAction::LikedSongsPage { .. } => {
+                        get_mock_content_state(&NavItem::LikedSongs)
+                    }
+                    LoadAction::Playlists => get_mock_content_state(&NavItem::Playlists),
+                    LoadAction::LibraryAlbums | LoadAction::LibraryArtists => {
+                        get_mock_content_state(&NavItem::Library)
+                    }
+                    _ => ContentState::Home,
+                };
+                app.selected_index = 0;
+                app.scroll_offset = 0;
+            } else if let Some(ref client) = client {
                 match action {
                     LoadAction::Devices => {
                         let c = client.clone();
