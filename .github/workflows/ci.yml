@@ -96,6 +96,16 @@ jobs:
       - name: Run install.sh helper tests
         run: bash tests/install_sh_test.sh
 
+  # Every README badge resolves and reports a healthy workflow, and every
+  # image the README references actually exists in the repo.
+  readme:
+    name: README Badges
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check badges and README media
+        run: scripts/check-badges.sh
+
   # Security audit — advisory only, never blocks CI.
   #
   # Runs cargo-audit directly rather than rustsec/audit-check: the action still
@@ -156,7 +166,7 @@ jobs:
   # Summary job for required status checks (only check critical jobs)
   ci-success:
     name: CI Success
-    needs: [fmt, test, build, installer]
+    needs: [fmt, test, build, installer, readme]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -165,7 +175,8 @@ jobs:
           if [ "${{ needs.fmt.result }}" != "success" ] || \
              [ "${{ needs.test.result }}" != "success" ] || \
              [ "${{ needs.build.result }}" != "success" ] || \
-             [ "${{ needs.installer.result }}" != "success" ]; then
+             [ "${{ needs.installer.result }}" != "success" ] || \
+             [ "${{ needs.readme.result }}" != "success" ]; then
             echo "One or more critical CI jobs failed"
             exit 1
           fi
