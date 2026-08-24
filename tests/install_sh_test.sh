@@ -14,6 +14,11 @@ FAILURES=0
 # shellcheck source=/dev/null
 JOSHIFY_INSTALL_LIB_ONLY=1 . "$SCRIPT_DIR/install.sh"
 
+# install.sh sets -euo pipefail, which leaks into this shell when sourced.
+# These tests deliberately call functions that return non-zero, so turn -e
+# back off; assertions check return codes explicitly.
+set +e
+
 ok()   { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
 
@@ -114,50 +119,176 @@ else
     ok "fails instead of running when elevation is unavailable"
 fi
 
-echo "package manager selection"
+echo "release_asset_name"
 # ---------------------------------------------------------------------------
-# Runs install.sh for real against a stub PATH and reports which manager it
-# chose. Regression guard: on Linux the native manager must win over linuxbrew,
-# which does not provide the -dev packages the build needs.
-chosen_pkg_mgr() { # uname_output, available commands...
-    local uname_out="$1"; shift
-    local stub; stub=$(mktemp -d)
-
-    printf '#!/bin/sh\necho "%s"\n' "$uname_out" > "$stub/uname"
-    printf '#!/bin/sh\n[ "$1" = "--version" ] && echo "cargo 1.0.0"\nexit 0\n' > "$stub/cargo"
-    printf '#!/bin/sh\nexit 0\n' > "$stub/git"
-    for c in "$@"; do printf '#!/bin/sh\nexit 0\n' > "$stub/$c"; done
-    chmod +x "$stub"/*
-
-    # Real coreutils the installer needs, but no sudo and no package managers
-    # beyond the ones requested.
-    for c in bash mktemp rm chmod id printf find dirname; do
-        [ -e "$stub/$c" ] || ln -sf "$(command -v "$c")" "$stub/$c" 2>/dev/null
-    done
-
-    env -i PATH="$stub" HOME="$WORK/pkgmgr-home" "$stub/bash" "$SCRIPT_DIR/install.sh" \
-        < /dev/null 2>&1 | grep -oE 'Detected (Debian/Ubuntu|Fedora/RHEL|Arch|Homebrew)' | head -1
-    rm -rf "$stub"
+# Note: release_asset_name declares `local os arch`, and bash uses dynamic
+# scoping — so the stub must NOT use those names or it reads the callee's
+# empty locals instead of ours.
+asset_for() { # os arch -> the release asset name for that platform
+    _TEST_OS="$1"; _TEST_ARCH="$2"
+    uname() { case "${1:-}" in -s) echo "$_TEST_OS" ;; -m) echo "$_TEST_ARCH" ;; esac; }
+    release_asset_name
+    unset -f uname
 }
-mkdir -p "$WORK/pkgmgr-home"
 
-assert_eq "Detected Debian/Ubuntu" "$(chosen_pkg_mgr Linux sudo apt-get brew)" \
-    "prefers apt over linuxbrew on Linux"
-assert_eq "Detected Fedora/RHEL" "$(chosen_pkg_mgr Linux sudo dnf brew)" \
-    "prefers dnf over linuxbrew on Linux"
-assert_eq "Detected Arch" "$(chosen_pkg_mgr Linux sudo pacman brew)" \
-    "prefers pacman over linuxbrew on Linux"
-assert_eq "Detected Homebrew" "$(chosen_pkg_mgr Darwin brew)" \
-    "uses Homebrew on macOS"
-assert_eq "Detected Homebrew" "$(chosen_pkg_mgr Linux brew)" \
-    "falls back to brew on Linux when no native manager exists"
+assert_eq "joshify-linux-x86_64.tar.gz" "$(asset_for Linux x86_64)"  "maps Linux/x86_64 to the linux asset"
+assert_eq "joshify-linux-x86_64.tar.gz" "$(asset_for Linux amd64)"   "accepts amd64 as an alias of x86_64"
+assert_eq "joshify-macos-aarch64.tar.gz" "$(asset_for Darwin arm64)" "maps Darwin/arm64 to the macOS asset"
+assert_eq "" "$(asset_for Linux aarch64)"  "has no prebuilt binary for Linux/aarch64 (issue #33)"
+assert_eq "" "$(asset_for Darwin x86_64)"  "has no prebuilt binary for Intel macOS (issue #33)"
+assert_eq "" "$(asset_for FreeBSD x86_64)" "has no prebuilt binary for unsupported platforms"
+
+echo "normalize_version"
+# ---------------------------------------------------------------------------
+assert_eq "0.7.2" "$(normalize_version v0.7.2)" "strips a leading v from a tag"
+assert_eq "0.7.2" "$(normalize_version 0.7.2)"  "leaves a bare version alone"
+
+echo "installed_version"
+# ---------------------------------------------------------------------------
+VBIN="$WORK/bin"; mkdir -p "$VBIN"
+printf '#!/bin/sh\necho "Joshify 0.7.2"\necho "A beautiful terminal Spotify client built with Rust."\n' > "$VBIN/joshify"
+chmod +x "$VBIN/joshify"
+assert_eq "0.7.2" "$(PATH="$VBIN:$PATH" installed_version joshify)" "parses the version out of --version output"
+assert_eq "" "$(installed_version joshify-definitely-not-installed)" "reports nothing when not installed"
+
+printf '#!/bin/sh\nexit 1\n' > "$VBIN/joshify-broken"; chmod +x "$VBIN/joshify-broken"
+assert_eq "" "$(PATH="$VBIN:$PATH" installed_version joshify-broken)" "reports nothing when the binary fails to run"
+
+echo "resolve_install_dir"
+# ---------------------------------------------------------------------------
+assert_eq "/opt/custom" "$(JOSHIFY_INSTALL_DIR=/opt/custom resolve_install_dir)" "honours an explicit JOSHIFY_INSTALL_DIR"
+assert_eq "$VBIN" "$(PATH="$VBIN:$PATH" resolve_install_dir)" "replaces an existing install rather than shadowing it"
+
+FAKE2="$WORK/home2"; mkdir -p "$FAKE2/.cargo/bin"
+assert_eq "$FAKE2/.cargo/bin" "$(HOME="$FAKE2" PATH=/usr/bin:/bin resolve_install_dir)" "prefers ~/.cargo/bin when it exists"
+FAKE3="$WORK/home3"; mkdir -p "$FAKE3"
+assert_eq "$FAKE3/.local/bin" "$(HOME="$FAKE3" PATH=/usr/bin:/bin resolve_install_dir)" "falls back to ~/.local/bin"
+
+echo "verify_checksum"
+# ---------------------------------------------------------------------------
+PAYLOAD="$WORK/joshify-linux-x86_64.tar.gz"
+echo "pretend tarball" > "$PAYLOAD"
+GOOD=$(sha256_of "$PAYLOAD")
+SUMS="$WORK/SHA256SUMS"
+
+printf '%s  joshify-linux-x86_64.tar.gz\n' "$GOOD" > "$SUMS"
+if verify_checksum "$PAYLOAD" "$SUMS" joshify-linux-x86_64.tar.gz; then
+    ok "accepts a matching checksum"
+else
+    fail "accepts a matching checksum"
+fi
+
+printf '%s  joshify-linux-x86_64.tar.gz\n' "0000000000000000000000000000000000000000000000000000000000000000" > "$SUMS"
+verify_checksum "$PAYLOAD" "$SUMS" joshify-linux-x86_64.tar.gz; RC=$?
+assert_eq "1" "$RC" "rejects a mismatched checksum with rc=1 (fatal)"
+
+: > "$SUMS"
+verify_checksum "$PAYLOAD" "$SUMS" joshify-linux-x86_64.tar.gz; RC=$?
+assert_eq "2" "$RC" "reports rc=2 when no checksums are published"
+
+printf '%s  some-other-asset.tar.gz\n' "$GOOD" > "$SUMS"
+verify_checksum "$PAYLOAD" "$SUMS" joshify-linux-x86_64.tar.gz; RC=$?
+assert_eq "2" "$RC" "reports rc=2 when this asset is absent from SHA256SUMS"
+
+echo "install_from_release"
+# ---------------------------------------------------------------------------
+# Exercises the real function end to end against a stubbed download: builds a
+# release tarball + SHA256SUMS locally and serves them through a curl stub.
+REL="$WORK/fake-release"; mkdir -p "$REL"
+printf '#!/bin/sh\necho "Joshify 9.9.9"\n' > "$REL/joshify-linux-x86_64"
+chmod +x "$REL/joshify-linux-x86_64"
+tar -czf "$REL/joshify-linux-x86_64.tar.gz" -C "$REL" joshify-linux-x86_64
+( cd "$REL" && sha256_of joshify-linux-x86_64.tar.gz \
+    | awk '{print $1"  joshify-linux-x86_64.tar.gz"}' > SHA256SUMS )
+
+# curl stub: resolve the requested URL to a file in $REL by basename.
+curl() {
+    local out="" url=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -o) out="$2"; shift 2 ;;
+            http*) url="$1"; shift ;;
+            *) shift ;;
+        esac
+    done
+    [ -n "$url" ] || return 1
+    local src
+    src="$REL/$(basename "$url")"
+    [ -f "$src" ] || return 22          # curl's exit code for a 404 with -f
+    cp "$src" "$out"
+}
+_TEST_OS=Linux; _TEST_ARCH=x86_64
+uname() { case "${1:-}" in -s) echo "$_TEST_OS" ;; -m) echo "$_TEST_ARCH" ;; esac; }
+
+# shellcheck disable=SC2034  # both are read by install_from_release
+TARGET_TAG="v9.9.9"
+# shellcheck disable=SC2034
+SUDO_MODE="unavailable"
+WORK_DIR="$WORK/dl"; mkdir -p "$WORK_DIR"
+INSTALL_DIR="$WORK/target-bin"
+
+if install_from_release > /dev/null 2>&1; then
+    ok "installs a verified release binary"
+else
+    fail "installs a verified release binary"
+fi
+assert_eq "0.7.2" "$(printf '%s' "$(installed_version "$VBIN/joshify")")" "leaves other installs alone"
+if [ -x "$INSTALL_DIR/joshify" ]; then ok "installed binary is executable"; else fail "installed binary is executable"; fi
+assert_eq "9.9.9" "$("$INSTALL_DIR/joshify" --version | awk '{print $NF}')" "installed binary is the downloaded one"
+
+# Re-running must overwrite cleanly and leave no staging files behind.
+rm -rf "${WORK_DIR:?}"/*
+install_from_release > /dev/null 2>&1
+if [ -z "$(find "$INSTALL_DIR" -name '.joshify.new.*' -print -quit)" ]; then
+    ok "leaves no staging files behind (idempotent re-run)"
+else
+    fail "leaves no staging files behind (idempotent re-run)"
+fi
+
+# A corrupted tarball must be refused outright, never installed.
+printf 'corrupted\n' > "$REL/joshify-linux-x86_64.tar.gz"
+rm -rf "${WORK_DIR:?}"/*
+INSTALL_DIR="$WORK/target-bad"
+if ( install_from_release ) > /dev/null 2>&1; then
+    fail "refuses a tarball whose checksum does not match"
+else
+    ok "refuses a tarball whose checksum does not match"
+fi
+if [ ! -e "$INSTALL_DIR/joshify" ]; then
+    ok "installs nothing when the checksum fails"
+else
+    fail "installs nothing when the checksum fails"
+fi
+
+# No prebuilt binary for the platform -> caller falls back to source.
+_TEST_ARCH=aarch64
+if install_from_release > /dev/null 2>&1; then
+    fail "signals fallback when no asset exists for the platform"
+else
+    ok "signals fallback when no asset exists for the platform"
+fi
+unset -f curl uname
 
 echo "install.sh guards"
 # ---------------------------------------------------------------------------
-if grep -q 'DEBIAN_FRONTEND=noninteractive' "$SCRIPT_DIR/install.sh"; then
-    ok "apt install is non-interactive"
+if [ "$(grep -c 'DEBIAN_FRONTEND=noninteractive' "$SCRIPT_DIR/install.sh")" -ge 2 ]; then
+    ok "every apt install path is non-interactive"
 else
-    fail "apt install is non-interactive"
+    fail "every apt install path is non-interactive"
+fi
+
+# Regression guard: the native package manager must win over linuxbrew on
+# Linux, which does not provide the -dev packages the build needs.
+if grep -A6 'uname -s.*Darwin' "$SCRIPT_DIR/install.sh" | grep -q 'apt-get'; then
+    ok "Linux prefers the native package manager over linuxbrew"
+else
+    fail "Linux prefers the native package manager over linuxbrew"
+fi
+
+if grep -q 'JOSHIFY_INSTALL_LIB_ONLY' "$SCRIPT_DIR/install.sh"; then
+    ok "install.sh can be sourced without running"
+else
+    fail "install.sh can be sourced without running"
 fi
 
 echo ""

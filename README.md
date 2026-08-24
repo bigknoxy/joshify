@@ -75,12 +75,33 @@
 curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
 ```
 
+The installer prefers the **prebuilt release binary** for your platform and
+only builds from source when there is no matching binary, the download cannot
+be verified, or the binary will not run. Re-running it is safe: if the target
+version is already installed it exits without doing any work.
+
+Prebuilt binaries exist for **Linux x86_64** and **macOS (Apple Silicon)**.
+Everything else builds from source automatically — see
+[#33](https://github.com/bigknoxy/joshify/issues/33).
+
 #### Installer environment variables
 
 | Variable | Effect |
 | --- | --- |
-| `TMPDIR` | Preferred scratch directory. Respected if binaries can be executed from it; otherwise the installer falls back to `/tmp`, then `~/.cache/joshify/tmp`. |
+| `JOSHIFY_VERSION` | Install a specific tag (e.g. `v0.7.2`) instead of the latest release. |
+| `JOSHIFY_INSTALL_DIR` | Where to put the binary. Defaults to the directory of an existing `joshify`, else `~/.cargo/bin` if present, else `~/.local/bin`. |
+| `JOSHIFY_FORCE=1` | Reinstall even when the target version is already installed. |
+| `JOSHIFY_BUILD_FROM_SOURCE=1` | Skip the prebuilt binary and always compile. |
 | `JOSHIFY_SKIP_DEPS=1` | Skip the system dependency step and just print the packages to install yourself. |
+| `JOSHIFY_ALLOW_UNVERIFIED=1` | Accept a release that publishes no `SHA256SUMS` (releases before v0.7.3). |
+| `TMPDIR` | Preferred scratch directory. Respected if binaries can be executed from it; otherwise the installer falls back to `/tmp`, then `~/.cache/joshify/tmp`. |
+
+#### Download verification
+
+Every release publishes a `SHA256SUMS` file. The installer downloads it,
+verifies the tarball, and **refuses to install on a mismatch**. If a release
+has no checksums it declines the binary and builds from source instead, unless
+you set `JOSHIFY_ALLOW_UNVERIFIED=1`.
 
 #### Running without a terminal
 
