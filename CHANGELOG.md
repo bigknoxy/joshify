@@ -1,3 +1,18 @@
+## [0.7.1](https://github.com/bigknoxy/joshify/compare/v0.7.0...v0.7.1) (2026-08-24)
+
+### Bug Fixes
+
+- **Installer on noexec /tmp**: `install.sh` now probes whether binaries can actually be executed from the temp directory and relocates to `/tmp` or `~/.cache/joshify/tmp` when they cannot. Fixes `rustup-init` failing with "Cannot execute ... (Is /tmp mounted noexec?)" on WSL2 and hardened Linux. A pre-set, working `TMPDIR` is respected. ([#37](https://github.com/bigknoxy/joshify/issues/37))
+- **Installer without a TTY**: `sudo` credentials are now primed up front through `/dev/tty` (which works under `curl | bash`, where stdin is the script) instead of failing after the slow Rust install. With no TTY and no passwordless `sudo`, the dependency step is skipped with the exact packages to install by hand rather than aborting the run.
+- **Installer package manager selection**: the native package manager now wins over linuxbrew on Linux, so hosts with Homebrew installed still get `libasound2-dev`, `libssl-dev`, and `build-essential`.
+
+### Technical Details
+
+- New `JOSHIFY_SKIP_DEPS=1` env var to skip the system dependency step entirely; `apt` runs under `DEBIAN_FRONTEND=noninteractive`
+- Installer temp directory is now cleaned up via an `EXIT` trap instead of a trailing `rm` that a mid-script failure would skip; the clone is shallow
+- Clear error if `cargo` is still missing after the rustup install
+- New `tests/install_sh_test.sh` (22 assertions) and a CI "Installer Script" job running `shellcheck` plus those tests, wired into the `ci-success` gate
+
 ## [0.5.0](https://github.com/bigknoxy/joshify/compare/v0.4.0...v0.5.0) (2026-05-04)
 
 ### Bug Fixes
