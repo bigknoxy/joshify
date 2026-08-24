@@ -1,3 +1,17 @@
+## [0.7.2](https://github.com/bigknoxy/joshify/compare/v0.7.1...v0.7.2) (2026-08-24)
+
+### Bug Fixes
+
+- **Broken demo image in README**: the Demo section embedded `assets/demo.gif`, a file that is never committed — the VHS pipeline has never successfully produced it. It now uses `screenshots/reference/demo.gif`, which is in the repo, and the duplicate embed of the same GIF below it is removed.
+- **Visual Tests badge stuck on "failing"**: the `update-readme-assets` job hard-failed on every run because `download-artifact` demanded a demo-GIF artifact that `upload-artifact` never created (`if-no-files-found: warn`). The red badge reported a missing optional GIF, not a failing test. The download is now tolerant of a missing artifact and logs which case occurred.
+
+### Continuous Integration
+
+- Replaced the dead `update-docs` job, which sed-replaced badge patterns that no longer exist in the README, with a `verify-badges` job that checks the badges resolve and that the release badge has caught up to the new tag
+- New `scripts/check-badges.sh` verifies every shields.io badge and every local file the README references; runs on every pull request and at release time
+- Security audit now runs `cargo audit` directly instead of `rustsec/audit-check`, which still targets the deprecated Node 20 and whose v2 failed the check on advisories despite the job being advisory-only ([#40](https://github.com/bigknoxy/joshify/issues/40) tracks the advisories themselves)
+- Bumped every action off the deprecated Node 20 runtime: `checkout` v4→v7, `upload-artifact` v4→v7, `download-artifact` v4→v8, `create-pull-request` v6→v8, `action-gh-release` v2→v3, plus the Pages actions
+
 ## [0.7.1](https://github.com/bigknoxy/joshify/compare/v0.7.0...v0.7.1) (2026-08-24)
 
 ### Bug Fixes
