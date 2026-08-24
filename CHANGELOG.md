@@ -1,3 +1,22 @@
+## [0.7.3](https://github.com/bigknoxy/joshify/compare/v0.7.2...v0.7.3) (2026-08-24)
+
+### Features
+
+- **Installer uses the prebuilt release binary**: `install.sh` previously only knew how to build from source, so a one-line install on Linux x86_64 or Apple Silicon downloaded the Rust toolchain, installed the full `-dev` package set, and compiled 648 crates — for a binary already published on the releases page. It now downloads and verifies the release asset for the platform, and builds from source only when there is no matching binary, the download cannot be verified, or the binary will not run.
+- **Verified downloads**: releases now publish a `SHA256SUMS` file. The installer verifies the tarball against it and refuses to install on a mismatch. A release with no checksums falls back to a source build unless `JOSHIFY_ALLOW_UNVERIFIED=1`.
+- **Idempotent installs**: re-running the installer when the target version is already present exits without doing any work (`JOSHIFY_FORCE=1` overrides). Installs are written atomically and replace an existing `joshify` in place instead of shadowing it on `PATH`.
+- **New installer options**: `JOSHIFY_VERSION`, `JOSHIFY_INSTALL_DIR`, `JOSHIFY_FORCE`, `JOSHIFY_BUILD_FROM_SOURCE`, `JOSHIFY_ALLOW_UNVERIFIED`.
+
+### Bug Fixes
+
+- **Misleading non-interactive auth advice**: the installer implied `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_ACCESS_TOKEN` each helped on their own. They only bypass the browser when all three are set together; with only the first two the app still opens a browser and blocks on the callback. The footer now says so and mentions `SPOTIFY_REFRESH_TOKEN` / `SPOTIFY_TOKEN_EXPIRES_AT`.
+- **Uninstaller**: now clears every location the installer may have used (`~/.cargo/bin`, `~/.local/bin`, `JOSHIFY_INSTALL_DIR`) and is safe to run repeatedly.
+
+### Technical Details
+
+- The prebuilt binary needs only runtime libraries (`libasound`, `libssl`), not the `-dev` headers, compiler, or Rust toolchain
+- Installer helper tests grew to 49 assertions, including `install_from_release` exercised end to end against a stubbed download covering verified install, idempotent re-run, checksum-mismatch refusal, and platform fallback
+
 ## [0.7.2](https://github.com/bigknoxy/joshify/compare/v0.7.1...v0.7.2) (2026-08-24)
 
 ### Bug Fixes
