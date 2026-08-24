@@ -75,15 +75,22 @@ if [ -n "$EXPECT_RELEASE" ]; then
     if [ -z "$rel_url" ]; then
         fail "README has no github/v/release badge to verify"
     else
-        # shields caches for a few minutes; give it a chance to catch up.
+        # The for-the-badge style uppercases the rendered title ("RELEASE:
+        # V1.2.3"), so compare case-insensitively or this can never match.
+        want=$(printf '%s' "$EXPECT_RELEASE" | tr '[:upper:]' '[:lower:]')
+
+        # shields caches release lookups for several minutes; poll for up to
+        # five before calling it stale.
         got=""
-        for _ in 1 2 3 4 5 6; do
+        for _ in $(seq 1 20); do
             got=$(badge_title "$rel_url")
-            case "$got" in *"$EXPECT_RELEASE"*) break ;; esac
+            case "$(printf '%s' "$got" | tr '[:upper:]' '[:lower:]')" in
+                *"$want"*) break ;;
+            esac
             sleep 15
         done
-        case "$got" in
-            *"$EXPECT_RELEASE"*) ok "release badge shows $EXPECT_RELEASE" ;;
+        case "$(printf '%s' "$got" | tr '[:upper:]' '[:lower:]')" in
+            *"$want"*) ok "release badge shows $EXPECT_RELEASE" ;;
             *) fail "release badge shows '$got', expected $EXPECT_RELEASE" ;;
         esac
     fi
