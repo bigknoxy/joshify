@@ -3836,7 +3836,10 @@ mod tui_init_order_tests {
              directly inside the event loop (issue #46)"
         );
 
-        let suspended = format!("suspend_tui(&mut terminal, joshify::setup::{})", "run_setup");
+        let suspended = format!(
+            "suspend_tui(&mut terminal, joshify::setup::{})",
+            "run_setup"
+        );
         assert!(
             code.contains(&suspended),
             "the settings key should run setup inside suspend_tui()"
