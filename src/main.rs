@@ -3779,6 +3779,18 @@ mod playback_tests {
 
 #[cfg(test)]
 mod tui_init_order_tests {
+    /// The source of this file, with this test module removed.
+    ///
+    /// These tests search main.rs for call-site patterns, and the patterns
+    /// appear verbatim in the assertions below - so without this the module
+    /// matches itself and the tests are meaningless.
+    fn program_source() -> &'static str {
+        include_str!("main.rs")
+            .split("mod tui_init_order_tests")
+            .next()
+            .expect("split always yields at least one part")
+    }
+
     /// The interactive setup prompts use `println!` and dialoguer, which are
     /// unreadable once the terminal is in raw mode on the alternate screen:
     /// `\n` stops implying a carriage return so text staircases, the cursor is
@@ -3789,11 +3801,9 @@ mod tui_init_order_tests {
     /// without a real terminal, so assert it against the source directly.
     #[test]
     fn tui_is_initialized_after_interactive_setup() {
-        let src = include_str!("main.rs");
-
         // Scope to run_with_args so the helper's own init/restore, which is
         // defined earlier in the file, does not confuse the comparison.
-        let body = src
+        let body = program_source()
             .split_once("async fn run_with_args")
             .expect("run_with_args should exist")
             .1;
@@ -3817,14 +3827,18 @@ mod tui_init_order_tests {
     /// TUI still owns the terminal.
     #[test]
     fn in_app_setup_suspends_the_tui() {
-        let src = include_str!("main.rs");
+        let code = program_source();
+
+        let direct_call = format!("=> match joshify::setup::{}()", "run_setup");
         assert!(
-            !src.contains("Char('c') => match joshify::setup::run_setup()"),
+            !code.contains(&direct_call),
             "the settings key must call run_setup() through suspend_tui(), not \
              directly inside the event loop (issue #46)"
         );
+
+        let suspended = format!("suspend_tui(&mut terminal, joshify::setup::{})", "run_setup");
         assert!(
-            src.contains("suspend_tui(&mut terminal, joshify::setup::run_setup)"),
+            code.contains(&suspended),
             "the settings key should run setup inside suspend_tui()"
         );
     }
