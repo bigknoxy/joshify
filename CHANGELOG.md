@@ -1,3 +1,14 @@
+## [0.7.4](https://github.com/bigknoxy/joshify/compare/v0.7.3...v0.7.4) (2026-08-24)
+
+### Bug Fixes
+
+- **Unreadable first-run setup screen** ([#46](https://github.com/bigknoxy/joshify/issues/46)): the terminal was put into raw mode and the alternate screen, with mouse capture on and the cursor hidden, *before* the interactive credential prompts ran. Those prompts print with `println!` and read with `dialoguer`, so in raw mode `\n` stopped implying a carriage return and every line staircased across the screen, the hidden cursor meant you typed blind, mouse movement injected escape sequences into the input, and the whole thing was drawn on the alternate screen that was then cleared. Terminal initialization now happens after the auth block.
+- **In-app settings key**: pressing `c` called the same interactive setup directly from the event loop while the TUI still owned the terminal, with the same result. It now runs inside a new `suspend_tui()` helper that disables mouse capture, restores the cursor, leaves the alternate screen, and re-enters the TUI afterwards. Failures to suspend are reported in the status bar instead of being discarded.
+
+### Technical Details
+
+- Two source-order tests guard both call sites; this ordering is easy to reintroduce while editing `run_with_args` and cannot be checked behaviourally without a real terminal
+
 ## [0.7.3](https://github.com/bigknoxy/joshify/compare/v0.7.2...v0.7.3) (2026-08-24)
 
 ### Features
