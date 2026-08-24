@@ -18,20 +18,36 @@ BIN_NAME="joshify"
 CONFIG_DIR="$HOME/.config/joshify"
 CACHE_DIR="$HOME/.cache/joshify"
 
-# Find and remove binary
-if command -v "$BIN_NAME" &> /dev/null; then
-    BIN_PATH=$(which "$BIN_NAME")
-    echo "Found binary at: $BIN_PATH"
+# Remove every copy we might have installed. install.sh can place the binary in
+# ~/.cargo/bin, ~/.local/bin, or a JOSHIFY_INSTALL_DIR, and a cargo-installed
+# copy needs cargo uninstall to clear its registry entry. Removing all of them
+# keeps repeated runs idempotent.
+REMOVED=0
+for DIR in "${JOSHIFY_INSTALL_DIR:-}" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+    [ -n "$DIR" ] || continue
+    [ -e "$DIR/$BIN_NAME" ] || continue
 
-    if [[ "$BIN_PATH" == *"/.cargo/bin/"* ]]; then
-        echo -e "${YELLOW}Removing cargo-installed binary...${NC}"
-        cargo uninstall "$BIN_NAME"
+    if [ "$DIR" = "$HOME/.cargo/bin" ] && command -v cargo &> /dev/null \
+       && cargo install --list 2>/dev/null | grep -q "^$BIN_NAME "; then
+        echo -e "${YELLOW}Removing cargo-installed binary from $DIR...${NC}"
+        cargo uninstall "$BIN_NAME" > /dev/null 2>&1 || rm -f "$DIR/$BIN_NAME"
     else
-        echo -e "${YELLOW}Removing system binary...${NC}"
-        sudo rm -f "$BIN_PATH"
+        echo -e "${YELLOW}Removing $DIR/$BIN_NAME...${NC}"
+        rm -f "$DIR/$BIN_NAME"
     fi
-else
-    echo "Binary not found in PATH"
+    REMOVED=$((REMOVED + 1))
+done
+
+# Anything left on PATH was installed some other way.
+if command -v "$BIN_NAME" &> /dev/null; then
+    BIN_PATH=$(command -v "$BIN_NAME")
+    echo -e "${YELLOW}Removing $BIN_PATH...${NC}"
+    rm -f "$BIN_PATH" 2>/dev/null || sudo rm -f "$BIN_PATH"
+    REMOVED=$((REMOVED + 1))
+fi
+
+if [ "$REMOVED" -eq 0 ]; then
+    echo "No installed binary found - nothing to remove"
 fi
 
 # Remove config

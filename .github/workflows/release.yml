@@ -168,13 +168,23 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      # install.sh verifies downloads against this file and refuses to install
+      # a tarball whose hash does not match.
+      - name: Generate SHA256SUMS
+        working-directory: artifacts
+        run: |
+          sha256sum ./*.tar.gz | sed 's| \./| |' > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           name: Joshify v${{ needs.changelog.outputs.version }}
           body: ${{ needs.changelog.outputs.release_notes }}
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -193,7 +203,9 @@ jobs:
             **Version:** ${{ needs.changelog.outputs.version }}
 
             These binaries are built from the latest commit on main and may contain unreleased features or fixes.
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
           draft: false
           prerelease: true
         env:
