@@ -384,6 +384,30 @@ async fn main() -> Result<()> {
     result
 }
 
+/// Hand the terminal back to the shell, run `f`, then restore the TUI.
+///
+/// Interactive prompts (dialoguer, `println!`) are unusable while raw mode and
+/// the alternate screen are active: `\n` does not carriage-return, the cursor
+/// is hidden, and mouse capture injects escape sequences into stdin. Anything
+/// that talks to the user over plain stdio must run inside this.
+fn suspend_tui<T, F>(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, f: F) -> Result<T>
+where
+    F: FnOnce() -> T,
+{
+    crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)?;
+    crossterm::execute!(io::stdout(), crossterm::cursor::Show)?;
+    ratatui::restore();
+
+    let result = f();
+
+    ratatui::init();
+    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
+    crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
+    terminal.clear()?;
+
+    Ok(result)
+}
+
 async fn run_with_args(args: CliArgs) -> Result<()> {
     // Load config from CLI args (args take precedence over env vars and config file)
     let config = OAuthConfig::from_args(&args);
@@ -395,15 +419,6 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             || std::env::var("SPOTIFY_REFRESH_TOKEN").is_ok()
             || args.access_token.is_some()
             || args.refresh_token.is_some());
-
-    // Initialize terminal
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
-    ratatui::init();
-
-    // Enable mouse capture and hide cursor
-    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
-    crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
 
     let mut app = App::new();
 
@@ -442,6 +457,20 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             }
         }
     }
+
+    // Initialize the terminal only now that any interactive setup is done.
+    // setup::ensure_configured() and run_oauth_flow() above print with
+    // println! and read with dialoguer; doing this first would put them in raw
+    // mode on the alternate screen, where \n does not carriage-return (text
+    // staircases), the cursor is hidden (you type blind), and mouse capture
+    // injects escape sequences into the prompt. See issue #46.
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+    ratatui::init();
+
+    // Enable mouse capture and hide cursor
+    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
+    crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
 
     // Clear any leftover output and force redraw
     terminal.clear()?;
@@ -2943,16 +2972,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                         }
 
-                        // Settings
-                        crossterm::event::KeyCode::Char('c') => match joshify::setup::run_setup() {
-                            Ok(_) => {
-                                app.status_message =
-                                    Some("Config updated - restart app to apply".to_string());
-                            }
-                            Err(_) => {
-                                app.status_message = Some("Setup cancelled".to_string());
-                            }
-                        },
+                        // Settings. run_setup() prints with println! and reads
+                        // with dialoguer, so the TUI has to give the terminal
+                        // back for the duration or the prompts are unreadable
+                        // (issue #46).
+                        crossterm::event::KeyCode::Char('c') => {
+                            let result = suspend_tui(&mut terminal, joshify::setup::run_setup);
+                            app.status_message = Some(match result {
+                                Ok(Ok(_)) => "Config updated - restart app to apply".to_string(),
+                                Ok(Err(_)) => "Setup cancelled".to_string(),
+                                Err(e) => format!("Could not open setup: {e}"),
+                            });
+                        }
 
                         // Search - '/' key starts search overlay
                         crossterm::event::KeyCode::Char('/') => {
@@ -3743,5 +3774,75 @@ mod playback_tests {
         // Current position should be 5, 5 tracks remaining
         assert_eq!(queue.context_position(), 5);
         assert_eq!(queue.remaining_context_tracks(), 5);
+    }
+}
+
+#[cfg(test)]
+mod tui_init_order_tests {
+    /// The source of this file, with this test module removed.
+    ///
+    /// These tests search main.rs for call-site patterns, and the patterns
+    /// appear verbatim in the assertions below - so without this the module
+    /// matches itself and the tests are meaningless.
+    fn program_source() -> &'static str {
+        include_str!("main.rs")
+            .split("mod tui_init_order_tests")
+            .next()
+            .expect("split always yields at least one part")
+    }
+
+    /// The interactive setup prompts use `println!` and dialoguer, which are
+    /// unreadable once the terminal is in raw mode on the alternate screen:
+    /// `\n` stops implying a carriage return so text staircases, the cursor is
+    /// hidden, and mouse capture injects escape sequences into stdin.
+    ///
+    /// This was issue #46. Ordering is easy to reintroduce by accident when
+    /// editing `run_with_args`, and it cannot be caught by a behavioural test
+    /// without a real terminal, so assert it against the source directly.
+    #[test]
+    fn tui_is_initialized_after_interactive_setup() {
+        // Scope to run_with_args so the helper's own init/restore, which is
+        // defined earlier in the file, does not confuse the comparison.
+        let body = program_source()
+            .split_once("async fn run_with_args")
+            .expect("run_with_args should exist")
+            .1;
+
+        let setup = body
+            .find("setup::ensure_configured")
+            .expect("run_with_args should call ensure_configured");
+        let init = body
+            .find("ratatui::init()")
+            .expect("run_with_args should initialize the terminal");
+
+        assert!(
+            setup < init,
+            "ratatui::init() must come after setup::ensure_configured() in \
+             run_with_args, or the first-run setup prompts render in raw mode \
+             on the alternate screen and are unusable (issue #46)"
+        );
+    }
+
+    /// The in-app settings key must not drop the user into dialoguer while the
+    /// TUI still owns the terminal.
+    #[test]
+    fn in_app_setup_suspends_the_tui() {
+        let code = program_source();
+
+        let direct_call = format!("=> match joshify::setup::{}()", "run_setup");
+        assert!(
+            !code.contains(&direct_call),
+            "the settings key must call run_setup() through suspend_tui(), not \
+             directly inside the event loop (issue #46)"
+        );
+
+        let suspended = format!(
+            "suspend_tui(&mut terminal, joshify::setup::{})",
+            "run_setup"
+        );
+        assert!(
+            code.contains(&suspended),
+            "the settings key should run setup inside suspend_tui()"
+        );
     }
 }
