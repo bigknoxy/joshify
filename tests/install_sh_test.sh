@@ -114,6 +114,44 @@ else
     ok "fails instead of running when elevation is unavailable"
 fi
 
+echo "package manager selection"
+# ---------------------------------------------------------------------------
+# Runs install.sh for real against a stub PATH and reports which manager it
+# chose. Regression guard: on Linux the native manager must win over linuxbrew,
+# which does not provide the -dev packages the build needs.
+chosen_pkg_mgr() { # uname_output, available commands...
+    local uname_out="$1"; shift
+    local stub; stub=$(mktemp -d)
+
+    printf '#!/bin/sh\necho "%s"\n' "$uname_out" > "$stub/uname"
+    printf '#!/bin/sh\n[ "$1" = "--version" ] && echo "cargo 1.0.0"\nexit 0\n' > "$stub/cargo"
+    printf '#!/bin/sh\nexit 0\n' > "$stub/git"
+    for c in "$@"; do printf '#!/bin/sh\nexit 0\n' > "$stub/$c"; done
+    chmod +x "$stub"/*
+
+    # Real coreutils the installer needs, but no sudo and no package managers
+    # beyond the ones requested.
+    for c in bash mktemp rm chmod id printf find dirname; do
+        [ -e "$stub/$c" ] || ln -sf "$(command -v "$c")" "$stub/$c" 2>/dev/null
+    done
+
+    env -i PATH="$stub" HOME="$WORK/pkgmgr-home" "$stub/bash" "$SCRIPT_DIR/install.sh" \
+        < /dev/null 2>&1 | grep -oE 'Detected (Debian/Ubuntu|Fedora/RHEL|Arch|Homebrew)' | head -1
+    rm -rf "$stub"
+}
+mkdir -p "$WORK/pkgmgr-home"
+
+assert_eq "Detected Debian/Ubuntu" "$(chosen_pkg_mgr Linux sudo apt-get brew)" \
+    "prefers apt over linuxbrew on Linux"
+assert_eq "Detected Fedora/RHEL" "$(chosen_pkg_mgr Linux sudo dnf brew)" \
+    "prefers dnf over linuxbrew on Linux"
+assert_eq "Detected Arch" "$(chosen_pkg_mgr Linux sudo pacman brew)" \
+    "prefers pacman over linuxbrew on Linux"
+assert_eq "Detected Homebrew" "$(chosen_pkg_mgr Darwin brew)" \
+    "uses Homebrew on macOS"
+assert_eq "Detected Homebrew" "$(chosen_pkg_mgr Linux brew)" \
+    "falls back to brew on Linux when no native manager exists"
+
 echo "install.sh guards"
 # ---------------------------------------------------------------------------
 if grep -q 'DEBIAN_FRONTEND=noninteractive' "$SCRIPT_DIR/install.sh"; then

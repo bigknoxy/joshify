@@ -131,10 +131,31 @@ else
     echo ""
 fi
 
+# Pick the package manager. On macOS that is Homebrew; on Linux the native
+# manager wins even when linuxbrew is present, because brew alone does not
+# provide the -dev packages the build needs.
+PKG_MGR=""
+if [ "$(uname -s)" = "Darwin" ]; then
+    if command -v brew > /dev/null 2>&1; then PKG_MGR="brew"; fi
+elif command -v apt-get > /dev/null 2>&1; then
+    PKG_MGR="apt"
+elif command -v dnf > /dev/null 2>&1; then
+    PKG_MGR="dnf"
+elif command -v pacman > /dev/null 2>&1; then
+    PKG_MGR="pacman"
+elif command -v brew > /dev/null 2>&1; then
+    PKG_MGR="brew"
+fi
+
 # Work out how (or whether) we can elevate, and prime the credential cache now
-# rather than after the slow Rust install.
+# rather than after the slow Rust install. brew never needs sudo.
 SUDO_MODE=$(detect_sudo_mode)
-if [ "$SUDO_MODE" = "tty" ] && [ -z "${JOSHIFY_SKIP_DEPS:-}" ]; then
+NEEDS_SUDO=no
+if [ -n "$PKG_MGR" ] && [ "$PKG_MGR" != "brew" ] && [ -z "${JOSHIFY_SKIP_DEPS:-}" ]; then
+    NEEDS_SUDO=yes
+fi
+
+if [ "$SUDO_MODE" = "tty" ] && [ "$NEEDS_SUDO" = "yes" ]; then
     echo "🔑 System dependencies need sudo. Authenticating up front..."
     if ! sudo -v < /dev/tty; then
         echo -e "${YELLOW}sudo authentication failed.${NC}"
@@ -162,35 +183,43 @@ echo ""
 
 # Install system dependencies for librespot
 echo "📦 Checking system dependencies..."
+
+# Everything except brew needs elevation.
 if [ -n "${JOSHIFY_SKIP_DEPS:-}" ]; then
     echo -e "${YELLOW}JOSHIFY_SKIP_DEPS is set.${NC}"
     print_manual_deps
-elif command -v brew > /dev/null 2>&1; then
-    # brew never needs sudo
-    echo -e "${YELLOW}Detected Homebrew - installing terminal graphics dependencies...${NC}"
-    # shellcheck disable=SC2086  # intentional word splitting into package args
-    brew install $DEPS_BREW
-elif [ "$SUDO_MODE" = "unavailable" ]; then
+elif [ -z "$PKG_MGR" ]; then
+    echo -e "${YELLOW}Unknown OS - no supported package manager found.${NC}"
+    print_manual_deps
+elif [ "$PKG_MGR" != "brew" ] && [ "$SUDO_MODE" = "unavailable" ]; then
     echo -e "${YELLOW}No TTY and no passwordless sudo available.${NC}"
     print_manual_deps
     echo ""
     echo "   Then re-run with JOSHIFY_SKIP_DEPS=1 to skip this step."
-elif command -v apt-get > /dev/null 2>&1; then
-    echo -e "${YELLOW}Detected Debian/Ubuntu - installing audio dependencies...${NC}"
-    run_privileged apt-get update -qq
-    # shellcheck disable=SC2086
-    run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $DEPS_APT
-elif command -v dnf > /dev/null 2>&1; then
-    echo -e "${YELLOW}Detected Fedora/RHEL - installing audio dependencies...${NC}"
-    # shellcheck disable=SC2086
-    run_privileged dnf install -y $DEPS_DNF
-elif command -v pacman > /dev/null 2>&1; then
-    echo -e "${YELLOW}Detected Arch - installing audio dependencies...${NC}"
-    # shellcheck disable=SC2086
-    run_privileged pacman -S --noconfirm $DEPS_PACMAN
 else
-    echo -e "${YELLOW}Unknown OS - you may need to install audio dependencies manually${NC}"
-    print_manual_deps
+    case "$PKG_MGR" in
+        brew)
+            echo -e "${YELLOW}Detected Homebrew - installing terminal graphics dependencies...${NC}"
+            # shellcheck disable=SC2086  # intentional word splitting into package args
+            brew install $DEPS_BREW
+            ;;
+        apt)
+            echo -e "${YELLOW}Detected Debian/Ubuntu - installing audio dependencies...${NC}"
+            run_privileged apt-get update -qq
+            # shellcheck disable=SC2086
+            run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $DEPS_APT
+            ;;
+        dnf)
+            echo -e "${YELLOW}Detected Fedora/RHEL - installing audio dependencies...${NC}"
+            # shellcheck disable=SC2086
+            run_privileged dnf install -y $DEPS_DNF
+            ;;
+        pacman)
+            echo -e "${YELLOW}Detected Arch - installing audio dependencies...${NC}"
+            # shellcheck disable=SC2086
+            run_privileged pacman -S --noconfirm $DEPS_PACMAN
+            ;;
+    esac
 fi
 
 # Clone and install
