@@ -96,16 +96,48 @@ jobs:
       - name: Run install.sh helper tests
         run: bash tests/install_sh_test.sh
 
-  # Security audit (optional, doesn't block CI)
+  # Security audit — advisory only, never blocks CI.
+  #
+  # Runs cargo-audit directly rather than rustsec/audit-check: the action still
+  # targets the deprecated Node 20, and its v2 marks the check failed on any
+  # advisory, which contradicts this job being informational. Findings land in
+  # the job summary and as annotations.
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        run: |
+          set +e
+          cargo audit > audit.txt 2>&1
+          STATUS=$?
+          set -e
+
+          {
+            echo "## cargo audit"
+            echo ""
+            echo '```'
+            cat audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat audit.txt
+
+          if [ "$STATUS" -ne 0 ]; then
+            COUNT=$(grep -cE '^ID:\s+RUSTSEC' audit.txt || true)
+            echo "::warning::cargo audit reported ${COUNT:-unknown} advisory/advisories in dependencies - see the job summary"
+          fi
+
+          # Advisory only: dependency CVEs are tracked separately and must not
+          # gate unrelated changes.
+          exit 0
 
   # Check documentation
   doc:
