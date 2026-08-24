@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -82,7 +82,7 @@ jobs:
           ls -la screenshots/current/ || echo "No screenshots generated"
 
       - name: Upload screenshots
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots-current
           path: screenshots/current/
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload reference screenshots
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots-reference
           path: screenshots/reference/
@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -143,11 +143,17 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 2
           timeout 120 vhs tapes/readme_demo.tape || true
-          # Ensure demo.gif exists
-          ls -la assets/demo.gif || echo "Demo GIF not generated"
+          # The GIF is a best-effort docs nicety: VHS is flaky under Xvfb and a
+          # missing GIF must not turn the Visual Tests badge red. Say clearly
+          # which happened.
+          if [ -f assets/demo.gif ]; then
+            ls -la assets/demo.gif
+          else
+            echo "::warning::VHS did not produce assets/demo.gif; skipping the demo GIF update"
+          fi
 
       - name: Upload demo GIF
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: demo-gif
           path: assets/demo.gif
@@ -163,12 +169,16 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # The artifact only exists when VHS actually produced a GIF. A missing
+      # artifact is an expected outcome, not a failure — without this the job
+      # errored on every run and pinned the README badge to "failing".
       - name: Download demo GIF
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           name: demo-gif
           path: assets/
@@ -184,6 +194,7 @@ jobs:
               echo "changed=false" >> $GITHUB_OUTPUT
             fi
           else
+            echo "::notice::No demo GIF artifact to commit"
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
