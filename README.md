@@ -79,6 +79,26 @@
 curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash
 ```
 
+#### Installer environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `TMPDIR` | Preferred scratch directory. Respected if binaries can be executed from it; otherwise the installer falls back to `/tmp`, then `~/.cache/joshify/tmp`. |
+| `JOSHIFY_SKIP_DEPS=1` | Skip the system dependency step and just print the packages to install yourself. |
+
+#### Running without a terminal
+
+The system libraries need `sudo`. When a terminal is attached, the installer
+authenticates once up front (via `/dev/tty`, so it works under `curl | bash`)
+and reuses the cached credential. When there is no TTY and `sudo` is not
+passwordless — CI, background jobs, some SSH/orchestration setups — it does
+**not** fail: it prints the packages to install and continues to build Joshify.
+Install those packages first, or pre-authorize `sudo`, for a fully unattended run.
+
+Hosts with `/tmp` mounted `noexec` (common on WSL2 and hardened Linux) are
+handled automatically — the installer probes the temp directory and relocates
+if `rustup-init` could not be executed from it.
+
 ### Pre-built Binaries
 
 Download the latest release for Linux x86_64 or macOS (Apple Silicon) from the
@@ -104,8 +124,10 @@ Pre-built release binaries are provided for **Linux x86_64** and **macOS (Apple 
 Other platforms (Intel macOS, ARM Linux, musl) can build from source; broader
 pre-built coverage is tracked in [#33](https://github.com/bigknoxy/joshify/issues/33).
 
-System libraries needed to build from source (installed automatically by `install.sh`):
-- Linux: `libasound2-dev pkg-config libssl-dev libchafa-dev libglib2.0-dev`
+System libraries needed to build from source (installed automatically by
+`install.sh` when it can elevate — see
+[Running without a terminal](#running-without-a-terminal)):
+- Linux: `libasound2-dev pkg-config libssl-dev build-essential libchafa-dev libglib2.0-dev`
 - macOS: `brew install pkgconf chafa`
 
 ## 🎮 Quick Start

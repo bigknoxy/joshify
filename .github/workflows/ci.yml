@@ -85,6 +85,17 @@ jobs:
           path: target/${{ matrix.target }}/release/joshify
           if-no-files-found: error
 
+  # Installer script: shellcheck + helper unit tests
+  installer:
+    name: Installer Script
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck
+        run: shellcheck --severity=warning install.sh uninstall.sh tests/install_sh_test.sh
+      - name: Run install.sh helper tests
+        run: bash tests/install_sh_test.sh
+
   # Security audit (optional, doesn't block CI)
   audit:
     name: Security Audit
@@ -113,7 +124,7 @@ jobs:
   # Summary job for required status checks (only check critical jobs)
   ci-success:
     name: CI Success
-    needs: [fmt, test, build]
+    needs: [fmt, test, build, installer]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -121,7 +132,8 @@ jobs:
         run: |
           if [ "${{ needs.fmt.result }}" != "success" ] || \
              [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.build.result }}" != "success" ]; then
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.installer.result }}" != "success" ]; then
             echo "One or more critical CI jobs failed"
             exit 1
           fi
