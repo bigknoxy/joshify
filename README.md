@@ -54,18 +54,14 @@
 ## 📸 Demo
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Joshify Demo" width="800">
+  <img src="screenshots/reference/demo.gif" alt="Joshify Demo" width="800">
 </p>
 
 <p align="center">
-  <i>Auto-generated with <a href="https://github.com/charmbracelet/vhs">VHS</a> on every push</i>
+  <i>Auto-generated with <a href="https://github.com/charmbracelet/vhs">VHS</a> when the UI changes</i>
 </p>
 
 ### Screenshots
-
-<p align="center">
-  <img src="screenshots/reference/demo.gif" alt="Joshify demo" width="800">
-</p>
 
 | Home View | Library View | Search |
 |-----------|--------------|--------|
