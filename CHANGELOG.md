@@ -1,3 +1,10 @@
+## [0.7.6](https://github.com/bigknoxy/joshify/compare/v0.7.5...v0.7.6) (2026-08-25)
+
+### Bug Fixes
+
+- **`--version` was unreachable, which silently broke the installer** ([#54](https://github.com/bigknoxy/joshify/issues/54)): `--version` was only handled in `src/cli.rs`, which is not reachable from the binary ([#48](https://github.com/bigknoxy/joshify/issues/48)), so the flag fell through and started the TUI instead. `install.sh` uses it in three places, and all three were broken: the prebuilt binary failed its smoke test on every platform and every install silently fell back to a source build, the idempotency check never detected an existing install, and after a source build the final probe returned nothing and the installer reported failure for an install that had succeeded. The binary-first installer added in 0.7.3 had therefore never once taken its fast path.
+- **Installer no longer hides why a prebuilt binary was rejected**: a failed smoke test prints the binary's actual output, a binary that runs but does not report `Joshify <version>` is rejected rather than installed, and an unreadable version at the end is a warning instead of a fatal error.
+
 ## [0.7.5](https://github.com/bigknoxy/joshify/compare/v0.7.4...v0.7.5) (2026-08-25)
 
 ### Features
