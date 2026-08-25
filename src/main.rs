@@ -351,6 +351,12 @@ async fn main() -> Result<()> {
         return run_search_test(args).await;
     }
 
+    // Handle --setup: configure credentials and authorize, then exit without
+    // ever entering the TUI. This is the supported headless path (issue #47).
+    if args.setup {
+        return run_setup_only(args).await;
+    }
+
     // Initialize tracing to file (before terminal init to avoid polluting TUI)
     let log_dir = std::env::var("HOME")
         .map(|h| format!("{}/.cache/joshify", h))
@@ -382,6 +388,66 @@ async fn main() -> Result<()> {
     ratatui::restore();
 
     result
+}
+
+/// Run credential setup and the OAuth flow, then exit.
+///
+/// Deliberately never touches the terminal: no raw mode, no alternate screen.
+/// This is the path for headless boxes, SSH sessions and WSL, where the TUI is
+/// either unwanted or in the way (issue #47).
+async fn run_setup_only(args: CliArgs) -> Result<()> {
+    let config = OAuthConfig::from_args(&args);
+
+    let config = if config.client_id.is_empty() || config.client_secret.is_empty() {
+        joshify::setup::run_setup()?
+    } else {
+        println!("Using credentials from CLI arguments / environment.");
+        config
+    };
+
+    match joshify::setup::run_oauth_flow(&config).await {
+        Ok(true) => println!("Already authorized - existing credentials are still valid."),
+        Ok(false) => println!("Authorization complete."),
+        Err(e) => {
+            eprintln!("Authorization failed: {e}");
+            return Err(e);
+        }
+    }
+
+    if let Ok(config_dir) = joshify::auth::get_config_dir() {
+        println!("\nCredentials are stored in {}.", config_dir.display());
+    }
+    println!("Run 'joshify' to start the app.");
+    Ok(())
+}
+
+/// Explain, in one status-bar line, why local playback is not available.
+///
+/// Running as root is called out separately: it is the single most common cause
+/// under WSL, because a root session has no `PULSE_SERVER` and a different
+/// `$HOME`, so neither the audio bridge nor the OS keyring is reachable.
+fn no_audio_message(probe: &joshify::player::AudioProbe) -> String {
+    let reason = match probe {
+        joshify::player::AudioProbe::Available => return String::new(),
+        joshify::player::AudioProbe::Unavailable(reason) => reason,
+    };
+
+    if is_root() {
+        format!(
+            "Remote playback only - no audio device as root ({reason}) - run as your normal user"
+        )
+    } else {
+        format!("Remote playback only - no audio device ({reason}) - press 'd' to pick a device")
+    }
+}
+
+/// Whether the process is running as root.
+///
+/// `/proc/self/status` would be Linux-only, and macOS is a shipped target.
+fn is_root() -> bool {
+    // SAFETY: geteuid() takes no arguments, cannot fail, and only reads the
+    // calling process's effective uid.
+    unsafe { libc::geteuid() == 0 }
 }
 
 /// Hand the terminal back to the shell, run `f`, then restore the TUI.
@@ -457,6 +523,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             }
         }
     }
+
+    // Probe the audio device before the TUI takes the screen. audio_backend::find
+    // succeeds even with no working audio, so without this the app claims local
+    // playback is active and then plays silence (issue #49). ALSA also writes
+    // diagnostics straight to stderr from C, which would otherwise land in the
+    // middle of a frame.
+    let audio_probe = joshify::player::probe_audio_output();
+    if let joshify::player::AudioProbe::Unavailable(ref reason) = audio_probe {
+        tracing::warn!("Audio output unavailable: {}", reason);
+    }
+    let audio_available = matches!(audio_probe, joshify::player::AudioProbe::Available);
 
     // Initialize the terminal only now that any interactive setup is done.
     // setup::ensure_configured() and run_oauth_flow() above print with
@@ -577,7 +654,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         }
     }
 
-    if let Some(ref token) = access_token {
+    if !audio_available {
+        // Do not build a local player at all. It would install a live sink that
+        // cannot make sound, and app.local_player is consulted in a dozen key
+        // handlers regardless of playback_mode, so playback commands would route
+        // into a dead path. Registering as a Spotify Connect device would also
+        // advertise a device that plays silence.
+        app.playback_mode = PlaybackMode::Remote;
+        app.status_message = Some(no_audio_message(&audio_probe));
+    } else if let Some(ref token) = access_token {
         if let Some((session, player, event_rx)) = init_local_player(token).await {
             // Start Spotify Connect to make joshify appear as a device
             let credentials = Credentials::with_access_token(token.clone());
@@ -3774,6 +3859,94 @@ mod playback_tests {
         // Current position should be 5, 5 tracks remaining
         assert_eq!(queue.context_position(), 5);
         assert_eq!(queue.remaining_context_tracks(), 5);
+    }
+}
+
+#[cfg(test)]
+mod audio_probe_tests {
+    use joshify::player::AudioProbe;
+
+    #[test]
+    fn available_probe_produces_no_message() {
+        assert_eq!(super::no_audio_message(&AudioProbe::Available), "");
+    }
+
+    #[test]
+    fn unavailable_probe_explains_the_reason() {
+        let msg = super::no_audio_message(&AudioProbe::Unavailable("no such device".into()));
+        assert!(
+            msg.contains("Remote playback only"),
+            "should say which mode the user actually got: {msg}"
+        );
+        assert!(
+            msg.contains("no such device"),
+            "should carry the underlying reason: {msg}"
+        );
+    }
+
+    // Serialized: probe_audio_output swaps the process-global panic hook, so
+    // these must not run concurrently with each other.
+    #[test]
+    #[serial_test::serial(panic_hook)]
+    fn probing_restores_the_previous_panic_hook() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        // Install a marker hook, probe, then confirm our marker is still the
+        // one in force - the probe must not leave its muting hook behind, nor
+        // revert to the default and discard ours.
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&fired);
+        let original = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |_| flag.store(true, Ordering::SeqCst)));
+
+        let _ = joshify::player::probe_audio_output();
+
+        let caught = std::panic::catch_unwind(|| panic!("marker"));
+        assert!(caught.is_err(), "the panic should still have been caught");
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "probe_audio_output must restore the hook that was installed before it"
+        );
+
+        std::panic::set_hook(original);
+    }
+
+    #[test]
+    #[serial_test::serial(panic_hook)]
+    fn probing_audio_never_panics() {
+        // CI runners have no sound card, so this exercises the Unavailable
+        // path; on a desktop it exercises Available. Either is fine - the
+        // point is that probing is safe to call unconditionally at startup.
+        let _ = joshify::player::probe_audio_output();
+    }
+}
+
+#[cfg(test)]
+mod headless_setup_tests {
+    /// `--setup` must be handled before anything touches the terminal, or the
+    /// prompts it runs land in raw mode on the alternate screen (issue #47,
+    /// same failure mode as #46).
+    #[test]
+    fn setup_flag_is_handled_before_terminal_init() {
+        let src = include_str!("main.rs");
+        let main_body = src
+            .split_once("async fn main()")
+            .expect("main should exist")
+            .1;
+
+        let setup_branch = main_body
+            .find("run_setup_only")
+            .expect("main should dispatch --setup");
+        let tui_init = main_body
+            .find("ratatui::init()")
+            .expect("main should eventually initialize the TUI");
+
+        assert!(
+            setup_branch < tui_init,
+            "--setup must be dispatched before ratatui::init(), so the setup \
+             prompts run on a normal screen (issue #47)"
+        );
     }
 }
 

@@ -88,13 +88,22 @@ pub async fn run_oauth_flow(config: &OAuthConfig) -> Result<bool> {
     }
 
     println!("\nStep 2: Authorize Joshify with Spotify");
-    println!("  Opening browser...");
 
     let auth_url = get_oauth_url(config)?;
-    open_browser(&auth_url)?;
 
+    // Never hard-fail on the browser: on a headless box, over SSH, or under
+    // WSL there may be no browser to launch, but the user can still open the
+    // URL themselves. Printing it unconditionally is what turns an indefinite
+    // "Waiting for authorization..." into something actionable (issue #47).
+    match open_browser(&auth_url) {
+        Ok(()) => println!("  Opening browser..."),
+        Err(e) => println!("  Could not open a browser automatically: {e}"),
+    }
+
+    println!("\n  If no browser opened, visit this URL to authorize:\n");
+    println!("    {auth_url}\n");
     println!("  Callback listener: {}", config.redirect_uri);
-    println!("  Waiting for authorization...\n");
+    println!("  Waiting for authorization (Ctrl-C to cancel)...\n");
 
     let code = run_oauth_callback_server(config).await?;
 

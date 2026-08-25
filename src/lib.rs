@@ -29,6 +29,8 @@ pub struct CliArgs {
     pub redirect_uri: Option<String>,
     pub help: bool,
     pub test_search: bool,
+    /// Run credential setup and OAuth, then exit without starting the TUI.
+    pub setup: bool,
 }
 
 impl CliArgs {
@@ -87,6 +89,10 @@ impl CliArgs {
                     args.test_search = true;
                     i += 1;
                 }
+                "--setup" => {
+                    args.setup = true;
+                    i += 1;
+                }
                 _ => {
                     i += 1;
                 }
@@ -108,6 +114,7 @@ impl CliArgs {
         println!("    --access-token <TOK>   Spotify Access Token (or SPOTIFY_ACCESS_TOKEN)");
         println!("    --refresh-token <TOK>  Spotify Refresh Token (or SPOTIFY_REFRESH_TOKEN)");
         println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
+        println!("    --setup                Run credential setup and OAuth, then exit");
         println!("    --test-search          Test search API and exit");
         println!("    --help, -h             Show this help message");
         println!();
@@ -116,6 +123,13 @@ impl CliArgs {
         println!("    SPOTIFY_CLIENT_SECRET  Spotify Client Secret");
         println!("    SPOTIFY_ACCESS_TOKEN   Spotify Access Token");
         println!("    SPOTIFY_REFRESH_TOKEN  Spotify Refresh Token");
+        println!("    SPOTIFY_TOKEN_EXPIRES_AT  Token expiry as a Unix timestamp");
+        println!("    SPOTIFY_REDIRECT_URI   OAuth Redirect URI");
+        println!();
+        println!("    SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET and one of");
+        println!("    SPOTIFY_ACCESS_TOKEN / SPOTIFY_REFRESH_TOKEN must ALL be set");
+        println!("    together to skip the browser. Setting only some of them still");
+        println!("    opens a browser and waits for the callback.");
         println!();
         println!("EXAMPLES:");
         println!("    # Interactive mode (default)");

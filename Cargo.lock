@@ -2410,6 +2410,7 @@ dependencies = [
  "hyper-util",
  "image",
  "keyring",
+ "libc",
  "librespot",
  "librespot-oauth",
  "lru 0.18.2",
