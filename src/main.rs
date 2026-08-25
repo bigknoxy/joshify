@@ -350,7 +350,7 @@ async fn main() -> Result<()> {
     // are ordinary CLI tools and must not touch the terminal.
     if let Some(command) = args.command.clone() {
         return match command {
-            joshify::Subcommand::Update(options) => joshify::manage::run_update(&options),
+            joshify::Subcommand::Update(options) => joshify::manage::run_update(&options).await,
             joshify::Subcommand::Uninstall(options) => joshify::manage::run_uninstall(&options),
         };
     }

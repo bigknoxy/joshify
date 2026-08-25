@@ -91,6 +91,14 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
+/// Whether `joshify uninstall` must ask before it deletes anything.
+///
+/// Removing the binary is destructive too, so a plain `uninstall` confirms as
+/// well - not only `--purge`. Only `--yes` skips the prompt.
+pub fn needs_confirmation(options: &UninstallOptions) -> bool {
+    !options.assume_yes
+}
+
 /// Everything `joshify uninstall` would remove, decided without touching disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UninstallPlan {
@@ -123,23 +131,29 @@ pub fn plan_uninstall(
 
 // --- I/O ---------------------------------------------------------------------
 
-fn download(url: &str) -> Result<Vec<u8>> {
-    let response = reqwest::blocking::Client::builder()
+/// Fetch a URL.
+///
+/// Async on purpose: this runs inside the `#[tokio::main]` runtime, and
+/// `reqwest::blocking` panics when constructed there rather than returning an
+/// error, which would abort every update.
+async fn download(url: &str) -> Result<Vec<u8>> {
+    let response = reqwest::Client::builder()
         .user_agent(concat!("joshify/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(300))
         .build()?
         .get(url)
         .send()
+        .await
         .with_context(|| format!("requesting {url}"))?;
 
     if !response.status().is_success() {
         bail!("{url} returned HTTP {}", response.status());
     }
-    Ok(response.bytes()?.to_vec())
+    Ok(response.bytes().await?.to_vec())
 }
 
-fn fetch_text(url: &str) -> Result<String> {
-    Ok(String::from_utf8_lossy(&download(url)?).into_owned())
+async fn fetch_text(url: &str) -> Result<String> {
+    Ok(String::from_utf8_lossy(&download(url).await?).into_owned())
 }
 
 /// Replace `dest` with `bytes` atomically.
@@ -206,7 +220,7 @@ fn extract_binary(tarball: &[u8], asset: &str, into: &Path) -> Result<PathBuf> {
 }
 
 /// Run `joshify update`.
-pub fn run_update(options: &UpdateOptions) -> Result<()> {
+pub async fn run_update(options: &UpdateOptions) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
     let Some(asset) = current_asset_name() else {
@@ -225,6 +239,7 @@ pub fn run_update(options: &UpdateOptions) -> Result<()> {
             let body = fetch_text(&format!(
                 "https://api.github.com/repos/{REPO_SLUG}/releases/latest"
             ))
+            .await
             .context("asking GitHub for the latest release")?;
             parse_latest_tag(&body)
                 .ok_or_else(|| anyhow!("could not read a tag name from the GitHub response"))?
@@ -244,11 +259,12 @@ pub fn run_update(options: &UpdateOptions) -> Result<()> {
 
     let base = format!("https://github.com/{REPO_SLUG}/releases/download/{tag}");
     println!("Downloading {asset}...");
-    let tarball = download(&format!("{base}/{asset}"))?;
+    let tarball = download(&format!("{base}/{asset}")).await?;
 
     // A release without checksums cannot be verified, and an unverified binary
     // is not something to silently install over the running one.
     let sums = fetch_text(&format!("{base}/SHA256SUMS"))
+        .await
         .context("this release publishes no SHA256SUMS, so the download cannot be verified")?;
     let expected = expected_digest(&sums, asset)
         .ok_or_else(|| anyhow!("{asset} is not listed in SHA256SUMS"))?;
@@ -268,7 +284,7 @@ pub fn run_update(options: &UpdateOptions) -> Result<()> {
         .output()
         .context("running the downloaded binary")?;
     let reported = String::from_utf8_lossy(&probe.stdout);
-    if !probe.status.success() || !reported.starts_with("Joshify ") {
+    if !probe.status.success() || !reported.starts_with(crate::VERSION_PREFIX) {
         bail!(
             "the downloaded binary did not report a version; not installing it\n{}",
             reported.trim()
@@ -304,9 +320,18 @@ pub fn run_uninstall(options: &UninstallOptions) -> Result<()> {
         println!("\nConfig and cache are kept. Use --purge to remove them too.");
     }
 
-    if options.purge && !options.assume_yes && !confirm("\nDelete credentials and config?")? {
-        println!("Cancelled.");
-        return Ok(());
+    // Removing the binary is destructive too, so confirm for any run that is
+    // going to delete something - not just --purge.
+    if needs_confirmation(options) {
+        let prompt = if options.purge {
+            "\nDelete the binary, credentials and config?"
+        } else {
+            "\nRemove joshify?"
+        };
+        if !confirm(prompt)? {
+            println!("Cancelled.");
+            return Ok(());
+        }
     }
 
     for path in &plan.data {
@@ -348,6 +373,59 @@ fn confirm(prompt: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serve one minimal HTTP response on an ephemeral loopback port.
+    async fn serve_once(body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut scratch = [0u8; 1024];
+                let _ = socket.read(&mut scratch).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+
+        format!("http://{addr}/")
+    }
+
+    /// Regression guard for the review finding that mattered most.
+    ///
+    /// `run_update` is dispatched from inside `#[tokio::main]`. A
+    /// `reqwest::blocking` client panics when built there ("cannot block the
+    /// current thread from within a runtime") rather than returning an error,
+    /// so every `joshify update` aborted on its first request. The CLI could
+    /// not catch it: on a platform with no published asset the asset check
+    /// returns before any network call happens.
+    ///
+    /// Hermetic - loopback only, no external network.
+    #[tokio::test]
+    async fn http_client_works_inside_the_tokio_runtime() {
+        let url = serve_once(r#"{"tag_name":"v9.9.9"}"#).await;
+
+        let body = fetch_text(&url)
+            .await
+            .expect("fetching inside a tokio runtime must not panic or fail");
+
+        assert_eq!(parse_latest_tag(&body), Some("v9.9.9".to_string()));
+    }
+
+    #[tokio::test]
+    async fn http_errors_are_reported_not_panicked() {
+        // Nothing is listening on this port.
+        let result = fetch_text("http://127.0.0.1:1/").await;
+        assert!(result.is_err(), "a refused connection must be an Err");
+    }
 
     #[test]
     fn asset_names_match_the_release_matrix() {
@@ -409,6 +487,32 @@ mod tests {
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_ne!(sha256_hex(b"a"), sha256_hex(b"b"));
+    }
+
+    #[test]
+    fn uninstall_confirms_before_removing_anything() {
+        // Removing the binary is destructive even without --purge.
+        assert!(needs_confirmation(&UninstallOptions::default()));
+        assert!(needs_confirmation(&UninstallOptions {
+            purge: true,
+            assume_yes: false
+        }));
+        // Only --yes skips the prompt.
+        assert!(!needs_confirmation(&UninstallOptions {
+            purge: false,
+            assume_yes: true
+        }));
+        assert!(!needs_confirmation(&UninstallOptions {
+            purge: true,
+            assume_yes: true
+        }));
+    }
+
+    #[test]
+    fn smoke_test_prefix_matches_what_the_version_printer_emits() {
+        // These drifting apart would make every update fail with "did not
+        // report a version" instead of a real error.
+        assert!(crate::version_line().starts_with(crate::VERSION_PREFIX));
     }
 
     #[test]

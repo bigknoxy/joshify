@@ -1,3 +1,14 @@
+/// Prefix of the first line of `joshify --version`.
+///
+/// `joshify update` smoke-tests a downloaded binary against this, so the
+/// printer and the check must not be able to drift apart.
+pub const VERSION_PREFIX: &str = "Joshify ";
+
+/// The exact first line of `joshify --version`.
+pub fn version_line() -> String {
+    format!("{VERSION_PREFIX}{}", env!("CARGO_PKG_VERSION"))
+}
+
 pub mod album_art;
 pub mod api;
 pub mod auth;
@@ -58,15 +69,32 @@ impl CliArgs {
         if let Some(name) = cli_args.get(1) {
             let rest = &cli_args[2..];
             let has = |flag: &str| rest.iter().any(|a| a == flag);
+            let is_subcommand = matches!(name.as_str(), "update" | "uninstall");
+
+            // `joshify update --help` must still print help rather than being
+            // swallowed by the subcommand branch.
+            if is_subcommand && (has("--help") || has("-h")) {
+                args.help = true;
+                return args;
+            }
+
             match name.as_str() {
                 "update" => {
+                    // A bare `--version` with nothing after it is a mistake, not
+                    // a request for the latest release - say so instead of
+                    // quietly doing something else.
+                    let pinned = rest.iter().position(|a| a == "--version").map(|i| {
+                        rest.get(i + 1).cloned().unwrap_or_else(|| {
+                            eprintln!(
+                                "error: --version needs a release tag, e.g. --version v0.7.7"
+                            );
+                            std::process::exit(2);
+                        })
+                    });
+
                     args.command = Some(Subcommand::Update(crate::manage::UpdateOptions {
                         check_only: has("--check"),
-                        version: rest
-                            .iter()
-                            .position(|a| a == "--version")
-                            .and_then(|i| rest.get(i + 1))
-                            .cloned(),
+                        version: pinned,
                     }));
                     return args;
                 }
@@ -157,7 +185,7 @@ impl CliArgs {
     /// Kept trivially parseable: install.sh reads the last whitespace-separated
     /// field of the first line to decide whether an install is already current.
     pub fn print_version() {
-        println!("Joshify {}", env!("CARGO_PKG_VERSION"));
+        println!("{}", crate::version_line());
     }
 
     pub fn print_help() {
