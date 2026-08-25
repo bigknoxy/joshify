@@ -6,7 +6,6 @@
 //! - iTerm2 inline images
 //! - ASCII/Unicode block fallback (always works)
 
-use image::GenericImageView;
 use ratatui::prelude::*;
 use std::io::Write;
 
@@ -244,44 +243,50 @@ pub fn render_album_art_as_lines(image_data: &[u8], area: Rect) -> Vec<Line<'sta
     render_ascii(image_data, area)
 }
 
-/// ASCII/Unicode block rendering (fallback)
+/// Unicode half-block rendering (fallback for terminals with no image protocol).
+///
+/// Each cell carries two pixels: the upper half is the foreground colour of
+/// `\u{2580}` (UPPER HALF BLOCK) and the lower half is its background. That
+/// doubles vertical resolution over one-pixel-per-cell and, with 24-bit colour,
+/// reproduces the cover rather than a monochrome brightness ramp. Terminals
+/// without truecolour degrade to their nearest palette entry on their own.
 fn render_ascii(image_data: &[u8], area: Rect) -> Vec<Line<'static>> {
-    match image::load_from_memory(image_data) {
-        Ok(img) => {
-            let max_width = area.width.min(40) as u32;
-            let max_height = area.height.min(20) as u32;
+    let Ok(img) = image::load_from_memory(image_data) else {
+        return create_ascii_border(area);
+    };
 
-            if max_width == 0 || max_height == 0 {
-                return create_ascii_border(area);
-            }
-
-            let resized = img.resize(max_width, max_height, image::imageops::FilterType::Nearest);
-            let width = resized.width();
-            let height = resized.height();
-
-            if width == 0 || height == 0 {
-                return create_ascii_border(area);
-            }
-
-            let mut lines = Vec::new();
-
-            for y in 0..height {
-                let mut line_string = String::new();
-                for x in 0..width {
-                    let pixel = resized.get_pixel(x, y);
-                    let c = pixel_to_char(&pixel);
-                    line_string.push(c);
-                }
-                lines.push(Line::from(line_string));
-            }
-
-            lines
-        }
-        Err(_) => create_ascii_border(area),
+    let cols = area.width.min(40) as u32;
+    let rows = area.height.min(20) as u32;
+    if cols == 0 || rows == 0 {
+        return create_ascii_border(area);
     }
+
+    // Two pixels per cell vertically. Covers are square, and terminal cells are
+    // roughly twice as tall as they are wide, so sampling this way keeps the
+    // aspect ratio instead of squashing the image.
+    let resized = img.resize_exact(cols, rows * 2, image::imageops::FilterType::Triangle);
+    let rgba = resized.to_rgba8();
+
+    let mut lines = Vec::with_capacity(rows as usize);
+    for row in 0..rows {
+        let mut spans = Vec::with_capacity(cols as usize);
+        for col in 0..cols {
+            let top = rgba.get_pixel(col, row * 2);
+            let bottom = rgba.get_pixel(col, row * 2 + 1);
+            spans.push(Span::styled(
+                "\u{2580}",
+                Style::default()
+                    .fg(Color::Rgb(top[0], top[1], top[2]))
+                    .bg(Color::Rgb(bottom[0], bottom[1], bottom[2])),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    lines
 }
 
-/// Create simple ASCII box border as fallback
+/// Placeholder frame shown when the image cannot be decoded.
 fn create_ascii_border(area: Rect) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let width = area.width as usize;
@@ -303,18 +308,6 @@ fn create_ascii_border(area: Rect) -> Vec<Line<'static>> {
     lines.push(Line::from("╰".to_string() + &"─".repeat(width - 2) + "╯"));
 
     lines
-}
-
-/// Convert pixel to ASCII character based on brightness
-fn pixel_to_char(pixel: &image::Rgba<u8>) -> char {
-    // Perceived brightness using luminance formula (more accurate than simple average)
-    let brightness =
-        (0.299 * pixel[0] as f64 + 0.587 * pixel[1] as f64 + 0.114 * pixel[2] as f64) as u32;
-
-    // High-contrast gradient with distinct characters
-    const GRADIENT: &[char] = &[' ', '.', ':', ';', '!', '=', '+', '*', '#', '@', '█'];
-    let index = (brightness as usize * GRADIENT.len()) / 256;
-    GRADIENT[index.min(GRADIENT.len() - 1)]
 }
 
 /// Widget for rendering album art in ratatui
@@ -356,6 +349,88 @@ impl Widget for AlbumArtWidget<'_> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod half_block_render_tests {
+    use super::render_album_art_as_lines;
+    use ratatui::prelude::*;
+
+    /// A 2x2 PNG: red, green on the top row; blue, white on the bottom.
+    fn swatch_png() -> Vec<u8> {
+        let mut img = image::RgbaImage::new(2, 2);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255]));
+        img.put_pixel(0, 1, image::Rgba([0, 0, 255, 255]));
+        img.put_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("encode png");
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn fills_the_requested_area_exactly() {
+        let lines = render_album_art_as_lines(&swatch_png(), Rect::new(0, 0, 8, 4));
+        assert_eq!(lines.len(), 4, "one line per terminal row");
+        for line in &lines {
+            assert_eq!(line.spans.len(), 8, "one span per column");
+        }
+    }
+
+    /// Regression guard for the fidelity fix (#59): the renderer must carry
+    /// real colour, not a monochrome brightness ramp. Each cell encodes two
+    /// pixels via UPPER HALF BLOCK with a foreground and a background colour.
+    #[test]
+    fn uses_half_blocks_with_two_colours_per_cell() {
+        let lines = render_album_art_as_lines(&swatch_png(), Rect::new(0, 0, 2, 1));
+        let span = &lines[0].spans[0];
+
+        assert_eq!(
+            span.content.as_ref(),
+            "\u{2580}",
+            "expected UPPER HALF BLOCK"
+        );
+        assert!(
+            matches!(span.style.fg, Some(Color::Rgb(..))),
+            "foreground must be a truecolour pixel, got {:?}",
+            span.style.fg
+        );
+        assert!(
+            matches!(span.style.bg, Some(Color::Rgb(..))),
+            "background carries the lower pixel, got {:?}",
+            span.style.bg
+        );
+        assert_ne!(
+            span.style.fg, span.style.bg,
+            "top and bottom pixels of this swatch differ, so the cell must too"
+        );
+    }
+
+    #[test]
+    fn distinct_columns_get_distinct_colours() {
+        let lines = render_album_art_as_lines(&swatch_png(), Rect::new(0, 0, 2, 1));
+        let left = lines[0].spans[0].style.fg;
+        let right = lines[0].spans[1].style.fg;
+        assert_ne!(
+            left, right,
+            "a red and a green column must not render alike"
+        );
+    }
+
+    #[test]
+    fn undecodable_data_falls_back_to_a_border_rather_than_panicking() {
+        let lines = render_album_art_as_lines(b"not an image", Rect::new(0, 0, 6, 3));
+        assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn a_zero_sized_area_is_handled() {
+        let lines = render_album_art_as_lines(&swatch_png(), Rect::new(0, 0, 0, 0));
+        assert!(lines.len() <= 1, "must not panic or allocate a huge buffer");
     }
 }
 
@@ -417,45 +492,6 @@ mod protocol_capability_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_pixel_to_char() {
-        assert_eq!(pixel_to_char(&image::Rgba([0, 0, 0, 255])), ' ');
-        assert_eq!(pixel_to_char(&image::Rgba([255, 255, 255, 255])), '█');
-    }
-
-    #[test]
-    fn test_pixel_to_char_luminance_formula() {
-        let red_char = pixel_to_char(&image::Rgba([255, 0, 0, 255]));
-        assert!(red_char != ' ' && red_char != '█');
-
-        let green_char = pixel_to_char(&image::Rgba([0, 255, 0, 255]));
-        assert!(green_char != ' ' && green_char != '█');
-
-        let blue_char = pixel_to_char(&image::Rgba([0, 0, 255, 255]));
-        assert!(blue_char != ' ' && blue_char != '█');
-
-        assert!(green_char != blue_char);
-    }
-
-    #[test]
-    fn test_pixel_to_char_gradient_has_distinct_characters() {
-        let chars: std::collections::HashSet<char> = [
-            pixel_to_char(&image::Rgba([0, 0, 0, 255])),
-            pixel_to_char(&image::Rgba([64, 64, 64, 255])),
-            pixel_to_char(&image::Rgba([128, 128, 128, 255])),
-            pixel_to_char(&image::Rgba([192, 192, 192, 255])),
-            pixel_to_char(&image::Rgba([255, 255, 255, 255])),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-
-        assert!(
-            chars.len() >= 3,
-            "Gradient should have at least 3 distinct characters for good contrast"
-        );
-    }
 
     #[test]
     fn test_protocol_detection() {

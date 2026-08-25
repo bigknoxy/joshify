@@ -346,6 +346,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Self-management subcommands. These run before logging and the TUI: they
+    // are ordinary CLI tools and must not touch the terminal.
+    if let Some(command) = args.command.clone() {
+        return match command {
+            joshify::Subcommand::Update(options) => joshify::manage::run_update(&options).await,
+            joshify::Subcommand::Uninstall(options) => joshify::manage::run_uninstall(&options),
+        };
+    }
+
     // Handle --version. This must stay reachable and must print on stdout
     // without starting anything: install.sh uses it to detect an existing
     // install and to smoke-test a downloaded binary before installing it.
