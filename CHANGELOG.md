@@ -1,3 +1,22 @@
+## [0.7.5](https://github.com/bigknoxy/joshify/compare/v0.7.4...v0.7.5) (2026-08-25)
+
+### Features
+
+- **Headless setup** ([#47](https://github.com/bigknoxy/joshify/issues/47)): new `joshify --setup` runs credential setup and the OAuth flow and then exits, without ever initializing the TUI. The authorization URL is now always printed, so a machine with no browser — SSH, a container, WSL — can complete authorization by opening the URL elsewhere instead of sitting at "Waiting for authorization…" indefinitely. Under WSL the URL works from a Windows browser, since WSL2 shares localhost.
+- **Documented non-interactive configuration**: `--help` now covers `--setup`, `SPOTIFY_TOKEN_EXPIRES_AT` and `SPOTIFY_REDIRECT_URI`, and states that the credential environment variables only skip the browser when set together. The README documents the `config.json` and `credentials.json` schemas, notes that `config.toml` holds no credentials, and lists the WSL requirements.
+
+### Bug Fixes
+
+- **Local playback no longer claims success when there is no audio device** ([#49](https://github.com/bigknoxy/joshify/issues/49)): `audio_backend::find()` only resolves a backend by name and succeeds on a machine with no working audio, so the app reported "Local playback active" and then played silence. librespot's rodio backend does not return an error in that case — it panics while *building* the sink, which on the player's audio thread kills the thread quietly. The audio device is now probed at startup behind a panic guard; when it cannot be opened the app falls back to remote playback and says why in the status bar, with a specific message when running as root (the usual cause under WSL).
+- **No local player is constructed when audio is unavailable**: previously the playback mode was switched to remote but the player, session and event channel stayed installed, and Spotify Connect had already advertised joshify as a playback device that could only produce silence.
+- **Root detection works on macOS**: it read `/proc/self/status`, which does not exist there.
+
+### Technical Details
+
+- The audio probe restores the caller's panic hook rather than reverting to the default, and only suppresses panics raised on the probing thread
+- Probing happens before the TUI takes the screen, since ALSA writes diagnostics to stderr from C that no Rust hook can intercept
+- Adds `libc` as a direct dependency for `geteuid()`
+
 ## [0.7.4](https://github.com/bigknoxy/joshify/compare/v0.7.3...v0.7.4) (2026-08-24)
 
 ### Bug Fixes
