@@ -4,6 +4,8 @@ version = "0.7.4"
 edition = "2021"
 
 [dependencies]
+# Only for geteuid(): /proc/self/status is Linux-only and macOS is a shipped target.
+libc = "0.2"
 ratatui = "0.29"
 ratatui-image = "10.0"
 rspotify = "0.16"

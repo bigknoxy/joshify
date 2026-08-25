@@ -441,17 +441,13 @@ fn no_audio_message(probe: &joshify::player::AudioProbe) -> String {
     }
 }
 
-/// Whether the process is running as uid 0.
+/// Whether the process is running as root.
+///
+/// `/proc/self/status` would be Linux-only, and macOS is a shipped target.
 fn is_root() -> bool {
-    std::fs::read_to_string("/proc/self/status")
-        .map(|status| {
-            status
-                .lines()
-                .find_map(|line| line.strip_prefix("Uid:"))
-                .and_then(|uids| uids.split_whitespace().next().map(|uid| uid == "0"))
-                .unwrap_or(false)
-        })
-        .unwrap_or(false)
+    // SAFETY: geteuid() takes no arguments, cannot fail, and only reads the
+    // calling process's effective uid.
+    unsafe { libc::geteuid() == 0 }
 }
 
 /// Hand the terminal back to the shell, run `f`, then restore the TUI.
@@ -658,7 +654,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         }
     }
 
-    if let Some(ref token) = access_token {
+    if !audio_available {
+        // Do not build a local player at all. It would install a live sink that
+        // cannot make sound, and app.local_player is consulted in a dozen key
+        // handlers regardless of playback_mode, so playback commands would route
+        // into a dead path. Registering as a Spotify Connect device would also
+        // advertise a device that plays silence.
+        app.playback_mode = PlaybackMode::Remote;
+        app.status_message = Some(no_audio_message(&audio_probe));
+    } else if let Some(ref token) = access_token {
         if let Some((session, player, event_rx)) = init_local_player(token).await {
             // Start Spotify Connect to make joshify appear as a device
             let credentials = Credentials::with_access_token(token.clone());
@@ -684,20 +688,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system time before epoch")
                 .as_millis() as u64;
-            if audio_available {
-                app.status_message = Some(
-                    "Connected to Spotify - Local playback active - Press ? for help".to_string(),
-                );
-                tracing::info!("Local playback initialized successfully");
-            } else {
-                app.playback_mode = PlaybackMode::Remote;
-                app.status_message = Some(no_audio_message(&audio_probe));
-            }
+            app.status_message =
+                Some("Connected to Spotify - Local playback active - Press ? for help".to_string());
+            tracing::info!("Local playback initialized successfully");
         } else {
             app.playback_mode = PlaybackMode::Remote;
-            if !audio_available {
-                app.status_message = Some(no_audio_message(&audio_probe));
-            }
         }
     } else if let Ok(local_session) = LocalSession::from_cache().await {
         let session = Arc::new(local_session);
@@ -736,15 +731,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system time before epoch")
                 .as_millis() as u64;
-            if audio_available {
-                app.status_message = Some(
-                    "Connected to Spotify - Local playback active - Press ? for help".to_string(),
-                );
-                tracing::info!("Local playback restored from cache");
-            } else {
-                app.playback_mode = PlaybackMode::Remote;
-                app.status_message = Some(no_audio_message(&audio_probe));
-            }
+            app.status_message =
+                Some("Connected to Spotify - Local playback active - Press ? for help".to_string());
+            tracing::info!("Local playback restored from cache");
         }
     }
 
@@ -3895,7 +3884,36 @@ mod audio_probe_tests {
         );
     }
 
+    // Serialized: probe_audio_output swaps the process-global panic hook, so
+    // these must not run concurrently with each other.
     #[test]
+    #[serial_test::serial(panic_hook)]
+    fn probing_restores_the_previous_panic_hook() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        // Install a marker hook, probe, then confirm our marker is still the
+        // one in force - the probe must not leave its muting hook behind, nor
+        // revert to the default and discard ours.
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&fired);
+        let original = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |_| flag.store(true, Ordering::SeqCst)));
+
+        let _ = joshify::player::probe_audio_output();
+
+        let caught = std::panic::catch_unwind(|| panic!("marker"));
+        assert!(caught.is_err(), "the panic should still have been caught");
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "probe_audio_output must restore the hook that was installed before it"
+        );
+
+        std::panic::set_hook(original);
+    }
+
+    #[test]
+    #[serial_test::serial(panic_hook)]
     fn probing_audio_never_panics() {
         // CI runners have no sound card, so this exercises the Unavailable
         // path; on a desktop it exercises Available. Either is fine - the

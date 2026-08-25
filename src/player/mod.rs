@@ -63,11 +63,18 @@ pub fn probe_audio_output() -> AudioProbe {
     // player's audio thread, which is exactly why the failure is invisible.
     // Guard the probe so it reports instead of taking the process down.
     //
-    // The default hook is muted for the duration: it writes to stderr, which
-    // would print straight through the TUI. This runs once at startup, before
-    // any other thread can panic, so swapping the global hook is safe here.
-    let previous_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
+    // The default hook prints to stderr, which would appear through the TUI, so
+    // it is muted for the duration. The panic hook is global and other threads
+    // are already running by now, so mute only panics raised on *this* thread
+    // and delegate everything else to the previous hook.
+    let probing_thread = std::thread::current().id();
+    let previous_hook = Arc::new(panic::take_hook());
+    let delegate = Arc::clone(&previous_hook);
+    panic::set_hook(Box::new(move |info| {
+        if std::thread::current().id() != probing_thread {
+            delegate(info);
+        }
+    }));
 
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut sink = backend(None, AudioFormat::default());
@@ -77,7 +84,15 @@ pub fn probe_audio_output() -> AudioProbe {
         })
     }));
 
-    panic::set_hook(previous_hook);
+    // Put the original hook back. Dropping ours first releases the Arc clone it
+    // holds, so the original can be unwrapped and reinstalled - reverting to
+    // the default here instead would quietly discard whatever hook the caller
+    // had installed (ratatui installs one to restore the terminal on panic).
+    drop(panic::take_hook());
+    match Arc::try_unwrap(previous_hook) {
+        Ok(hook) => panic::set_hook(hook),
+        Err(_) => debug_assert!(false, "probe panic hook outlived the probe"),
+    }
 
     match result {
         Ok(Ok(())) => AudioProbe::Available,
