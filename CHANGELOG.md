@@ -1,3 +1,17 @@
+## [0.8.0](https://github.com/bigknoxy/joshify/compare/v0.7.7...v0.8.0) (2026-08-25)
+
+### Features
+
+- **`joshify update`** ([#56](https://github.com/bigknoxy/joshify/issues/56)): update to the latest release in place. Idempotent — running it when already current does nothing. Verifies the download against the release's published `SHA256SUMS` and **refuses to install on a mismatch**, smoke-tests the new binary before trusting it, and replaces the running executable atomically so an interrupted update cannot leave a half-written binary. `--check` reports without changing anything, `--version <TAG>` pins a release. Platforms with no prebuilt binary get a clear message pointing at `install.sh`.
+- **`joshify uninstall`** ([#56](https://github.com/bigknoxy/joshify/issues/56)): removes the binary and keeps user data by default. `--purge` also deletes config, credentials, cache and the OS keyring entry; `--keep-data` states the default explicitly; `--yes` skips the confirmation prompt. Any run that deletes something confirms first unless `--yes` is given.
+- **Album art now looks like the cover** ([#59](https://github.com/bigknoxy/joshify/issues/59)): the fallback renderer was a monochrome brightness ramp at one pixel per cell, which reduced a cover to a small grey blob. It now draws half-block cells carrying two pixels each in 24-bit colour, doubling vertical resolution, with aspect-corrected sampling.
+
+### Technical Details
+
+- The stub playback subcommands in `src/cli.rs` remain deliberately unreachable: `cmd_status` returns hardcoded placeholder data, so wiring them up would advertise functionality that does not exist ([#48](https://github.com/bigknoxy/joshify/issues/48), [#23](https://github.com/bigknoxy/joshify/issues/23)). Tests assert both that the new subcommands are dispatched and that the stubs stay unwired.
+- `update` uses an async HTTP client: `reqwest::blocking` panics when constructed inside the Tokio runtime the binary already runs in
+- The album-detail view still shows no cover; tracked on [#59](https://github.com/bigknoxy/joshify/issues/59)
+
 ## [0.7.7](https://github.com/bigknoxy/joshify/compare/v0.7.6...v0.7.7) (2026-08-25)
 
 ### Bug Fixes
