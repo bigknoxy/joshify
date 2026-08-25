@@ -283,15 +283,28 @@ install_from_release() {
 
     # Does it actually run here? A prebuilt binary still needs its shared
     # libraries, so try the runtime packages once before giving up.
-    if ! "$extracted" --version > /dev/null 2>&1; then
-        info "   Binary needs runtime libraries; installing them..."
-        if install_runtime_deps > /dev/null 2>&1 && "$extracted" --version > /dev/null 2>&1; then
-            info "   Runtime libraries installed."
-        else
-            warn "   Prebuilt binary cannot run on this system."
+    local smoke
+    if ! smoke="$("$extracted" --version 2>&1)"; then
+        info "   Binary did not run; installing runtime libraries..."
+        install_runtime_deps > /dev/null 2>&1 || true
+        if ! smoke="$("$extracted" --version 2>&1)"; then
+            warn "   Prebuilt binary cannot run on this system:"
+            # Report the actual reason. Falling back silently is how a broken
+            # --version went unnoticed for a whole release.
+            printf '%s\n' "$smoke" | head -3 | sed 's/^/     /'
             return 1
         fi
+        info "   Runtime libraries installed."
     fi
+
+    case "$smoke" in
+        Joshify\ *) ;;
+        *)
+            warn "   Downloaded binary did not report a usable version:"
+            printf '%s\n' "$smoke" | head -3 | sed 's/^/     /'
+            return 1
+            ;;
+    esac
 
     mkdir -p "$INSTALL_DIR" || { warn "   Cannot create ${INSTALL_DIR}."; return 1; }
 
@@ -484,14 +497,19 @@ INSTALLED_BIN="${INSTALL_DIR}/${BIN_NAME}"
 [ -x "$INSTALLED_BIN" ] || die "✗ Installation failed: ${INSTALLED_BIN} is not executable."
 
 FINAL_VERSION="$("$INSTALLED_BIN" --version 2>/dev/null | head -1 | awk '{print $NF}')"
-[ -n "$FINAL_VERSION" ] || die "✗ Installed binary at ${INSTALLED_BIN} does not run."
 
-echo -e "${GREEN}✓ Joshify ${FINAL_VERSION} installed via ${INSTALL_METHOD}${NC}"
-echo "   ${INSTALLED_BIN}"
-
-if [ -n "$TARGET_VERSION" ] && [ "$FINAL_VERSION" != "$TARGET_VERSION" ]; then
-    warn "   Note: expected ${TARGET_VERSION}, got ${FINAL_VERSION}."
+if [ -n "$FINAL_VERSION" ]; then
+    echo -e "${GREEN}✓ Joshify ${FINAL_VERSION} installed via ${INSTALL_METHOD}${NC}"
+    if [ -n "$TARGET_VERSION" ] && [ "$FINAL_VERSION" != "$TARGET_VERSION" ]; then
+        warn "   Note: expected ${TARGET_VERSION}, got ${FINAL_VERSION}."
+    fi
+else
+    # The binary is installed and executable; only the version probe failed.
+    # Older builds did not support --version, so this must not fail the install.
+    echo -e "${GREEN}✓ Joshify installed via ${INSTALL_METHOD}${NC}"
+    warn "   Could not read the version back from the installed binary."
 fi
+echo "   ${INSTALLED_BIN}"
 
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;

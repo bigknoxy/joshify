@@ -260,6 +260,27 @@ else
     fail "installs nothing when the checksum fails"
 fi
 
+# A binary that runs but does not answer --version in the expected format must
+# be rejected, not installed. This is the failure that shipped in v0.7.5: the
+# real binary launched the TUI instead of printing a version.
+printf '#!/bin/sh\necho "No credentials found. Running setup..."\nexit 1\n' > "$REL/joshify-linux-x86_64"
+chmod +x "$REL/joshify-linux-x86_64"
+tar -czf "$REL/joshify-linux-x86_64.tar.gz" -C "$REL" joshify-linux-x86_64
+( cd "$REL" && sha256_of joshify-linux-x86_64.tar.gz \
+    | awk '{print $1"  joshify-linux-x86_64.tar.gz"}' > SHA256SUMS )
+rm -rf "${WORK_DIR:?}"/*
+INSTALL_DIR="$WORK/target-noversion"
+if install_from_release > /dev/null 2>&1; then
+    fail "rejects a binary that does not report a version"
+else
+    ok "rejects a binary that does not report a version"
+fi
+if [ ! -e "$INSTALL_DIR/joshify" ]; then
+    ok "installs nothing when the version probe fails"
+else
+    fail "installs nothing when the version probe fails"
+fi
+
 # No prebuilt binary for the platform -> caller falls back to source.
 _TEST_ARCH=aarch64
 if install_from_release > /dev/null 2>&1; then

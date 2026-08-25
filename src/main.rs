@@ -346,6 +346,14 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --version. This must stay reachable and must print on stdout
+    // without starting anything: install.sh uses it to detect an existing
+    // install and to smoke-test a downloaded binary before installing it.
+    if args.version {
+        CliArgs::print_version();
+        return Ok(());
+    }
+
     // Handle --test-search flag (test search API without TUI)
     if args.test_search {
         return run_search_test(args).await;
@@ -3919,6 +3927,64 @@ mod audio_probe_tests {
         // path; on a desktop it exercises Available. Either is fine - the
         // point is that probing is safe to call unconditionally at startup.
         let _ = joshify::player::probe_audio_output();
+    }
+}
+
+#[cfg(test)]
+mod version_flag_tests {
+    use joshify::CliArgs;
+
+    /// install.sh runs `joshify --version` to detect an existing install and to
+    /// smoke-test a freshly downloaded binary before installing it. This was
+    /// broken for an entire release: `--version` was only handled in
+    /// `src/cli.rs`, which is unreachable from the binary (issue #48), so the
+    /// flag fell through and launched the whole TUI. Every install silently
+    /// fell back to a source build.
+    #[test]
+    fn version_flag_is_parsed_by_the_reachable_parser() {
+        let src = include_str!("../src/lib.rs");
+        assert!(
+            src.contains("\"--version\" | \"-V\""),
+            "CliArgs::parse must handle --version; the handler in src/cli.rs is \
+             dead code and does not count (issue #48)"
+        );
+    }
+
+    /// The output has to stay parseable: install.sh takes the last
+    /// whitespace-separated field of the first line.
+    #[test]
+    fn version_output_last_field_is_the_crate_version() {
+        let expected = env!("CARGO_PKG_VERSION");
+        let line = format!("Joshify {expected}");
+        let parsed = line.split_whitespace().last().expect("non-empty");
+        assert_eq!(parsed, expected);
+    }
+
+    /// --version must be dispatched before anything initializes the terminal.
+    #[test]
+    fn version_is_handled_before_terminal_init() {
+        let src = include_str!("main.rs");
+        let main_body = src.split_once("async fn main()").expect("main exists").1;
+        let version_branch = main_body
+            .find("print_version")
+            .expect("main should dispatch --version");
+        let tui_init = main_body
+            .find("ratatui::init()")
+            .expect("main should eventually initialize the TUI");
+        assert!(
+            version_branch < tui_init,
+            "--version must not start the TUI"
+        );
+    }
+
+    #[test]
+    fn version_flag_sets_the_field() {
+        // Guards the struct/flag wiring itself.
+        let args = CliArgs {
+            version: true,
+            ..Default::default()
+        };
+        assert!(args.version);
     }
 }
 
