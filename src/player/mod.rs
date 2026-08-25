@@ -30,6 +30,62 @@ pub struct PlaybackState {
     pub volume: u16, // 0-65535
 }
 
+/// Result of checking whether audio can actually be played on this machine.
+#[derive(Debug)]
+pub enum AudioProbe {
+    /// A device was opened and closed successfully.
+    Available,
+    /// No device could be opened. Carries a human-readable reason.
+    Unavailable(String),
+}
+
+/// Try to actually open the audio output device.
+///
+/// [`audio_backend::find`] only resolves a backend *by name* — it succeeds on a
+/// machine with no working audio at all, because nothing touches a device until
+/// the sink is started. That happens later, on the player's own audio thread,
+/// where a failure never reaches the user and playback is simply silent.
+///
+/// Opening and immediately closing a sink here converts that silent failure
+/// into something reportable. See issue #49.
+pub fn probe_audio_output() -> AudioProbe {
+    use std::panic::{self, AssertUnwindSafe};
+
+    let Some(backend) = audio_backend::find(None) else {
+        return AudioProbe::Unavailable(
+            "no audio backend is compiled in for this platform".to_string(),
+        );
+    };
+
+    // librespot's rodio backend panics rather than returning an error when it
+    // is built on a machine with no output device (`unwrap()` on
+    // `NoDeviceAvailable`). In normal operation that panic happens on the
+    // player's audio thread, which is exactly why the failure is invisible.
+    // Guard the probe so it reports instead of taking the process down.
+    //
+    // The default hook is muted for the duration: it writes to stderr, which
+    // would print straight through the TUI. This runs once at startup, before
+    // any other thread can panic, so swapping the global hook is safe here.
+    let previous_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut sink = backend(None, AudioFormat::default());
+        sink.start().map(|()| {
+            // Best effort: we only care that the device opened.
+            let _ = sink.stop();
+        })
+    }));
+
+    panic::set_hook(previous_hook);
+
+    match result {
+        Ok(Ok(())) => AudioProbe::Available,
+        Ok(Err(e)) => AudioProbe::Unavailable(e.to_string()),
+        Err(_) => AudioProbe::Unavailable("no audio output device available".to_string()),
+    }
+}
+
 /// Local audio player backed by librespot
 pub struct LocalPlayer {
     player: Arc<Player>,

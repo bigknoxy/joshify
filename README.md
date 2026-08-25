@@ -147,6 +147,72 @@ System libraries needed to build from source (installed automatically by
 - Linux: `libasound2-dev pkg-config libssl-dev build-essential libchafa-dev libglib2.0-dev`
 - macOS: `brew install pkgconf chafa`
 
+### Headless / non-interactive setup
+
+Run the credential setup and authorization without ever starting the TUI:
+
+```bash
+joshify --setup
+```
+
+This prompts for your Client ID and Secret, prints the authorization URL, and
+waits for the callback on `http://127.0.0.1:8888/callback`. If no browser can
+be opened — SSH, a container, WSL — open the printed URL yourself; the callback
+still resolves as long as you can reach `127.0.0.1:8888` from that browser.
+Under WSL that works from a Windows browser, because WSL2 shares localhost.
+
+To skip the browser entirely, provide credentials you already have. **All of
+these are required together** — setting only some of them still opens a browser
+and waits:
+
+```bash
+export SPOTIFY_CLIENT_ID=your_client_id
+export SPOTIFY_CLIENT_SECRET=your_client_secret
+export SPOTIFY_ACCESS_TOKEN=your_access_token
+# strongly recommended, or the token is treated as expired immediately:
+export SPOTIFY_REFRESH_TOKEN=your_refresh_token
+export SPOTIFY_TOKEN_EXPIRES_AT=1750000000
+```
+
+Or write the two config files directly. Both live in
+`$XDG_CONFIG_HOME/joshify` (`~/.config/joshify` by default):
+
+`config.json`
+```json
+{
+  "client_id": "…",
+  "client_secret": "…",
+  "redirect_uri": "http://127.0.0.1:8888/callback"
+}
+```
+
+`credentials.json`
+```json
+{
+  "access_token": "…",
+  "refresh_token": "…",
+  "expires_at": 1750000000
+}
+```
+
+> `config.toml` in the same directory is a **different** file for audio, UI and
+> keybinding preferences. It holds no credentials.
+
+### Running under WSL
+
+- **Do not run as root.** A root session has no `PULSE_SERVER` and a different
+  `$HOME`, so neither audio nor the OS keyring works. Credentials silently fall
+  back to a file, and local playback has no device.
+- **Remote (Spotify Connect) mode works out of the box** — joshify controls
+  playback on another device with no audio setup at all.
+- **Local playback** additionally needs WSLg plus an ALSA→PulseAudio bridge:
+  `sudo apt install libasound2-plugins` and a default of
+  `pcm.!default { type pulse }` in `~/.asoundrc`.
+
+Joshify probes the audio device at startup and tells you in the status bar when
+it has fallen back to remote-only, rather than claiming local playback and
+playing silence.
+
 ## 🎮 Quick Start
 
 ### Interactive Mode
