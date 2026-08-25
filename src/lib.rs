@@ -31,6 +31,8 @@ pub struct CliArgs {
     pub test_search: bool,
     /// Run credential setup and OAuth, then exit without starting the TUI.
     pub setup: bool,
+    /// Print the version and exit.
+    pub version: bool,
 }
 
 impl CliArgs {
@@ -93,6 +95,10 @@ impl CliArgs {
                     args.setup = true;
                     i += 1;
                 }
+                "--version" | "-V" => {
+                    args.version = true;
+                    i += 1;
+                }
                 _ => {
                     i += 1;
                 }
@@ -100,6 +106,14 @@ impl CliArgs {
         }
 
         args
+    }
+
+    /// Print the version and nothing else.
+    ///
+    /// Kept trivially parseable: install.sh reads the last whitespace-separated
+    /// field of the first line to decide whether an install is already current.
+    pub fn print_version() {
+        println!("Joshify {}", env!("CARGO_PKG_VERSION"));
     }
 
     pub fn print_help() {
@@ -115,6 +129,7 @@ impl CliArgs {
         println!("    --refresh-token <TOK>  Spotify Refresh Token (or SPOTIFY_REFRESH_TOKEN)");
         println!("    --redirect-uri <URI>   OAuth Redirect URI (default: http://127.0.0.1:8888/callback)");
         println!("    --setup                Run credential setup and OAuth, then exit");
+        println!("    --version, -V          Print the version and exit");
         println!("    --test-search          Test search API and exit");
         println!("    --help, -h             Show this help message");
         println!();
