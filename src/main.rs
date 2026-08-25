@@ -532,6 +532,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         }
     }
 
+    // Detect the terminal's image capability once. Windows Terminal and most
+    // other terminals cannot show inline images, and producing a Kitty payload
+    // for them makes the render loop erase the ASCII fallback (issue #59).
+    let inline_images_supported =
+        joshify::ui::image_renderer::Protocol::detect().supports_inline_image();
+    if !inline_images_supported {
+        tracing::info!("Terminal has no inline image support; using ASCII album art");
+    }
+
     // Probe the audio device before the TUI takes the screen. audio_backend::find
     // succeeds even with no working audio, so without this the app claims local
     // playback is active and then plays silence (issue #49). ALSA also writes
@@ -881,8 +890,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         album_art_width,
                         player_bar_height,
                     );
-                    app.player_state.current_album_art_kitty =
-                        joshify::ui::image_renderer::prepare_kitty_image(&art_data, album_area);
+                    app.player_state.current_album_art_kitty = if inline_images_supported {
+                        joshify::ui::image_renderer::prepare_kitty_image(&art_data, album_area)
+                    } else {
+                        None
+                    };
                     app.player_state.current_album_art_ascii =
                         Some(joshify::ui::image_renderer::render_album_art_as_lines(
                             &art_data, album_area,
@@ -908,11 +920,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 // Invalidate last Kitty render area so the old position gets cleared
                 // on the next frame render. This prevents ghost images on resize.
                 if let Some(ref art_data) = app.player_state.current_album_art_data {
-                    app.player_state.current_album_art_kitty =
+                    app.player_state.current_album_art_kitty = if inline_images_supported {
                         joshify::ui::image_renderer::prepare_kitty_image(
                             art_data,
                             current_album_area,
-                        );
+                        )
+                    } else {
+                        None
+                    };
                     app.player_state.current_album_art_ascii =
                         Some(joshify::ui::image_renderer::render_album_art_as_lines(
                             art_data,
@@ -1073,6 +1088,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.player_state.current_track_name = Some(audio_item.name.clone());
                         app.player_state.duration_ms = audio_item.duration_ms;
                         app.player_state.current_track_uri = Some(audio_item.uri.clone());
+                        // The artist is in the event; not reading it left the
+                        // previous track's artist on screen (issue #58).
+                        if let Some(artist) =
+                            joshify::player::artist_from_unique_fields(&audio_item.unique_fields)
+                        {
+                            app.player_state.current_artist_name = Some(artist);
+                        }
                         app.player_state.progress_ms = 0;
 
                         // Debounce album art fetch (2 second cooldown to prevent storm during seeking)
@@ -1824,11 +1846,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.content_state =
                             ContentState::Error("Library artists not yet implemented".to_string());
                     }
-                    LoadAction::AlbumTracks { album_id, name } => {
+                    LoadAction::AlbumTracks {
+                        album_id,
+                        name,
+                        artist,
+                        image_url,
+                    } => {
                         let c = client.clone();
                         let tx_clone = tx.clone();
                         let album_id_clone = album_id.clone();
                         let name_clone = name.clone();
+                        let artist_clone = artist.clone();
+                        let image_url_clone = image_url.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
                             match guard.get_album_tracks(&album_id_clone).await {
@@ -1852,9 +1881,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         .collect();
                                     let album_item = AlbumListItem {
                                         name: name_clone.clone(),
-                                        artist: "Unknown".to_string(),
+                                        artist: artist_clone.clone(),
                                         id: album_id_clone,
-                                        image_url: None,
+                                        image_url: image_url_clone.clone(),
                                         total_tracks: items.len() as u32,
                                         release_year: None,
                                     };
@@ -1879,6 +1908,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             ContentState::LoadingInProgress(LoadAction::AlbumTracks {
                                 album_id,
                                 name,
+                                artist,
+                                image_url,
                             });
                     }
                     LoadAction::ArtistTopTracks { artist_id, name } => {
@@ -2579,6 +2610,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                             LoadAction::AlbumTracks {
                                                                 album_id: album.id.clone(),
                                                                 name: album.name.clone(),
+                                                                artist: album.artist.clone(),
+                                                                image_url: album.image_url.clone(),
                                                             },
                                                         );
                                                         app.selected_index = 0;
@@ -3927,6 +3960,61 @@ mod audio_probe_tests {
         // path; on a desktop it exercises Available. Either is fine - the
         // point is that probing is safe to call unconditionally at startup.
         let _ = joshify::player::probe_audio_output();
+    }
+}
+
+#[cfg(test)]
+mod now_playing_regression_tests {
+    /// This file's source, with this module removed so the assertions below do
+    /// not match their own literals.
+    fn program_source() -> &'static str {
+        include_str!("main.rs")
+            .split("mod now_playing_regression_tests")
+            .next()
+            .expect("split always yields at least one part")
+    }
+
+    /// Regression for #58: the album-detail header fabricated
+    /// `artist: "Unknown".to_string()` because the load action dropped the real
+    /// artist the caller already had.
+    #[test]
+    fn album_header_does_not_fabricate_an_unknown_artist() {
+        let placeholder = format!("artist: {}Unknown{}.to_string()", '"', '"');
+        assert!(
+            !program_source().contains(&placeholder),
+            "the album header must use the artist carried on LoadAction::AlbumTracks,              not a hardcoded placeholder (issue #58)"
+        );
+    }
+
+    /// Regression for #58: the artist arrives on every TrackChanged event.
+    #[test]
+    fn track_changed_reads_the_artist() {
+        assert!(
+            program_source().contains("artist_from_unique_fields"),
+            "the TrackChanged handler must set the artist from the event (issue #58)"
+        );
+    }
+
+    /// Regression for #59: a Kitty payload must only be built when the terminal
+    /// can display one, because the render loop space-fills the album-art
+    /// rectangle before writing it and would otherwise erase the ASCII art.
+    #[test]
+    fn kitty_payload_is_gated_on_terminal_support() {
+        let src = program_source();
+        assert!(
+            src.contains("supports_inline_image"),
+            "the render path must consult Protocol::supports_inline_image (issue #59)"
+        );
+
+        // Every prepare_kitty_image call must sit behind the capability check.
+        for (index, _) in src.match_indices("prepare_kitty_image") {
+            let window_start = index.saturating_sub(200);
+            let window = &src[window_start..index];
+            assert!(
+                window.contains("inline_images_supported"),
+                "a prepare_kitty_image call is not gated on inline_images_supported                  (issue #59); ungated calls erase the ASCII fallback"
+            );
+        }
     }
 }
 

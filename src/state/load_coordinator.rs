@@ -30,10 +30,17 @@ pub enum LoadAction {
     LibraryAlbums,
     /// User's followed artists
     LibraryArtists,
-    /// Album tracks (for detail view)
+    /// Album tracks (for detail view).
+    ///
+    /// Carries the album's artist and cover URL as well as its id and name.
+    /// The caller already has them, and the tracks endpoint does not return
+    /// album-level metadata, so dropping them here is what produced the
+    /// "by Unknown" header (issue #58).
     AlbumTracks {
         album_id: String,
         name: String,
+        artist: String,
+        image_url: Option<String>,
     },
     /// Artist top tracks (for detail view)
     ArtistTopTracks {
@@ -151,5 +158,45 @@ impl<T: Send + 'static> LoadSender<T> {
                 sequence: self.sequence,
             })
             .await;
+    }
+}
+
+#[cfg(test)]
+mod album_tracks_payload_tests {
+    use super::LoadAction;
+
+    /// Regression for #58.
+    ///
+    /// The album-detail header renders `"  by " + album.artist`, and the album
+    /// tracks endpoint returns no album-level metadata. The caller already has
+    /// the real artist and cover URL, so `LoadAction::AlbumTracks` has to carry
+    /// them; when it did not, the handler substituted the literal "Unknown"
+    /// and a `None` cover.
+    #[test]
+    fn album_tracks_carries_artist_and_cover() {
+        let action = LoadAction::AlbumTracks {
+            album_id: "4czdORdCWP9umpbhFXK2fW".to_string(),
+            name: "Not Like Us".to_string(),
+            artist: "Kendrick Lamar".to_string(),
+            image_url: Some("https://i.scdn.co/image/abc".to_string()),
+        };
+
+        let LoadAction::AlbumTracks {
+            artist, image_url, ..
+        } = &action
+        else {
+            panic!("expected AlbumTracks");
+        };
+
+        assert_eq!(artist, "Kendrick Lamar");
+        assert_ne!(
+            artist, "Unknown",
+            "the album header must not fall back to a placeholder when the \
+             caller knows the artist (issue #58)"
+        );
+        assert!(
+            image_url.is_some(),
+            "the cover URL must survive navigation into the album view"
+        );
     }
 }

@@ -44,6 +44,17 @@ impl Protocol {
 
         Self::Ascii
     }
+
+    /// Whether this protocol can display an inline image written to stdout.
+    ///
+    /// Only Kitty is actually implemented. This matters beyond "no image
+    /// appears": the render loop deletes and space-fills the album-art
+    /// rectangle before writing a Kitty payload, so producing a payload for a
+    /// terminal that cannot show one erases the ASCII fallback that *was*
+    /// drawn there. See issue #59.
+    pub fn supports_inline_image(self) -> bool {
+        matches!(self, Self::Kitty)
+    }
 }
 
 /// Write image directly to stdout using the appropriate protocol.
@@ -345,6 +356,61 @@ impl Widget for AlbumArtWidget<'_> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod protocol_capability_tests {
+    use super::Protocol;
+
+    /// Regression for #59. The render loop deletes and space-fills the album-art
+    /// rectangle before writing a Kitty payload. A payload built for a terminal
+    /// that cannot display one therefore erases the ASCII fallback that was
+    /// drawn there, every frame - which is why no art appeared on Windows
+    /// Terminal even though it was fetched and rendered.
+    #[test]
+    fn only_kitty_supports_inline_images() {
+        assert!(Protocol::Kitty.supports_inline_image());
+        assert!(
+            !Protocol::Ascii.supports_inline_image(),
+            "an Ascii terminal must not get a Kitty payload; producing one \
+             makes the render loop clear the ASCII art (issue #59)"
+        );
+        assert!(
+            !Protocol::Sixel.supports_inline_image(),
+            "write_image_to_stdout no-ops for Sixel, so a payload would only clear"
+        );
+        assert!(
+            !Protocol::ITerm2.supports_inline_image(),
+            "iTerm2 inline images are not implemented"
+        );
+    }
+
+    /// A Windows Terminal / WSL session must resolve to Ascii. The pre-existing
+    /// detection test set no environment at all and passed by accident.
+    #[test]
+    #[serial_test::serial(env_term)]
+    fn windows_terminal_detects_as_ascii() {
+        let saved: Vec<(&str, Option<String>)> = ["TERM", "TERM_PROGRAM", "KITTY_WINDOW_ID"]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+
+        std::env::set_var("TERM", "xterm-256color");
+        std::env::remove_var("TERM_PROGRAM");
+        std::env::remove_var("KITTY_WINDOW_ID");
+
+        let detected = Protocol::detect();
+
+        for (key, value) in saved {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        assert_eq!(detected, Protocol::Ascii);
+        assert!(!detected.supports_inline_image());
     }
 }
 

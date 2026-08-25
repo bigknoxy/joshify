@@ -8,6 +8,7 @@ pub mod visualization;
 use anyhow::{Context, Result};
 use librespot::{
     core::{SpotifyId, SpotifyUri},
+    metadata::audio::UniqueFields,
     playback::{
         audio_backend,
         config::{AudioFormat, PlayerConfig},
@@ -28,6 +29,20 @@ pub struct PlaybackState {
     pub progress_ms: u32,
     pub duration_ms: u32,
     pub volume: u16, // 0-65535
+}
+
+/// Extract a display artist from a librespot audio item.
+///
+/// The artist is present in every `TrackChanged` event and was simply never
+/// read, so local playback showed a stale or empty artist (issue #58).
+pub fn artist_from_unique_fields(fields: &UniqueFields) -> Option<String> {
+    match fields {
+        UniqueFields::Track { artists, .. } => artists.0.first().map(|artist| artist.name.clone()),
+        // Local files carry a single free-form string rather than a list.
+        UniqueFields::Local { artists, .. } => artists.clone(),
+        // Podcasts have a show, not an artist; showing it beats showing nothing.
+        UniqueFields::Episode { show_name, .. } => Some(show_name.clone()),
+    }
 }
 
 /// Result of checking whether audio can actually be played on this machine.
@@ -218,6 +233,9 @@ impl LocalPlayer {
                 self.state.current_track_name = Some(audio_item.name.clone());
                 self.state.duration_ms = audio_item.duration_ms;
                 self.state.current_track_uri = Some(audio_item.uri.clone());
+                if let Some(artist) = artist_from_unique_fields(&audio_item.unique_fields) {
+                    self.state.current_artist_name = Some(artist);
+                }
             }
             VolumeChanged { volume } => {
                 self.state.volume = volume;
@@ -282,6 +300,75 @@ mod tests {
         assert_eq!(state.progress_ms, 0);
         assert_eq!(state.duration_ms, 0);
         assert_eq!(state.volume, 0);
+    }
+
+    /// Regression for #58: the artist is present in every TrackChanged event
+    /// and was never read, so local playback showed a stale or empty artist.
+    #[test]
+    fn artist_is_extracted_from_a_track() {
+        use librespot::core::{SpotifyId, SpotifyUri};
+        use librespot::metadata::artist::{ArtistRole, ArtistWithRole, ArtistsWithRole};
+
+        let any_id = SpotifyUri::Artist {
+            id: SpotifyId::from_raw(&[0u8; 16]).expect("16 zero bytes is a valid id"),
+        };
+
+        let fields = UniqueFields::Track {
+            artists: ArtistsWithRole(vec![
+                ArtistWithRole {
+                    id: any_id.clone(),
+                    name: "Kendrick Lamar".to_string(),
+                    role: ArtistRole::ARTIST_ROLE_MAIN_ARTIST,
+                },
+                ArtistWithRole {
+                    id: any_id,
+                    name: "Someone Else".to_string(),
+                    role: ArtistRole::ARTIST_ROLE_MAIN_ARTIST,
+                },
+            ]),
+            album: "Not Like Us".to_string(),
+            album_artists: vec![],
+            popularity: 0,
+            number: 1,
+            disc_number: 1,
+        };
+
+        assert_eq!(
+            artist_from_unique_fields(&fields),
+            Some("Kendrick Lamar".to_string()),
+            "should take the first credited artist"
+        );
+    }
+
+    #[test]
+    fn artist_is_none_when_a_track_credits_nobody() {
+        use librespot::metadata::artist::ArtistsWithRole;
+
+        let fields = UniqueFields::Track {
+            artists: ArtistsWithRole(vec![]),
+            album: "x".to_string(),
+            album_artists: vec![],
+            popularity: 0,
+            number: 1,
+            disc_number: 1,
+        };
+        assert_eq!(artist_from_unique_fields(&fields), None);
+    }
+
+    #[test]
+    fn artist_is_extracted_from_a_local_file() {
+        let fields = UniqueFields::Local {
+            artists: Some("Some Artist".to_string()),
+            album: None,
+            album_artists: None,
+            number: None,
+            disc_number: None,
+            path: std::path::PathBuf::from("/tmp/x.mp3"),
+        };
+        assert_eq!(
+            artist_from_unique_fields(&fields),
+            Some("Some Artist".to_string())
+        );
     }
 
     #[test]
