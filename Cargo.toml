@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 # Only for geteuid(): /proc/self/status is Linux-only and macOS is a shipped target.
 libc = "0.2"
+# Checksum verification for `joshify update`.
+sha2 = "0.10"
+# Staging directory for the downloaded binary before it replaces the running one.
+tempfile = "3"
 ratatui = "0.29"
 ratatui-image = "10.0"
 rspotify = "0.16"
@@ -14,7 +18,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = "0.25"
 anyhow = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 url = "2.5"
 crossterm = "0.28"
 chrono = "0.4"
@@ -57,7 +61,6 @@ librespot = { git = "https://github.com/librespot-org/librespot", branch = "dev"
 [dev-dependencies]
 mockall = "0.13"
 tokio-test = "0.4"
-tempfile = "3"
 serial_test = "3"
 
 

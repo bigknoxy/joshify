@@ -147,6 +147,28 @@ System libraries needed to build from source (installed automatically by
 - Linux: `libasound2-dev pkg-config libssl-dev build-essential libchafa-dev libglib2.0-dev`
 - macOS: `brew install pkgconf chafa`
 
+### Updating and uninstalling
+
+```bash
+joshify update            # update to the latest release; does nothing if current
+joshify update --check    # report whether an update exists, change nothing
+joshify update --version v0.7.7   # install a specific release
+
+joshify uninstall             # remove the binary, keep config and cache
+joshify uninstall --purge     # also delete config, credentials and cache
+joshify uninstall --purge --yes   # ...without the confirmation prompt
+```
+
+`update` verifies the download against the release's published `SHA256SUMS`
+and **refuses to install on a mismatch**. It replaces the binary atomically, so
+an interrupted update cannot leave a half-written executable and a running
+joshify keeps working. On platforms with no prebuilt binary (Linux aarch64,
+Intel macOS — see [#33](https://github.com/bigknoxy/joshify/issues/33)) it says
+so and points at `install.sh` rather than installing something that cannot run.
+
+`uninstall` keeps your credentials and cache unless you pass `--purge`, and
+`--purge` confirms before deleting them unless you pass `--yes`.
+
 ### Headless / non-interactive setup
 
 Run the credential setup and authorization without ever starting the TUI:
