@@ -1,3 +1,18 @@
+## [0.7.7](https://github.com/bigknoxy/joshify/compare/v0.7.6...v0.7.7) (2026-08-25)
+
+### Bug Fixes
+
+- **Album header showed the artist as "Unknown"** ([#58](https://github.com/bigknoxy/joshify/issues/58)): `LoadAction::AlbumTracks` carried only an album id and name, so the real artist and cover URL the caller already had were dropped and replaced with the literal `"Unknown"` and `None`. The album tracks endpoint returns no album-level metadata to recover them from. The action now carries both.
+- **Local playback never updated the artist** ([#58](https://github.com/bigknoxy/joshify/issues/58)): the librespot `TrackChanged` handler set the track name, duration and URI but never read the artist, which is present in the event. After a context auto-advance the artist on screen still belonged to the previous track.
+- **Album art never appeared** ([#59](https://github.com/bigknoxy/joshify/issues/59)): the art was fetched and drawn, then erased. A Kitty graphics payload was built regardless of terminal support, and once one existed the post-draw path space-filled the album-art rectangle every frame before writing Kitty escapes that terminals such as Windows Terminal ignore. Because that clearing writes directly to stdout, it scrubbed the ASCII fallback that ratatui had already drawn. The payload is now only built for terminals that can display it.
+
+### Technical Details
+
+- New `player::artist_from_unique_fields()` handles tracks, local files and episodes
+- New `Protocol::supports_inline_image()`; the terminal's capability is detected once at startup instead of per frame
+- Regression tests for both bugs, including a serialized test that a `TERM=xterm-256color` session resolves to the ASCII renderer — the pre-existing detection test set no environment and passed by accident
+- The ASCII album-art rendering itself is still low fidelity and the album-detail view still shows no cover; both are tracked as follow-ups on [#59](https://github.com/bigknoxy/joshify/issues/59)
+
 ## [0.7.6](https://github.com/bigknoxy/joshify/compare/v0.7.5...v0.7.6) (2026-08-25)
 
 ### Bug Fixes
