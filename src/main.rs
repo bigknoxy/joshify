@@ -107,6 +107,12 @@ fn advance_local_playback(app: &mut App) {
     else {
         tracing::info!("EndOfTrack: No more tracks to play (queue empty, context exhausted)");
         app.status_message = Some("Playback ended".to_string());
+        // Actually stop audio — the UI says playback ended, so silence must
+        // agree (previously the current track kept playing underneath).
+        if let Some(ref player) = app.local_player {
+            player.stop();
+        }
+        app.player_state.is_playing = false;
     }
 }
 
@@ -1211,6 +1217,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         // Reset the wall-clock fallback so it doesn't double-count.
                         app.last_progress_tick_ms = now;
                     }
+                    PlayerEvent::PositionChanged {
+                        track_id,
+                        position_ms,
+                        ..
+                    } => {
+                        // Periodic REAL position from librespot (1s interval).
+                        // Only accepted for the track we believe is playing so
+                        // a stale event can't rewind a freshly-loaded track.
+                        if Some(&track_id.to_uri()) == app.player_state.current_track_uri.as_ref() {
+                            app.player_state.progress_ms = *position_ms;
+                            app.last_progress_tick_ms = now;
+                        }
+                    }
                     PlayerEvent::Loading {
                         track_id,
                         position_ms,
@@ -1494,8 +1513,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = DefaultHasher::new();
                 frame_area.hash(&mut hasher);
-                kitty_data.len().hash(&mut hasher);
-                kitty_data.get(..64).unwrap_or(kitty_data).hash(&mut hasher);
+                // Hash the FULL payload: the first 64 bytes are identical
+                // boilerplate for every cover at the fixed resize, so a short
+                // hash could collide two different covers of equal length and
+                // silently keep the old one on screen.
+                kitty_data.hash(&mut hasher);
                 Some(hasher.finish())
             }
             _ => None,

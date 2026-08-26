@@ -176,19 +176,24 @@ impl PlayerState {
             self.kitty_written_sig = prev.kitty_written_sig;
         } else {
             self.clear_album_art();
-            // Keep prev's last render area so the on-screen pixels are cleared.
+            // Carry the stale render markers so the display loop erases the
+            // previous cover exactly once (Clear), then resets them.
             self.last_kitty_render_area = prev.last_kitty_render_area;
+            self.kitty_written_sig = prev.kitty_written_sig;
         }
     }
 
     /// Drop fetched art payloads (used when the track changes in place, e.g.
     /// local `TrackChanged`, where no fresh state object is built).
+    ///
+    /// Keeps `kitty_written_sig`: with the payload gone, the display loop sees
+    /// (no payload, stale signature) and erases the previous cover exactly
+    /// once before resetting the signature itself.
     pub fn clear_album_art(&mut self) {
         self.current_album_art_data = None;
         self.current_album_art_kitty = None;
         self.current_album_art_ascii = None;
         self.art_rendered_for_area = None;
-        self.kitty_written_sig = None;
     }
 
     /// Clear art only when moving away from `previous_uri` (local track change).
@@ -351,9 +356,10 @@ mod tests {
         assert!(next.current_album_art_data.is_none());
         assert!(next.current_album_art_kitty.is_none());
         assert!(next.current_album_art_ascii.is_none());
-        // The old on-screen image must still be erased by the render loop.
+        // The old on-screen image must be erased exactly once: the stale
+        // signature stays so the display loop emits a Clear, not a Skip.
         assert_eq!(next.last_kitty_render_area, prev.last_kitty_render_area);
-        assert!(next.kitty_written_sig.is_none());
+        assert_eq!(next.kitty_written_sig, Some(42));
         assert!(next.art_rendered_for_area.is_none());
     }
 

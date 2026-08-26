@@ -53,7 +53,6 @@ Target: **80% line coverage** on critical paths.
 | `test_start_playback` | Play specific track URI | Yes |
 | `test_add_to_queue` | Add track to queue | Yes |
 | `test_seek` | Seek to position | Yes |
-| `test_rate_limit_backoff` | Exponential backoff on 429 | Yes |
 | `test_invalid_track_uri` | Handle malformed URI | Yes |
 
 ### 5. UI Components (`tests/ui.rs`)
@@ -105,7 +104,6 @@ Target: **80% line coverage** on critical paths.
 | `test_album_art_timeout` | Fetch times out — graceful fallback, no panic | Yes |
 | `test_malformed_json` | Spotify returns invalid JSON — error logged, app continues | Yes |
 | `test_keyring_failure` | Keyring returns Err — plaintext fallback works | Yes |
-| `test_rate_limit_exhaust` | 5 rate limits — error shown, app recoverable | Yes |
 | `test_token_expiry_mid_session` | Token expires during use — graceful re-auth prompt | Yes |
 
 ## Running Tests
