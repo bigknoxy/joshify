@@ -1,3 +1,24 @@
+## [0.8.2](https://github.com/bigknoxy/joshify/compare/v0.8.1...v0.8.2) (2026-08-26)
+
+### Bug Fixes
+
+- **Album cover art no longer disappears after ~2 seconds** ([#65](https://github.com/bigknoxy/joshify/pull/65)): the 2-second playback poll rebuilt the player state from scratch and wiped the fetched art, while art was only ever fetched when the track *changed* — so in remote mode the cover flashed and vanished for the rest of the track, leaving a perpetual "Loading" box. Art payloads are now preserved across polls for the same track, cleared on track change (no more stale covers in local mode), and re-fetched with a cooldown when a track has a cover URL but no payload.
+- **Albums that silently never showed art now work**: the cache wrote whatever the CDN returned into a permanent disk cache without checking status or decoding it — one 404/error page blanked an album forever, even across restarts. Responses are validated (2xx + decodes as an image) before caching; legacy poisoned entries are detected on read and evicted so they can be re-fetched.
+- **Kitty album art no longer flickers**: the display loop deleted, space-filled and rewrote the image roughly seven times per second even when nothing changed. A payload signature now gates it — untouched frames do nothing, changed images redraw once, vanished images erase once.
+- **Playback no longer dies or skips tracks at track boundaries during local playback** ([#65](https://github.com/bigknoxy/joshify/pull/65)): joshify and spirc both drove the same librespot Player, and a `Stopped` event (spirc's late stop of the previous track) triggered a second auto-advance — intermittently skipping tracks or killing playback depending on timing. Advance decisions are now gated to end-of-track events for the track actually playing; `n` advances explicitly through the same queue → context path.
+- **Silent failures now say something**: `Unavailable` (region-blocked / removed track / dead session) and `SessionDisconnected` were swallowed while the progress bar kept ticking over silence. Both now surface a clear status message and stop the clock. Progress is driven by librespot's real 1-second position updates instead of wall-clock guessing.
+- **Left arrow seeks back 10 seconds** instead of re-applying the current volume in remote mode (copy-paste bug); both arrows update the visible position immediately. Local `p` (previous) works again via a play history stack — restarts the current track when there's nowhere to go back to.
+- **Album playback continues past the first song**: playing a track from the album view builds an album context queue, so local auto-advance walks the whole album instead of declaring "Playback ended" after one track. `n` at the true end of the queue now actually stops audio instead of saying it ended while sound continued.
+
+### Removed
+
+- ~2,600 lines of dead code: `daemon.rs`, `media_control.rs`, `notifications.rs`, `api/rate_limit.rs` and `playback/service.rs` had zero call sites from the binary, and README documented `joshify daemon` commands that did not exist at runtime. The landing page now advertises Spotify Connect handoff honestly instead of a daemon mode. No behaviour change — none of it was reachable.
+
+### Technical Details
+
+- Every behavioural fix landed TDD-style against falsifying tests written red-first: art preservation/clearing (`sync_art_with`), the advance gate (`should_auto_advance`), the Kitty Skip/Redraw/Clear decision, cache validation incl. disk self-healing, and transport-key mapping (`playback_keys`) which regression-proofs the Left-arrow class of bug
+- Test suite: 576 passing across all targets; clippy `-D warnings --all-targets` clean
+
 ## [0.8.1](https://github.com/bigknoxy/joshify/compare/v0.8.0...v0.8.1) (2026-08-25)
 
 ### Bug Fixes
