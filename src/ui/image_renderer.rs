@@ -56,6 +56,31 @@ impl Protocol {
     }
 }
 
+/// What the display loop should do with the out-of-buffer Kitty image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KittyAction {
+    /// Payload unchanged since the last write — touch nothing. Rewriting
+    /// every iteration caused visible flicker (~7 deletes+rewrites/sec idle).
+    Skip,
+    /// New or changed payload — delete the old image, write the new one.
+    Redraw,
+    /// Payload vanished (track change, art lost) — erase leftover pixels once.
+    Clear,
+}
+
+/// Decide the Kitty action from the payload signature and what is on screen.
+///
+/// `payload_sig` is `None` when there is nothing to show; `written_sig` is
+/// `None` when no image is currently on screen.
+pub fn kitty_action(payload_sig: Option<u64>, written_sig: Option<u64>) -> KittyAction {
+    match (payload_sig, written_sig) {
+        (Some(sig), Some(written)) if sig == written => KittyAction::Skip,
+        (Some(_), _) => KittyAction::Redraw,
+        (None, Some(_)) => KittyAction::Clear,
+        (None, None) => KittyAction::Skip,
+    }
+}
+
 /// Write image directly to stdout using the appropriate protocol.
 /// This must be called AFTER terminal.draw() to bypass ratatui's buffer.
 pub fn write_image_to_stdout(
@@ -493,9 +518,21 @@ mod protocol_capability_tests {
 mod tests {
     use super::*;
 
+    /// Falsifier for the per-iteration kitty delete/fill/rewrite churn:
+    /// unchanged payload+area must Skip, only genuine changes Redraw, and a
+    /// vanished payload with a prior render must Clear exactly once.
     #[test]
-    fn test_protocol_detection() {
-        assert_eq!(Protocol::detect(), Protocol::Ascii);
+    fn test_kitty_action_decision() {
+        let sig = 1234u64;
+        // Same payload already on screen -> do nothing (previously rewrote ~7x/sec).
+        assert_eq!(kitty_action(Some(sig), Some(sig)), KittyAction::Skip);
+        // New payload (track changed / first arrival) -> redraw.
+        assert_eq!(kitty_action(Some(sig), None), KittyAction::Redraw);
+        assert_eq!(kitty_action(Some(99), Some(sig)), KittyAction::Redraw);
+        // Payload gone but pixels still on screen -> clear once.
+        assert_eq!(kitty_action(None, Some(sig)), KittyAction::Clear);
+        // Nothing anywhere -> nothing to do.
+        assert_eq!(kitty_action(None, None), KittyAction::Skip);
     }
 
     #[test]

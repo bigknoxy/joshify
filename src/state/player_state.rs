@@ -75,6 +75,9 @@ pub struct PlayerState {
     pub art_rendered_for_area: Option<ratatui::prelude::Rect>,
     /// Area where the last Kitty image was rendered (for clearing on resize/track change)
     pub last_kitty_render_area: Option<ratatui::prelude::Rect>,
+    /// Signature of the Kitty payload currently on screen (area + image bytes).
+    /// Lets the render loop skip redundant delete/fill/rewrite cycles.
+    pub kitty_written_sig: Option<u64>,
     pub title_scroll_state: TitleScrollState,
 }
 
@@ -139,6 +142,7 @@ impl PlayerState {
             repeat_mode: RepeatMode::from_spotify(ctx.repeat_state),
             art_rendered_for_area: None,
             last_kitty_render_area: None,
+            kitty_written_sig: None,
             title_scroll_state: TitleScrollState::Static,
         }
     }
@@ -150,6 +154,47 @@ impl PlayerState {
             (None, Some(_)) => true,
             (Some(_), None) => true,
             (None, None) => false,
+        }
+    }
+
+    /// Reconcile freshly-built state's album art with the previous state.
+    ///
+    /// Polls rebuild the whole `PlayerState` from the API; without this, the
+    /// already-downloaded art was wiped every poll and never re-fetched
+    /// (the track URI had not "changed"). Same track → carry the payloads;
+    /// new track → drop stale art but keep the old Kitty area so the render
+    /// loop erases the previous cover exactly once.
+    pub fn sync_art_with(&mut self, prev: &PlayerState) {
+        if self.current_track_uri.is_some() && self.current_track_uri == prev.current_track_uri {
+            self.current_album_art_data = prev.current_album_art_data.clone();
+            self.current_album_art_kitty = prev.current_album_art_kitty.clone();
+            self.current_album_art_ascii = prev.current_album_art_ascii.clone();
+            self.art_rendered_for_area = prev.art_rendered_for_area;
+            // Keep the on-screen render markers so the display loop can tell
+            // the payload is unchanged and skip the rewrite entirely.
+            self.last_kitty_render_area = prev.last_kitty_render_area;
+            self.kitty_written_sig = prev.kitty_written_sig;
+        } else {
+            self.clear_album_art();
+            // Keep prev's last render area so the on-screen pixels are cleared.
+            self.last_kitty_render_area = prev.last_kitty_render_area;
+        }
+    }
+
+    /// Drop fetched art payloads (used when the track changes in place, e.g.
+    /// local `TrackChanged`, where no fresh state object is built).
+    pub fn clear_album_art(&mut self) {
+        self.current_album_art_data = None;
+        self.current_album_art_kitty = None;
+        self.current_album_art_ascii = None;
+        self.art_rendered_for_area = None;
+        self.kitty_written_sig = None;
+    }
+
+    /// Clear art only when moving away from `previous_uri` (local track change).
+    pub fn clear_stale_art_if_track_changed(&mut self, previous_uri: Option<&str>) {
+        if self.track_changed(previous_uri) {
+            self.clear_album_art();
         }
     }
 
@@ -257,6 +302,81 @@ mod tests {
         state.current_track_uri = None;
         assert!(state.track_changed(Some("spotify:track:abc")));
         assert!(!state.track_changed(None));
+    }
+
+    /// Falsifier for FM-1: a fresh state for the SAME track must inherit the
+    /// already-fetched art payloads instead of dropping back to "Loading".
+    #[test]
+    fn test_sync_art_with_preserves_payloads_for_same_track() {
+        use ratatui::layout::Rect;
+        let prev = PlayerState {
+            current_track_uri: Some("spotify:track:a".to_string()),
+            current_album_art_data: Some(vec![1, 2, 3]),
+            current_album_art_ascii: Some(Vec::new()),
+            art_rendered_for_area: Some(Rect::new(0, 0, 12, 6)),
+            ..Default::default()
+        };
+
+        let mut next = PlayerState {
+            current_track_uri: Some("spotify:track:a".to_string()),
+            ..Default::default()
+        };
+        next.sync_art_with(&prev);
+
+        assert_eq!(next.current_album_art_data, Some(vec![1, 2, 3]));
+        assert!(next.current_album_art_ascii.is_some());
+        assert!(next.art_rendered_for_area.is_some());
+    }
+
+    /// Falsifier for FM-2's stale-cover half: new track must NOT inherit the
+    /// previous track's art, and must not keep rendered markers around.
+    #[test]
+    fn test_sync_art_with_clears_stale_art_on_track_change() {
+        use ratatui::layout::Rect;
+        let prev = PlayerState {
+            current_track_uri: Some("spotify:track:a".to_string()),
+            current_album_art_data: Some(vec![9]),
+            current_album_art_kitty: Some(Vec::new()),
+            last_kitty_render_area: Some(Rect::new(0, 0, 1, 1)),
+            kitty_written_sig: Some(42),
+            ..Default::default()
+        };
+
+        let mut next = PlayerState {
+            current_track_uri: Some("spotify:track:b".to_string()),
+            ..Default::default()
+        };
+        next.sync_art_with(&prev);
+
+        assert!(next.current_album_art_data.is_none());
+        assert!(next.current_album_art_kitty.is_none());
+        assert!(next.current_album_art_ascii.is_none());
+        // The old on-screen image must still be erased by the render loop.
+        assert_eq!(next.last_kitty_render_area, prev.last_kitty_render_area);
+        assert!(next.kitty_written_sig.is_none());
+        assert!(next.art_rendered_for_area.is_none());
+    }
+
+    /// Local-mode TrackChanged mutates fields in place; art must be dropped
+    /// when the URI moved on so the previous cover never lingers.
+    #[test]
+    fn test_clear_stale_art_if_track_changed_drops_old_cover() {
+        let mut state = PlayerState {
+            current_track_uri: Some("spotify:track:a".to_string()),
+            current_album_art_data: Some(vec![7]),
+            current_album_art_ascii: Some(Vec::new()),
+            ..Default::default()
+        };
+
+        state.clear_stale_art_if_track_changed(Some("spotify:track:b"));
+        assert!(state.current_album_art_data.is_none());
+        assert!(state.current_album_art_ascii.is_none());
+
+        // Same track: art must survive.
+        state.current_track_uri = Some("spotify:track:b".to_string());
+        state.current_album_art_data = Some(vec![7]);
+        state.clear_stale_art_if_track_changed(Some("spotify:track:b"));
+        assert!(state.current_album_art_data.is_some());
     }
 
     #[test]

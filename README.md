@@ -45,9 +45,8 @@
 - 🎭 **7 Beautiful Themes** - Catppuccin, Gruvbox, Nord, Tokyo Night, Dracula, and more
 - ⌨️ **Keyboard First** - Vim-style navigation, all actions via keyboard
 - 🖱️ **Mouse Support** - Click to play, scroll to navigate
-- 🔔 **Desktop Notifications** - Native OS notifications on track change
+- 📱 **Spotify Connect** - Shows up in your Spotify app's device list for handoff
 - 💻 **CLI Mode** - Full command-line interface for scripting
-- 🔄 **Daemon Mode** - Background service with IPC control
 - 📸 **Visual Testing** - Automated screenshot testing with VHS
 - ⚡ **Lightning Fast** - Built with Rust for minimal resource usage
 
@@ -280,17 +279,6 @@ joshify current
 # Search and queue
 joshify search "never gonna give you up"
 joshify queue-add <track-uri>
-```
-
-### Daemon Mode
-
-```bash
-# Start daemon
-joshify daemon
-
-# Control via CLI
-joshify daemon-send play
-joshify daemon-send pause
 ```
 
 ## 🧪 Testing

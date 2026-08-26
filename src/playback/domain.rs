@@ -324,6 +324,22 @@ impl CurrentSource {
     }
 }
 
+/// Decide whether an `EndOfTrack` event should trigger an auto-advance.
+///
+/// The same librespot `Player` is driven by both this app and spirc, so a
+/// track boundary can produce events for the OLD track after we have already
+/// optimistically loaded the next one (spirc's late stop arrives as a
+/// `Stopped`/`EndOfTrack` for the previous URI). Only an end-of-track for the
+/// track we believe is playing may advance; anything else is a stale echo.
+///
+/// With no known current URI we fall back to legacy behaviour and advance.
+pub fn should_auto_advance(event_track_uri: &str, currently_playing_uri: Option<&str>) -> bool {
+    match currently_playing_uri {
+        Some(current) => current == event_track_uri,
+        None => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PlaybackQueue
 // ---------------------------------------------------------------------------
@@ -2185,5 +2201,25 @@ mod tests {
         queue.advance();
         queue.advance();
         assert_eq!(queue.remaining_count(), 0);
+    }
+
+    /// Falsifier for the spirc double-driver race: an EndOfTrack for a track
+    /// we have ALREADY advanced past (spirc's late stop of the previous track)
+    /// must never trigger a second advance.
+    #[test]
+    fn test_should_auto_advance_rejects_end_of_track_for_previous_track() {
+        // Natural end: event matches what's playing -> advance.
+        assert!(should_auto_advance(
+            "spotify:track:b",
+            Some("spotify:track:b")
+        ));
+        // We optimistically loaded B; spirc's stop of A arrives as a late
+        // EndOfTrack/Stopped for A -> must NOT advance again.
+        assert!(!should_auto_advance(
+            "spotify:track:a",
+            Some("spotify:track:b")
+        ));
+        // Unknown current track: fall back to legacy behaviour (advance).
+        assert!(should_auto_advance("spotify:track:a", None));
     }
 }
