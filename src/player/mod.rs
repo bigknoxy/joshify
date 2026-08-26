@@ -31,6 +31,14 @@ pub struct PlaybackState {
     pub volume: u16, // 0-65535
 }
 
+/// Convert a 0-100 volume percentage to the 0-65535 range used by librespot.
+///
+/// Arithmetic is done in `u32` to avoid overflow before the cast to `u16`.
+/// Values above 100 are clamped.
+pub fn percent_to_volume(percent: u32) -> u16 {
+    (percent.min(100) * 65535 / 100) as u16
+}
+
 /// Extract a display artist from a librespot audio item.
 ///
 /// The artist is present in every `TrackChanged` event and was simply never
@@ -300,6 +308,33 @@ mod tests {
         assert_eq!(state.progress_ms, 0);
         assert_eq!(state.duration_ms, 0);
         assert_eq!(state.volume, 0);
+    }
+
+    #[test]
+    fn percent_to_volume_full_range() {
+        assert_eq!(percent_to_volume(0), 0);
+        assert_eq!(percent_to_volume(1), 655);
+        assert_eq!(percent_to_volume(50), 32767);
+        assert_eq!(percent_to_volume(100), 65535);
+    }
+
+    #[test]
+    fn percent_to_volume_clamps_above_100() {
+        assert_eq!(percent_to_volume(150), 65535);
+        assert_eq!(percent_to_volume(200), 65535);
+    }
+
+    /// Regression for issue #10: scaling used `(percent as u16) * 65535`,
+    /// overflowing for any percent >= 2. Sweep every input so a return to
+    /// narrow integer math panics here under debug assertions.
+    #[test]
+    fn percent_to_volume_sweep_is_monotonic() {
+        let mut prev = 0;
+        for percent in 0..=500u32 {
+            let vol = percent_to_volume(percent);
+            assert!(vol >= prev, "volume must not decrease as percent rises");
+            prev = vol;
+        }
     }
 
     /// Regression for #58: the artist is present in every TrackChanged event
