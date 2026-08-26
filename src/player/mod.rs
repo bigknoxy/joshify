@@ -142,7 +142,13 @@ impl LocalPlayer {
         let mixer_config = MixerConfig::default();
         let mixer = mixer_builder(mixer_config).context("Failed to create mixer")?;
 
-        let player_config = PlayerConfig::default();
+        // Emit PositionChanged once a second so the UI can show the REAL
+        // playback position instead of guessing from wall-clock time (which
+        // kept ticking after silent failures).
+        let player_config = PlayerConfig {
+            position_update_interval: Some(std::time::Duration::from_secs(1)),
+            ..PlayerConfig::default()
+        };
         let audio_format = AudioFormat::default();
 
         let player = Player::new(

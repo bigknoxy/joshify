@@ -15,6 +15,107 @@ use librespot::core::authentication::Credentials;
 use rspotify::clients::OAuthClient;
 use std::sync::Arc;
 
+/// Minimum interval between album-art fetch attempts (per app, not per URL).
+const ART_FETCH_COOLDOWN_MS: u64 = 2000;
+
+/// Advance local playback: user queue first, then context tracks, then stop.
+///
+/// Shared by the `EndOfTrack` handler and the explicit next-track key so both
+/// paths behave identically.
+fn advance_local_playback(app: &mut App) {
+    app.push_local_history();
+    if !app.queue_state.local_queue.is_empty() {
+        tracing::info!(
+            "EndOfTrack: Found {} items in user queue, advancing",
+            app.queue_state.local_queue.len()
+        );
+        if let Some(next_entry) = app.queue_state.next_track() {
+            if let Some(ref player) = app.local_player {
+                match player.load_uri(&next_entry.uri, true, 0) {
+                    Ok(_) => {
+                        app.player_state.current_track_name = Some(next_entry.name.clone());
+                        app.player_state.current_artist_name = Some(next_entry.artist.clone());
+                        app.player_state.current_track_uri = Some(next_entry.uri.clone());
+                        app.player_state.is_playing = true;
+                        app.player_state.progress_ms = 0;
+                        app.status_message =
+                            Some(format!("Playing next from queue: {}", next_entry.name));
+                        tracing::info!("Auto-advanced to user queue item: {}", next_entry.name);
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Queue playback error: {}", e));
+                        tracing::warn!("Queue playback failed: {}", e);
+                    }
+                }
+            }
+        }
+    }
+    // PHASE 2: Check context tracks if user queue is empty
+    else if app.queue_state.playback_queue().remaining_context_tracks() > 0 {
+        let remaining = app.queue_state.playback_queue().remaining_context_tracks();
+        tracing::info!(
+            "EndOfTrack: User queue empty, {} context tracks remaining. Advancing...",
+            remaining
+        );
+
+        // Advance to next context track
+        if let Some(next_uri) = app.queue_state.playback_queue_mut().advance() {
+            tracing::info!("EndOfTrack: Advancing to next context track: {}", next_uri);
+
+            if let Some(ref player) = app.local_player {
+                match player.load_uri(&next_uri, true, 0) {
+                    Ok(_) => {
+                        // Try to get track info from the content state
+                        let track_name = app
+                            .player_state
+                            .current_track_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        let artist_name = app
+                            .player_state
+                            .current_artist_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string());
+
+                        app.player_state.current_track_uri = Some(next_uri.clone());
+                        app.player_state.is_playing = true;
+                        app.player_state.progress_ms = 0;
+                        app.status_message = Some(format!(
+                            "Playing next from playlist: {} - {}",
+                            track_name, artist_name
+                        ));
+                        tracing::info!(
+                            "Auto-advanced to context track: {} ({} remaining)",
+                            next_uri,
+                            app.queue_state.playback_queue().remaining_context_tracks()
+                        );
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Context playback error: {}", e));
+                        tracing::warn!("Failed to load next context track {}: {}", next_uri, e);
+                    }
+                }
+            }
+        } else {
+            tracing::warn!(
+                "EndOfTrack: advance() returned None despite {} remaining tracks",
+                remaining
+            );
+        }
+    }
+    // PHASE 3: Nothing left to play
+    else {
+        tracing::info!("EndOfTrack: No more tracks to play (queue empty, context exhausted)");
+        app.status_message = Some("Playback ended".to_string());
+        // Actually stop audio — the UI says playback ended, so silence must
+        // agree (previously the current track kept playing underneath).
+        if let Some(ref player) = app.local_player {
+            player.stop();
+        }
+        app.player_state.is_playing = false;
+    }
+}
+
 /// Highlighted item in the current view (for queue operations)
 #[derive(Debug, Clone)]
 struct HighlightedItem {
@@ -24,12 +125,28 @@ struct HighlightedItem {
     _context: Option<PlaybackContext>,
 }
 
+impl App {
+    /// Record the currently playing track on the local previous-history stack.
+    fn push_local_history(&mut self) {
+        if let Some(uri) = self.player_state.current_track_uri.clone() {
+            if self.local_history.last() != Some(&uri) {
+                self.local_history.push(uri);
+                if self.local_history.len() > 50 {
+                    self.local_history.remove(0);
+                }
+            }
+        }
+    }
+}
+
 /// Application state
 struct App {
     selected_nav: NavItem,
     is_authenticated: bool,
     player_state: PlayerState,
     queue_state: joshify::state::queue_state::QueueState,
+    /// Previously played track URIs for local `p` (previous) — newest last.
+    local_history: Vec<String>,
     highlighted_item: Option<HighlightedItem>,
     current_context: Option<PlaybackContext>,
     status_message: Option<String>,
@@ -94,6 +211,7 @@ impl App {
             playback_mode: PlaybackMode::Local,
             local_session: None,
             local_player: None,
+            local_history: Vec::new(),
             player_event_rx: None,
             loading_more_liked_songs: false,
             layout_cache: joshify::ui::LayoutCache::new(),
@@ -164,7 +282,12 @@ impl App {
         let client_guard = client.lock().await;
         match client_guard.current_playback().await {
             Ok(Some(ctx)) => {
-                self.player_state = PlayerState::from_context(&ctx);
+                // Rebuild from the API response, then reconcile album art with
+                // the previous state: same track keeps its fetched payloads,
+                // a new track starts clean (stale cover never lingers).
+                let mut new_state = PlayerState::from_context(&ctx);
+                new_state.sync_art_with(&self.player_state);
+                self.player_state = new_state;
 
                 let new_track_uri = self.player_state.current_track_uri.clone();
                 let new_is_playing = self.player_state.is_playing;
@@ -213,10 +336,23 @@ impl App {
                 }
 
                 let new_album_art_url = self.player_state.current_album_art_url.clone();
+                let art_missing = self.player_state.current_album_art_data.is_none();
 
-                if new_track_uri != old_track_uri
-                    && new_track_uri.is_some()
+                // Fetch when the track changed, OR when the current track has
+                // a cover URL but no fetched payload (first poll after startup,
+                // or retrying an earlier failure — throttled by the cooldown).
+                let track_changed = new_track_uri != old_track_uri && new_track_uri.is_some();
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let cooled_down =
+                    now_ms.saturating_sub(self.last_art_fetch_ms) >= ART_FETCH_COOLDOWN_MS;
+
+                if new_track_uri.is_some()
                     && new_album_art_url.is_some()
+                    && art_missing
+                    && (track_changed || cooled_down)
                 {
                     if let (Some(art_url), Some(art_uri)) = (new_album_art_url, new_track_uri) {
                         let cache = self.album_art_cache.clone();
@@ -240,6 +376,7 @@ impl App {
                         });
 
                         self.last_fetched_art_uri = Some(art_uri);
+                        self.last_art_fetch_ms = now_ms;
                     }
                 }
             }
@@ -959,8 +1096,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 }
             }
 
-            // Process batched events (reuse buffer, no allocations)
-            for event in app.event_batch.iter() {
+            // Process batched events. Take the batch out so event handlers
+            // can take `&mut App` (shared advance logic) while iterating;
+            // the Vec is restored afterwards to keep its capacity.
+            let batch = std::mem::take(&mut app.event_batch);
+            for event in batch.iter() {
                 use librespot::playback::player::PlayerEvent;
                 match event {
                     PlayerEvent::Playing {
@@ -981,117 +1121,35 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.player_state.current_track_uri = Some(track_id.to_uri());
                         app.player_state.progress_ms = *position_ms;
                     }
-                    PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
+                    PlayerEvent::Stopped { .. } => {
+                        // spirc stops the player at track boundaries and on
+                        // Connect takeovers; treating this as an advance
+                        // trigger raced with our own load (double-advance /
+                        // dead audio). Advance decisions happen exclusively
+                        // in the EndOfTrack arm.
+                        app.player_state.is_playing = false;
+                    }
+                    PlayerEvent::EndOfTrack { track_id, .. } => {
                         app.player_state.is_playing = false;
 
-                        // PHASE 1: Check user-added queue (up_next) first - highest priority
-                        if !app.queue_state.local_queue.is_empty() {
-                            tracing::info!(
-                                "EndOfTrack: Found {} items in user queue, advancing",
-                                app.queue_state.local_queue.len()
+                        // Ignore stale end-of-track echoes for a track we've
+                        // already moved past (spirc races our optimistic load).
+                        let event_uri = track_id.to_uri();
+                        if !joshify::playback::domain::should_auto_advance(
+                            &event_uri,
+                            app.player_state.current_track_uri.as_deref(),
+                        ) {
+                            tracing::debug!(
+                                "Ignoring EndOfTrack for {}: already playing {}",
+                                event_uri,
+                                app.player_state.current_track_uri.as_deref().unwrap_or("?")
                             );
-                            if let Some(next_entry) = app.queue_state.next_track() {
-                                if let Some(ref player) = app.local_player {
-                                    match player.load_uri(&next_entry.uri, true, 0) {
-                                        Ok(_) => {
-                                            app.player_state.current_track_name =
-                                                Some(next_entry.name.clone());
-                                            app.player_state.current_artist_name =
-                                                Some(next_entry.artist.clone());
-                                            app.player_state.current_track_uri =
-                                                Some(next_entry.uri.clone());
-                                            app.player_state.is_playing = true;
-                                            app.player_state.progress_ms = 0;
-                                            app.status_message = Some(format!(
-                                                "Playing next from queue: {}",
-                                                next_entry.name
-                                            ));
-                                            tracing::info!(
-                                                "Auto-advanced to user queue item: {}",
-                                                next_entry.name
-                                            );
-                                        }
-                                        Err(e) => {
-                                            app.status_message =
-                                                Some(format!("Queue playback error: {}", e));
-                                            tracing::warn!("Queue playback failed: {}", e);
-                                        }
-                                    }
-                                }
-                            }
+                            continue;
                         }
-                        // PHASE 2: Check context tracks if user queue is empty
-                        else if app.queue_state.playback_queue().remaining_context_tracks() > 0 {
-                            let remaining =
-                                app.queue_state.playback_queue().remaining_context_tracks();
-                            tracing::info!(
-                                "EndOfTrack: User queue empty, {} context tracks remaining. Advancing...",
-                                remaining
-                            );
 
-                            // Advance to next context track
-                            if let Some(next_uri) = app.queue_state.playback_queue_mut().advance() {
-                                tracing::info!(
-                                    "EndOfTrack: Advancing to next context track: {}",
-                                    next_uri
-                                );
-
-                                if let Some(ref player) = app.local_player {
-                                    match player.load_uri(&next_uri, true, 0) {
-                                        Ok(_) => {
-                                            // Try to get track info from the content state
-                                            let track_name = app
-                                                .player_state
-                                                .current_track_name
-                                                .clone()
-                                                .unwrap_or_else(|| "Unknown".to_string());
-                                            let artist_name = app
-                                                .player_state
-                                                .current_artist_name
-                                                .clone()
-                                                .unwrap_or_else(|| "Unknown".to_string());
-
-                                            app.player_state.current_track_uri =
-                                                Some(next_uri.clone());
-                                            app.player_state.is_playing = true;
-                                            app.player_state.progress_ms = 0;
-                                            app.status_message = Some(format!(
-                                                "Playing next from playlist: {} - {}",
-                                                track_name, artist_name
-                                            ));
-                                            tracing::info!(
-                                                "Auto-advanced to context track: {} ({} remaining)",
-                                                next_uri,
-                                                app.queue_state
-                                                    .playback_queue()
-                                                    .remaining_context_tracks()
-                                            );
-                                        }
-                                        Err(e) => {
-                                            app.status_message =
-                                                Some(format!("Context playback error: {}", e));
-                                            tracing::warn!(
-                                                "Failed to load next context track {}: {}",
-                                                next_uri,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            } else {
-                                tracing::warn!(
-                                    "EndOfTrack: advance() returned None despite {} remaining tracks",
-                                    remaining
-                                );
-                            }
-                        }
-                        // PHASE 3: Nothing left to play
-                        else {
-                            tracing::info!(
-                                "EndOfTrack: No more tracks to play (queue empty, context exhausted)"
-                            );
-                            app.status_message = Some("Playback ended".to_string());
-                        }
+                        // Advance via the shared helper (user queue,
+                        // then context tracks, then report end of playback).
+                        advance_local_playback(&mut app);
                     }
                     PlayerEvent::TrackChanged { audio_item } => {
                         app.player_state.current_track_name = Some(audio_item.name.clone());
@@ -1154,9 +1212,23 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.player_state.volume = *volume as u32 * 100 / 65535;
                     }
                     PlayerEvent::Seeked { position_ms, .. }
-                    | PlayerEvent::PositionChanged { position_ms, .. }
                     | PlayerEvent::PositionCorrection { position_ms, .. } => {
                         app.player_state.progress_ms = *position_ms;
+                        // Reset the wall-clock fallback so it doesn't double-count.
+                        app.last_progress_tick_ms = now;
+                    }
+                    PlayerEvent::PositionChanged {
+                        track_id,
+                        position_ms,
+                        ..
+                    } => {
+                        // Periodic REAL position from librespot (1s interval).
+                        // Only accepted for the track we believe is playing so
+                        // a stale event can't rewind a freshly-loaded track.
+                        if Some(&track_id.to_uri()) == app.player_state.current_track_uri.as_ref() {
+                            app.player_state.progress_ms = *position_ms;
+                            app.last_progress_tick_ms = now;
+                        }
                     }
                     PlayerEvent::Loading {
                         track_id,
@@ -1166,9 +1238,36 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         app.player_state.current_track_uri = Some(track_id.to_uri());
                         app.player_state.progress_ms = *position_ms;
                     }
+                    PlayerEvent::Unavailable { track_id, .. } => {
+                        // Load failed inside librespot (region block, removed
+                        // track, dead session). Previously swallowed, the UI
+                        // kept "playing" silently forever.
+                        let uri = track_id.to_uri();
+                        if Some(&uri) == app.player_state.current_track_uri.as_ref() {
+                            app.player_state.is_playing = false;
+                            let name = app
+                                .player_state
+                                .current_track_name
+                                .clone()
+                                .unwrap_or_else(|| "track".to_string());
+                            app.status_message =
+                                Some(format!("Couldn't play '{}' — unavailable", name));
+                            tracing::warn!("Track unavailable: {}", uri);
+                        }
+                    }
+                    PlayerEvent::SessionDisconnected { user_name, .. } => {
+                        app.player_state.is_playing = false;
+                        app.status_message =
+                            Some("Spotify session disconnected — restart to reconnect".to_string());
+                        tracing::error!("librespot session disconnected for user {}", user_name);
+                    }
+                    PlayerEvent::SessionConnected { .. } => {
+                        tracing::info!("librespot session connected");
+                    }
                     _ => {}
                 }
             }
+            app.event_batch = batch;
         }
 
         // Increment progress locally when playing based on real elapsed time
@@ -1404,36 +1503,61 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
         // Write album art image directly to stdout (bypasses ratatui buffer)
         // Uses pre-processed Kitty escape sequence (no per-frame image processing)
-        // Important: Must delete the old Kitty image before drawing at a new position.
-        // Kitty images persist on screen until explicitly deleted. On resize, we use
-        // the Kitty delete protocol command which removes only the image pixels without
-        // affecting surrounding text content.
-        if let Some(ref kitty_data) = app.player_state.current_album_art_kitty {
-            // Delete the old Kitty image using the Kitty graphics protocol delete command.
-            // This only removes the image in the specified area, not surrounding text.
-            if let Some(old_area) = app.player_state.last_kitty_render_area {
-                let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
-                // Also clear the area with spaces as a fallback for non-Kitty terminals
-                let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+        // The write is gated on a payload signature so an unchanged image is
+        // NOT deleted/rewritten every loop iteration (~7x/sec idle previously,
+        // causing visible flicker). Redraw happens only when the image or its
+        // area actually changed; Clear erases leftovers exactly once.
+        let kitty_sig = match (&app.player_state.current_album_art_kitty, app.area) {
+            (Some(kitty_data), Some(frame_area)) => {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                frame_area.hash(&mut hasher);
+                // Hash the FULL payload: the first 64 bytes are identical
+                // boilerplate for every cover at the fixed resize, so a short
+                // hash could collide two different covers of equal length and
+                // silently keep the old one on screen.
+                kitty_data.hash(&mut hasher);
+                Some(hasher.finish())
             }
-            let _ = joshify::ui::image_renderer::write_prepared_kitty_image(kitty_data);
-            // Record where we just rendered so we can delete it next time
-            if let Some(frame_area) = app.area {
-                let player_bar_height = 6u16;
-                let sidebar_width = 20u16;
-                let album_art_width = 12u16;
-                app.player_state.last_kitty_render_area = Some(Rect::new(
-                    sidebar_width,
-                    frame_area.height.saturating_sub(player_bar_height),
-                    album_art_width,
-                    player_bar_height,
-                ));
+            _ => None,
+        };
+
+        match joshify::ui::image_renderer::kitty_action(
+            kitty_sig,
+            app.player_state.kitty_written_sig,
+        ) {
+            joshify::ui::image_renderer::KittyAction::Skip => {}
+            joshify::ui::image_renderer::KittyAction::Clear => {
+                if let Some(old_area) = app.player_state.last_kitty_render_area.take() {
+                    let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
+                    let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+                }
+                app.player_state.kitty_written_sig = None;
             }
-        } else {
-            // No current image - clear any previous render area
-            if let Some(old_area) = app.player_state.last_kitty_render_area.take() {
-                let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
-                let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+            joshify::ui::image_renderer::KittyAction::Redraw => {
+                // Delete the previous image (only removes pixels in that area),
+                // then clear the rectangle as a fallback for non-Kitty terminals.
+                if let Some(old_area) = app.player_state.last_kitty_render_area {
+                    let _ = joshify::ui::image_renderer::delete_kitty_image_in_area(old_area);
+                    let _ = joshify::ui::image_renderer::clear_terminal_area(old_area);
+                }
+                if let (Some(kitty_data), Some(frame_area)) = (
+                    app.player_state.current_album_art_kitty.as_deref(),
+                    app.area,
+                ) {
+                    let _ = joshify::ui::image_renderer::write_prepared_kitty_image(kitty_data);
+                    let player_bar_height = 6u16;
+                    let sidebar_width = 20u16;
+                    let album_art_width = 12u16;
+                    app.player_state.last_kitty_render_area = Some(Rect::new(
+                        sidebar_width,
+                        frame_area.height.saturating_sub(player_bar_height),
+                        album_art_width,
+                        player_bar_height,
+                    ));
+                    app.player_state.kitty_written_sig = kitty_sig;
+                }
             }
         }
 
@@ -2457,6 +2581,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                                                 if app.playback_mode == PlaybackMode::Local {
                                                     // Play locally with librespot
+                                                    // Remember current track for local `p`.
+                                                    if let Some(hist_uri) =
+                                                        app.player_state.current_track_uri.clone()
+                                                    {
+                                                        if app.local_history.last()
+                                                            != Some(&hist_uri)
+                                                        {
+                                                            app.local_history.push(hist_uri);
+                                                            if app.local_history.len() > 50 {
+                                                                app.local_history.remove(0);
+                                                            }
+                                                        }
+                                                    }
                                                     if let Some(ref player) = app.local_player {
                                                         match player.load_uri(&track.uri, true, 0) {
                                                             Ok(_) => {
@@ -2661,6 +2798,36 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 && app.selected_index < tracks.len()
                                             {
                                                 let track = &tracks[app.selected_index];
+
+                                                // Give playback an album context so
+                                                // auto-advance continues through the
+                                                // album instead of ending after one track.
+                                                let album_ctx = PlaybackContext::Album {
+                                                    uri: format!("spotify:album:{}", album.id),
+                                                    name: album.name.clone(),
+                                                };
+                                                let album_track_uris: Vec<String> =
+                                                    tracks.iter().map(|t| t.uri.clone()).collect();
+                                                app.current_context = Some(album_ctx.clone());
+                                                {
+                                                    let queue =
+                                                        app.queue_state.playback_queue_mut();
+                                                    queue.set_context(album_ctx, album_track_uris);
+                                                    queue.set_context_position(app.selected_index);
+                                                }
+                                                app.queue_state.sync_from_playback_queue();
+
+                                                // Remember current track for local `p` (previous).
+                                                if let Some(hist_uri) =
+                                                    app.player_state.current_track_uri.clone()
+                                                {
+                                                    if app.local_history.last() != Some(&hist_uri) {
+                                                        app.local_history.push(hist_uri);
+                                                        if app.local_history.len() > 50 {
+                                                            app.local_history.remove(0);
+                                                        }
+                                                    }
+                                                }
 
                                                 // Track the highlighted item for queue operations
                                                 app.highlighted_item = Some(HighlightedItem {
@@ -2960,40 +3127,86 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         // Playback controls (work from any focus)
                         crossterm::event::KeyCode::Char('n') => {
                             if app.playback_mode == PlaybackMode::Local {
-                                if let Some(ref player) = app.local_player {
-                                    player.stop();
+                                // Explicit advance through the same queue →
+                                // context path as EndOfTrack (stop() relied on
+                                // the old Stopped-triggers-advance behaviour).
+                                advance_local_playback(&mut app);
+                            } else if let Some(ref client) = client {
+                                let c = client.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    if let Err(e) = guard.playback_next().await {
+                                        tracing::error!("Next failed: {}", e);
+                                    }
+                                });
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('p') => {
+                            if app.playback_mode == PlaybackMode::Local {
+                                match app.local_history.pop() {
+                                    Some(prev_uri) => {
+                                        if let Some(ref player) = app.local_player {
+                                            match player.load_uri(&prev_uri, true, 0) {
+                                                Ok(_) => {
+                                                    app.player_state.current_track_uri =
+                                                        Some(prev_uri.clone());
+                                                    app.player_state.is_playing = true;
+                                                    app.player_state.progress_ms = 0;
+                                                    app.player_state
+                                                        .clear_stale_art_if_track_changed(None);
+                                                    app.status_message =
+                                                        Some("Playing previous".to_string());
+                                                }
+                                                Err(e) => {
+                                                    app.status_message = Some(format!(
+                                                        "Previous track failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        // Nowhere to go back to: restart the
+                                        // current track instead of doing nothing.
+                                        if let Some(ref player) = app.local_player {
+                                            player.seek(0);
+                                            app.player_state.progress_ms = 0;
+                                        }
+                                    }
                                 }
                             } else if let Some(ref client) = client {
                                 let c = client.clone();
                                 tokio::spawn(async move {
                                     let guard = c.lock().await;
-                                    let _ = guard.playback_next().await;
-                                });
-                            }
-                        }
-                        crossterm::event::KeyCode::Char('p') => {
-                            if let Some(ref client) = client {
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.playback_previous().await;
+                                    if let Err(e) = guard.playback_previous().await {
+                                        tracing::error!("Previous failed: {}", e);
+                                    }
                                 });
                             }
                         }
                         crossterm::event::KeyCode::Left => {
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_pos =
-                                        app.player_state.progress_ms.saturating_sub(10000);
+                                    let new_pos = joshify::playback_keys::seek_back_position(
+                                        app.player_state.progress_ms,
+                                    );
                                     player.seek(new_pos);
+                                    app.player_state.progress_ms = new_pos;
                                 }
                             } else if let Some(ref client) = client {
-                                let new_vol = app.player_state.volume;
+                                // Seek back 10s. (Previously this re-applied
+                                // the volume — a copy-paste from the volume
+                                // handler; Right seeks forward correctly.)
+                                let new_pos = joshify::playback_keys::seek_back_position(
+                                    app.player_state.progress_ms,
+                                );
+                                app.player_state.progress_ms = new_pos;
                                 let c = client.clone();
                                 tokio::spawn(async move {
                                     let guard = c.lock().await;
-                                    if let Err(e) = guard.set_volume(new_vol).await {
-                                        tracing::error!("Volume down failed: {}", e);
+                                    if let Err(e) = guard.seek(new_pos, None).await {
+                                        tracing::error!("Seek back failed: {}", e);
                                     }
                                 });
                             }
@@ -3001,23 +3214,25 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         crossterm::event::KeyCode::Right => {
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_pos = app
-                                        .player_state
-                                        .progress_ms
-                                        .saturating_add(10000)
-                                        .min(app.player_state.duration_ms);
+                                    let new_pos = joshify::playback_keys::seek_forward_position(
+                                        app.player_state.progress_ms,
+                                        app.player_state.duration_ms,
+                                    );
                                     player.seek(new_pos);
+                                    app.player_state.progress_ms = new_pos;
                                 }
                             } else if let Some(ref client) = client {
-                                let new_pos = app
-                                    .player_state
-                                    .progress_ms
-                                    .saturating_add(10000)
-                                    .min(app.player_state.duration_ms);
+                                let new_pos = joshify::playback_keys::seek_forward_position(
+                                    app.player_state.progress_ms,
+                                    app.player_state.duration_ms,
+                                );
+                                app.player_state.progress_ms = new_pos;
                                 let c = client.clone();
                                 tokio::spawn(async move {
                                     let guard = c.lock().await;
-                                    let _ = guard.seek(new_pos, None).await;
+                                    if let Err(e) = guard.seek(new_pos, None).await {
+                                        tracing::error!("Seek forward failed: {}", e);
+                                    }
                                 });
                             }
                         }
@@ -3340,6 +3555,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                                     if app.playback_mode == PlaybackMode::Local {
                                         // Play locally with librespot
+                                        // Remember current track for local `p`.
+                                        if let Some(hist_uri) =
+                                            app.player_state.current_track_uri.clone()
+                                        {
+                                            if app.local_history.last() != Some(&hist_uri) {
+                                                app.local_history.push(hist_uri);
+                                                if app.local_history.len() > 50 {
+                                                    app.local_history.remove(0);
+                                                }
+                                            }
+                                        }
                                         if let Some(ref player) = app.local_player {
                                             match player.load_uri(&track.uri, true, 0) {
                                                 Ok(_) => {

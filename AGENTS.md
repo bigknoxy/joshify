@@ -22,7 +22,7 @@ src/
   main.rs          — Event loop, key handling, playback orchestration
   player/          — Local playback (librespot integration)
   session.rs       — Local session management
-  api/             — Spotify REST client (rate_limit, playback, library)
+  api/             — Spotify REST client (playback, library)
   auth/            — OAuth flow, credential management
   state/           — app_state, player_state, queue_state, library_state, load_coordinator
   ui/              — sidebar, main_view, player_bar, overlays, image_renderer, theme
