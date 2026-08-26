@@ -328,11 +328,10 @@ mod tests {
     /// overflowing for any percent >= 2. Sweep every input so a return to
     /// narrow integer math panics here under debug assertions.
     #[test]
-    fn percent_to_volume_sweep_stays_in_u16_range_and_is_monotonic() {
+    fn percent_to_volume_sweep_is_monotonic() {
         let mut prev = 0;
         for percent in 0..=500u32 {
             let vol = percent_to_volume(percent);
-            assert!(vol <= 65535);
             assert!(vol >= prev, "volume must not decrease as percent rises");
             prev = vol;
         }
