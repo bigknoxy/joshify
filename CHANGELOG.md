@@ -1,3 +1,14 @@
+## [0.8.1](https://github.com/bigknoxy/joshify/compare/v0.8.0...v0.8.1) (2026-08-25)
+
+### Bug Fixes
+
+- **Volume controls panicked in debug and set garbage levels in release during local playback** ([#10](https://github.com/bigknoxy/joshify/issues/10)): the percent-to-librespot conversion multiplied in `u16` — `(percent as u16) * 65535` — which overflows for any volume of 2% or more. Debug builds panicked on a volume keypress; release builds silently wrapped, so 50% sent 654/65535 to librespot instead of ~32768. The new `player::percent_to_volume()` does the scaling in `u32` with clamping above 100, and all five local-mode call sites (volume up/down keys, player-bar focused variants, mouse wheel) route through it. The remote (Spotify API) path already used plain percents and is unchanged.
+
+### Technical Details
+
+- Unit tests cover exact mappings at 0/1/50/100, clamping above 100, and an exhaustive `0..=500` sweep asserting monotonic output — any regression back to narrow integer math panics under debug overflow checks
+- The landing page now reads its release badge from the GitHub releases API at load time (hardcoded fallback), after serving a stale v0.5.0 badge across seven releases
+
 ## [0.8.0](https://github.com/bigknoxy/joshify/compare/v0.7.7...v0.8.0) (2026-08-25)
 
 ### Features
