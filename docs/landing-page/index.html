@@ -947,7 +947,7 @@
         <div class="hero-grid"></div>
         <div class="hero-content">
             <div class="hero-text">
-                <div class="hero-badge">v0.5.0 Available Now</div>
+                <div class="hero-badge" id="hero-version">v0.8.0 Available Now</div>
                 <h1>
                     Spotify in your
                     <span class="gradient-text">terminal</span>
@@ -957,7 +957,7 @@
                 </p>
                 <div class="hero-stats">
                     <div class="stat">
-                        <span class="stat-value">469</span>
+                        <span class="stat-value">496</span>
                         <span class="stat-label">Tests</span>
                     </div>
                     <div class="stat">
@@ -965,8 +965,8 @@
                         <span class="stat-label">Themes</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-value">0</span>
-                        <span class="stat-label">Dependencies*</span>
+                        <span class="stat-value">60</span>
+                        <span class="stat-label">FPS UI</span>
                     </div>
                 </div>
                 <div class="hero-buttons">
@@ -1061,7 +1061,6 @@
         <div class="install-content scroll-reveal">
             <div class="install-tabs">
                 <button class="install-tab active" data-tab="curl">One-Line</button>
-                <button class="install-tab" data-tab="cargo">Cargo</button>
                 <button class="install-tab" data-tab="source">Source</button>
             </div>
 
@@ -1073,17 +1072,6 @@
                 <div class="code-content">
                     <span class="comment"># Install with one command</span><br>
                     <span class="prompt">$</span> <span class="command">curl -fsSL https://raw.githubusercontent.com/bigknoxy/joshify/main/install.sh | bash</span>
-                </div>
-            </div>
-
-            <div class="code-block" id="cargo-panel" style="display: none;">
-                <div class="code-header">
-                    <span class="code-lang">bash</span>
-                    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-                </div>
-                <div class="code-content">
-                    <span class="comment"># Install via cargo</span><br>
-                    <span class="prompt">$</span> <span class="command">cargo install joshify</span>
                 </div>
             </div>
 
@@ -1181,8 +1169,8 @@
                         <ul>
                             <li><a href="https://github.com/bigknoxy/joshify">GitHub</a></li>
                             <li><a href="https://github.com/bigknoxy/joshify/issues">Issues</a></li>
-                            <li><a href="https://github.com/bigknoxy/joshify/discussions">Discussions</a></li>
-                            <li><a href="https://docs.rs/joshify">Documentation</a></li>
+                            <li><a href="https://github.com/bigknoxy/joshify/issues">Issues</a></li>
+                            <li><a href="https://github.com/bigknoxy/joshify#readme">Documentation</a></li>
                         </ul>
                     </div>
                 </div>
@@ -1297,7 +1285,6 @@
         const tabs = document.querySelectorAll('.install-tab');
         const panels = {
             curl: document.getElementById('curl-panel'),
-            cargo: document.getElementById('cargo-panel'),
             source: document.getElementById('source-panel')
         };
 
@@ -1336,6 +1323,17 @@
                 }
             });
         });
+        // Keep the release badge in sync with the latest GitHub release.
+        // Falls back to the hardcoded version if the API is unreachable.
+        fetch('https://api.github.com/repos/bigknoxy/joshify/releases/latest')
+            .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+            .then(release => {
+                const badge = document.getElementById('hero-version');
+                if (release && release.tag_name && badge) {
+                    badge.textContent = release.tag_name.replace(/^v/, 'v') + ' Available Now';
+                }
+            })
+            .catch(() => {});
     </script>
 </body>
 </html>
