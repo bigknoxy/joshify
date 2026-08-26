@@ -9,7 +9,12 @@ use ratatui::{
 };
 
 /// Render queue overlay with actual queue data
-pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state: &QueueState) {
+pub fn render_queue_overlay(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    queue_state: &QueueState,
+    selected_index: usize,
+) {
     let overlay_width = (area.width as f32 * 0.7).clamp(40.0, area.width as f32) as u16;
     let overlay_height = (area.height as f32 * 0.7).clamp(15.0, area.height as f32) as u16;
     let overlay_x = (area.width - overlay_width) / 2;
@@ -53,9 +58,23 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
             } else {
                 "•"
             };
-            let text = format!("{} {}. {} - {}", marker, i + 1, entry.name, entry.artist);
+            let selected = i == selected_index;
+            let cursor = if selected { ">" } else { " " };
+            let text = format!(
+                "{}{} {}. {} - {}",
+                cursor,
+                marker,
+                i + 1,
+                entry.name,
+                entry.artist
+            );
             let truncated = truncate_from_start(&text, content_width);
-            lines.push(Line::styled(truncated, Catppuccin::text()));
+            let style = if selected {
+                Catppuccin::focused().add_modifier(Modifier::BOLD)
+            } else {
+                Catppuccin::text()
+            };
+            lines.push(Line::styled(truncated, style));
         }
         lines.push(Line::from(""));
     }
@@ -143,7 +162,11 @@ pub fn render_queue_overlay(frame: &mut ratatui::Frame, area: Rect, queue_state:
     }
 
     // Footer
-    lines.push(Line::styled("Press Esc to close", Catppuccin::help()));
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "  ↑↓/jk: Navigate  │  Enter: Play  │  D: Remove  │  c: Clear  │  Esc: Close",
+        Catppuccin::help(),
+    ));
 
     let widget = Paragraph::new(lines).alignment(Alignment::Left);
     frame.render_widget(widget, inner);

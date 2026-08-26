@@ -40,6 +40,17 @@ impl QueueState {
     }
 
     /// Clear the local queue
+    /// Clear only the pending user queue, leaving the playback context intact.
+    ///
+    /// `clear()` also resets the playback queue, which throws away the context
+    /// tracks auto-advance walks through. Using it for the queue overlay's "c"
+    /// key meant "Queue cleared" silently ended playback of the rest of the
+    /// playlist too.
+    pub fn clear_pending(&mut self) {
+        self.local_queue.clear();
+        self.playback_queue.clear_up_next();
+    }
+
     pub fn clear(&mut self) {
         self.local_queue.clear();
         self.playback_queue.reset();
