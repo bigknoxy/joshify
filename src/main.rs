@@ -2878,7 +2878,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.player_state.volume = app.player_state.volume.saturating_sub(5);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                        let new_vol = joshify::player::percent_to_volume(
+                                            app.player_state.volume,
+                                        );
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -2937,7 +2939,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 app.player_state.volume = (app.player_state.volume + 5).min(100);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
-                                        let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                        let new_vol = joshify::player::percent_to_volume(
+                                            app.player_state.volume,
+                                        );
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
@@ -3021,7 +3025,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             app.player_state.volume = (app.player_state.volume + 5).min(100);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                    let new_vol =
+                                        joshify::player::percent_to_volume(app.player_state.volume);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -3039,7 +3044,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             app.player_state.volume = app.player_state.volume.saturating_sub(5);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
-                                    let new_vol = app.player_state.volume as u16 * 65535 / 100;
+                                    let new_vol =
+                                        joshify::player::percent_to_volume(app.player_state.volume);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
@@ -3604,7 +3610,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 if let Some(ref player) = app.local_player {
                                     // Convert 0-100 percentage to 0-65535 for librespot
                                     // Use u32 for calculation to prevent overflow, then cast to u16
-                                    let new_vol = (new_volume * 65535 / 100) as u16;
+                                    let new_vol = joshify::player::percent_to_volume(new_volume);
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
