@@ -9,7 +9,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use bytes::Bytes;
+use http_body_util::Full;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 /// One request the fake saw: the path and its parsed query parameters.
@@ -51,29 +56,34 @@ impl FakeSpotify {
 
         tokio::spawn(async move {
             loop {
-                let Ok((mut socket, _)) = listener.accept().await else {
+                let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
                 let recorded = Arc::clone(&recorded);
+                let service = service_fn(move |req: Request<hyper::body::Incoming>| {
+                    let recorded = Arc::clone(&recorded);
+                    let hit = Hit {
+                        path: req.uri().path().to_string(),
+                        query: parse_query(req.uri().query().unwrap_or("")),
+                    };
+                    async move {
+                        let (status, body) = respond(&hit, catalog);
+                        recorded.lock().expect("hits lock").push(hit);
+                        Ok::<_, hyper::Error>(
+                            Response::builder()
+                                .status(status)
+                                .header("Content-Type", "application/json")
+                                .body(Full::new(Bytes::from(body)))
+                                .expect("static response builder should never fail"),
+                        )
+                    }
+                });
                 tokio::spawn(async move {
-                    let mut buf = vec![0u8; 16 * 1024];
-                    let n = socket.read(&mut buf).await.unwrap_or(0);
-                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let target = head
-                        .lines()
-                        .next()
-                        .and_then(|l| l.split_whitespace().nth(1))
-                        .unwrap_or("/")
-                        .to_string();
-                    let hit = parse_target(&target);
-                    let (status, body) = respond(&hit, catalog);
-                    recorded.lock().expect("hits lock").push(hit);
-                    let response = format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = socket.write_all(response.as_bytes()).await;
-                    let _ = socket.shutdown().await;
+                    // The client closes the connection when it is done; an
+                    // error here is that, not a test failure.
+                    let _ = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
                 });
             }
         });
@@ -89,21 +99,16 @@ impl FakeSpotify {
     }
 }
 
-fn parse_target(target: &str) -> Hit {
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let query = query
+fn parse_query(query: &str) -> HashMap<String, String> {
+    query
         .split('&')
         .filter(|kv| !kv.is_empty())
         .filter_map(|kv| kv.split_once('='))
         .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    Hit {
-        path: path.to_string(),
-        query,
-    }
+        .collect()
 }
 
-fn respond(hit: &Hit, catalog: Catalog) -> (&'static str, String) {
+fn respond(hit: &Hit, catalog: Catalog) -> (StatusCode, String) {
     let segments: Vec<&str> = hit.path.trim_matches('/').split('/').collect();
     match segments.as_slice() {
         ["playlists", _, "items"] | ["playlists", _, "tracks"] => {
@@ -111,7 +116,7 @@ fn respond(hit: &Hit, catalog: Catalog) -> (&'static str, String) {
         }
         ["albums", _, "tracks"] => page(hit, catalog, catalog.album_total, 50, simplified_track),
         _ => (
-            "404 Not Found",
+            StatusCode::NOT_FOUND,
             r#"{"error":{"status":404,"message":"Not found"}}"#.to_string(),
         ),
     }
@@ -125,19 +130,19 @@ fn page(
     total: u32,
     max_limit: u32,
     item: fn(u32) -> String,
-) -> (&'static str, String) {
+) -> (StatusCode, String) {
     let limit = hit.param_u32("limit").unwrap_or(20);
     let offset = hit.param_u32("offset").unwrap_or(0);
     if limit < 1 || limit > max_limit {
         return (
-            "400 Bad Request",
+            StatusCode::BAD_REQUEST,
             r#"{"error":{"status":400,"message":"Invalid limit"}}"#.to_string(),
         );
     }
     if let Some(fail_from) = catalog.fail_from_offset {
         if offset >= fail_from {
             return (
-                "500 Internal Server Error",
+                StatusCode::INTERNAL_SERVER_ERROR,
                 r#"{"error":{"status":500,"message":"Server error"}}"#.to_string(),
             );
         }
@@ -150,7 +155,7 @@ fn page(
         "null".to_string()
     };
     (
-        "200 OK",
+        StatusCode::OK,
         format!(
             r#"{{"href":"{}","items":[{}],"limit":{limit},"next":{next},"offset":{offset},"previous":null,"total":{total}}}"#,
             hit.path,

@@ -259,6 +259,19 @@ impl PlayerState {
     }
 
     /// Reset scroll state (call when track changes)
+    /// A new track has started: point the player bar at it from position 0.
+    ///
+    /// Every start path - local, remote confirmation, auto-advance - goes
+    /// through here so they cannot drift apart on which fields they reset.
+    pub fn start_track(&mut self, name: &str, artist: &str, uri: &str) {
+        self.current_track_name = Some(name.to_string());
+        self.current_artist_name = Some(artist.to_string());
+        self.current_track_uri = Some(uri.to_string());
+        self.is_playing = true;
+        self.progress_ms = 0;
+        self.reset_scroll();
+    }
+
     pub fn reset_scroll(&mut self) {
         self.title_scroll_state = TitleScrollState::Static;
     }
