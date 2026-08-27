@@ -41,8 +41,26 @@ if [ -z "$BADGES" ]; then
     fail "no shields.io badges found in README.md"
 fi
 
+# A workflow must not grade its own status badge. While the run is in progress
+# the badge reflects the previous run on the branch; once a run is cancelled
+# or fails, the badge stays red until a later run passes - which it never can,
+# because this check fails first. GITHUB_WORKFLOW_REF looks like
+# "owner/repo/.github/workflows/ci.yml@refs/heads/main".
+SELF_WORKFLOW_FILE=""
+if [ -n "${GITHUB_WORKFLOW_REF:-}" ]; then
+    SELF_WORKFLOW_FILE=$(printf '%s' "$GITHUB_WORKFLOW_REF" | sed -e 's/@.*//' -e 's|.*/||')
+fi
+
 while IFS= read -r url; do
     [ -n "$url" ] || continue
+    if [ -n "$SELF_WORKFLOW_FILE" ]; then
+        case "$url" in
+            */actions/workflow/status/*"/$SELF_WORKFLOW_FILE?"*|*"/actions/workflow/status/"*"/$SELF_WORKFLOW_FILE")
+                ok "skipped $SELF_WORKFLOW_FILE badge - a workflow cannot grade its own run"
+                continue
+                ;;
+        esac
+    fi
     # README embeds &amp;-free raw URLs; curl needs them as-is.
     title=$(badge_title "$url")
 
