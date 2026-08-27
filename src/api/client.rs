@@ -86,3 +86,33 @@ impl SpotifyClient {
         Ok(client)
     }
 }
+
+#[cfg(test)]
+impl SpotifyClient {
+    /// A client that talks to `api_base_url` with a fixed bearer token and no
+    /// token refreshing, so tests can point the real request/pagination code at
+    /// a fake Spotify on localhost.
+    pub(crate) fn for_tests(api_base_url: &str) -> Self {
+        let token = rspotify::Token {
+            access_token: "test-token".to_string(),
+            expires_in: chrono::TimeDelta::seconds(3600),
+            expires_at: Some(chrono::Utc::now() + chrono::TimeDelta::seconds(3600)),
+            refresh_token: None,
+            scopes: HashSet::new(),
+        };
+        let config = Config {
+            api_base_url: api_base_url.to_string(),
+            token_refreshing: false,
+            token_cached: false,
+            ..Default::default()
+        };
+        Self {
+            oauth: AuthCodeSpotify::from_token_with_config(
+                token,
+                Credentials::default(),
+                OAuth::default(),
+                config,
+            ),
+        }
+    }
+}

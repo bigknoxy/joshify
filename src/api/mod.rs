@@ -6,6 +6,8 @@
 //! - `library` - Library, playlists, and search
 
 mod client;
+#[cfg(test)]
+pub(crate) mod fake_spotify;
 mod library;
 pub mod playback;
 

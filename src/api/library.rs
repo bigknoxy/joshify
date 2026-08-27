@@ -5,6 +5,23 @@ use rspotify::clients::{BaseClient, OAuthClient};
 
 use super::SpotifyClient;
 
+/// Largest `limit` Spotify accepts for `GET /playlists/{id}/items`.
+///
+/// The Web API documents "Default: 20. Minimum: 1. Maximum: 50." for this
+/// endpoint. Asking for more is not clamped - the whole request is rejected
+/// with a 400, which is what turned every playlist into "Failed to get
+/// playlist items" in 0.8.3.
+pub const SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT: u32 = 50;
+
+/// Largest `limit` Spotify accepts for `GET /albums/{id}/tracks`.
+pub const SPOTIFY_ALBUM_TRACKS_MAX_LIMIT: u32 = 50;
+
+/// Page size used when walking a playlist.
+pub const PLAYLIST_ITEMS_PAGE: u32 = SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT;
+
+/// Page size used when walking an album.
+pub const ALBUM_TRACKS_PAGE: u32 = SPOTIFY_ALBUM_TRACKS_MAX_LIMIT;
+
 impl SpotifyClient {
     /// Get user's liked tracks (first page)
     pub async fn current_user_saved_tracks(
@@ -84,9 +101,9 @@ impl SpotifyClient {
         let pid =
             rspotify::model::PlaylistId::from_id(playlist_id).context("Invalid playlist ID")?;
         // Page through the whole playlist. A single call returns Spotify's
-        // default page of 100, so anything longer was silently truncated while
+        // default page of 20, so anything longer was silently truncated while
         // the header went on showing the playlist's real track count.
-        const PAGE: u32 = 100;
+        const PAGE: u32 = PLAYLIST_ITEMS_PAGE;
         const MAX_ITEMS: usize = 5_000;
         let mut items = Vec::new();
         let mut offset = 0u32;
@@ -349,7 +366,7 @@ impl SpotifyClient {
         let aid = rspotify::model::AlbumId::from_id(album_id).context("Invalid album ID")?;
         // One page of 50 silently cut off longer albums and compilations, and
         // the album header then rewrote its track count to match.
-        const PAGE: u32 = 50;
+        const PAGE: u32 = ALBUM_TRACKS_PAGE;
         const MAX_ITEMS: usize = 1_000;
         let mut items = Vec::new();
         let mut offset = 0u32;
@@ -396,6 +413,36 @@ impl SpotifyClient {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Spotify rejects the whole request when `limit` exceeds the endpoint's
+    /// documented maximum; it does not clamp. 0.8.3 paged playlists at 100 and
+    /// every playlist came back "Failed to get playlist items". Pin the pages
+    /// to the numbers in the Web API reference, not to each other.
+    #[test]
+    // The point is that these are constants: the assertion pins them to the
+    // documented API limit so the next "page bigger" change fails here.
+    #[allow(clippy::assertions_on_constants)]
+    fn test_playlist_page_size_within_spotify_limit() {
+        assert!(
+            PLAYLIST_ITEMS_PAGE >= 1 && PLAYLIST_ITEMS_PAGE <= 50,
+            "GET /playlists/{{id}}/items accepts limit 1..=50, got {}",
+            PLAYLIST_ITEMS_PAGE
+        );
+    }
+
+    #[test]
+    // The point is that these are constants: the assertion pins them to the
+    // documented API limit so the next "page bigger" change fails here.
+    #[allow(clippy::assertions_on_constants)]
+    fn test_album_page_size_within_spotify_limit() {
+        assert!(
+            ALBUM_TRACKS_PAGE >= 1 && ALBUM_TRACKS_PAGE <= 50,
+            "GET /albums/{{id}}/tracks accepts limit 1..=50, got {}",
+            ALBUM_TRACKS_PAGE
+        );
+    }
+
     #[test]
     fn test_search_query_validation() {
         let long_query = "a".repeat(50);
@@ -470,5 +517,176 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+/// The real pagination code against a fake Spotify that enforces the real
+/// limits. These are the tests that would have caught 0.8.3: with the page
+/// size at 100 the fake answers 400 on page 0 and `playlist_get_items`
+/// returns "Failed to get playlist items".
+#[cfg(test)]
+mod paging_against_fake_spotify {
+    use super::super::fake_spotify::{track_id, Catalog, FakeSpotify};
+    use super::*;
+
+    const PLAYLIST: &str = "37i9dQZF1DXcBWIGoYBM5M";
+    const ALBUM: &str = "4aawyAB9vmqN3uQ7FjRGTy";
+
+    fn catalog(playlist_total: u32, album_total: u32) -> Catalog {
+        Catalog {
+            playlist_total,
+            album_total,
+            fail_from_offset: None,
+        }
+    }
+
+    /// rspotify builds its reqwest client with system proxy detection on and
+    /// offers no hook to turn it off, and reqwest's matcher has no implicit
+    /// loopback exemption. On a machine with `HTTP_PROXY` set and no
+    /// `NO_PROXY` covering 127.0.0.1, every request to the fake would be sent
+    /// to the proxy instead. Skip loudly there rather than fail confusingly;
+    /// CI sets no proxy, so these always run where it matters.
+    fn loopback_is_proxied() -> bool {
+        let set = |k: &str| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false);
+        let proxied = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+            .iter()
+            .any(|k| set(k));
+        if !proxied {
+            return false;
+        }
+        let exempt = ["NO_PROXY", "no_proxy"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .any(|v| {
+                v.split(',')
+                    .any(|h| matches!(h.trim(), "127.0.0.1" | "localhost" | "*"))
+            });
+        if exempt {
+            return false;
+        }
+        eprintln!("skipping: a proxy is configured and NO_PROXY does not exempt 127.0.0.1");
+        true
+    }
+
+    /// Start the fake and a client aimed at it, or `None` when the environment
+    /// would route loopback through a proxy.
+    async fn fake_and_client(catalog: Catalog) -> Option<(FakeSpotify, SpotifyClient)> {
+        if loopback_is_proxied() {
+            return None;
+        }
+        let fake = FakeSpotify::start(catalog).await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+        Some((fake, client))
+    }
+
+    #[tokio::test]
+    async fn playlist_pager_stays_within_the_limit_and_reads_every_page() {
+        let Some((fake, client)) = fake_and_client(catalog(120, 0)).await else {
+            return;
+        };
+
+        let items = client
+            .playlist_get_items(PLAYLIST)
+            .await
+            .expect("a 120-track playlist must load");
+
+        assert_eq!(items.len(), 120, "every page must be read, in order");
+        let last_id = match items[119].item.as_ref() {
+            Some(rspotify::model::PlayableItem::Track(t)) => t.id.as_ref().map(|i| i.to_string()),
+            other => panic!("expected a track, got {other:?}"),
+        };
+        assert_eq!(
+            last_id.as_deref(),
+            Some(format!("spotify:track:{}", track_id(119)).as_str())
+        );
+
+        let hits = fake.hits();
+        assert_eq!(hits.len(), 3, "120 items at 50 a page is three requests");
+        for hit in &hits {
+            let limit = hit
+                .query
+                .get("limit")
+                .expect("limit must be sent explicitly");
+            let limit: u32 = limit.parse().expect("numeric limit");
+            assert!(
+                (1..=SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT).contains(&limit),
+                "Spotify rejects limit={limit} on {}",
+                hit.path
+            );
+        }
+        let offsets: Vec<u32> = hits
+            .iter()
+            .map(|h| h.query["offset"].parse().unwrap())
+            .collect();
+        assert_eq!(offsets, vec![0, 50, 100]);
+    }
+
+    #[tokio::test]
+    async fn album_pager_stays_within_the_limit_and_reads_every_page() {
+        let Some((fake, client)) = fake_and_client(catalog(0, 75)).await else {
+            return;
+        };
+
+        let tracks = client
+            .get_album_tracks(ALBUM)
+            .await
+            .expect("a 75-track album must load");
+
+        assert_eq!(tracks.len(), 75);
+        let hits = fake.hits();
+        assert_eq!(hits.len(), 2);
+        for hit in &hits {
+            let limit: u32 = hit.query["limit"].parse().unwrap();
+            assert!((1..=SPOTIFY_ALBUM_TRACKS_MAX_LIMIT).contains(&limit));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_short_playlist_is_a_single_request() {
+        let Some((fake, client)) = fake_and_client(catalog(7, 0)).await else {
+            return;
+        };
+        let items = client.playlist_get_items(PLAYLIST).await.unwrap();
+        assert_eq!(items.len(), 7);
+        assert_eq!(fake.hits().len(), 1, "a short page must end the walk");
+    }
+
+    #[tokio::test]
+    async fn a_failing_first_page_is_reported_not_swallowed() {
+        let Some((_fake, client)) = fake_and_client(Catalog {
+            playlist_total: 120,
+            album_total: 0,
+            fail_from_offset: Some(0),
+        })
+        .await
+        else {
+            return;
+        };
+        let err = client
+            .playlist_get_items(PLAYLIST)
+            .await
+            .expect_err("nothing was read, so the caller must hear about it");
+        assert!(
+            err.to_string().contains("Failed to get playlist items"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_later_page_keeps_what_was_already_read() {
+        let Some((_fake, client)) = fake_and_client(Catalog {
+            playlist_total: 120,
+            album_total: 0,
+            fail_from_offset: Some(50),
+        })
+        .await
+        else {
+            return;
+        };
+        let items = client
+            .playlist_get_items(PLAYLIST)
+            .await
+            .expect("the first page was good; keep it");
+        assert_eq!(items.len(), 50);
     }
 }
