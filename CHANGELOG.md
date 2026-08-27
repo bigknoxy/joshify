@@ -1,3 +1,27 @@
+## [0.8.5](https://github.com/bigknoxy/joshify/compare/v0.8.4...v0.8.5) (2026-08-27)
+
+### Bug Fixes
+
+- **Playlists open again** ([#68](https://github.com/bigknoxy/joshify/pull/68)): 0.8.3 replaced the single unpaginated playlist fetch with a pager that asked `GET /playlists/{id}/items` for `limit=100`. Spotify documents that endpoint as *"Default: 20. Minimum: 1. Maximum: 50."* and does not clamp — the whole request is rejected with a 400 — so page 0 failed, the loader had nothing to keep, and every playlist showed "Failed to load playlist: Failed to get playlist items". The page size is now a named constant pinned to the documented maximum.
+- **Enter on a search result plays on this device** ([#68](https://github.com/bigknoxy/joshify/pull/68)): every other play path checked `playback_mode` and handed the track to the local player; the search overlay's Enter was the one path that called the remote API unconditionally. In 0.8.2 that silently did nothing; 0.8.3 made the failure honest, so it told local users to "press 'd' to pick a device" when the device they wanted was the one joshify was running on. Local playback is the default everywhere; `d` is the option, not the requirement.
+- **A one-off pick from search does not hand playback back to the old playlist** when it ends; the playback context is cleared and your own queue is kept.
+- **Enter on an album track no longer replays it** before moving on: the album handler set the queue position to the selected track but never consumed it, so end-of-track advanced to the same track first.
+- **The progress bar starts at zero after a pause**: the wall-clock ticker only refreshes its baseline while playing, so starting a new track after a long pause jumped its bar forward by the length of the pause until librespot's next position event.
+- **`p` (previous) goes back to the previous track**: re-picking the track already playing no longer records it as its own predecessor, and the album handler no longer records history in remote mode or on a failed start.
+- **A queued track played on a remote device is removed from the queue only once Spotify confirms it started**; a refused command no longer loses the entry.
+- **Auto-advance resets the title scroll** like every other track start.
+
+### Hardening
+
+- **One way to start a track**: all five play sites (search, track lists, album tracks, the queue overlay, mouse clicks) go through `play_track`, and the local and remote halves are private to its module — a handler that tries to call one directly is a compile error, so a new handler cannot bypass the local-vs-remote decision the way the search overlay did.
+- **One "track started" helper**: `PlayerState::start_track` replaces four hand-copied blocks that had already drifted apart.
+- **The pager is tested against a fake Spotify** served over hyper that enforces the real rules: `limit` above the endpoint maximum is rejected with 400, `next` is null on the last page. Five tests read a 120-track playlist and a 75-track album through the real request code, assert every request sent `limit ≤ 50`, and pin the failure semantics (a bad first page is an error; a bad later page keeps what was read). Setting the page size back to 100 fails three of them with the exact message from the bug report. The tests skip with a printed reason on machines whose proxy configuration would capture loopback.
+
+### Technical Details
+
+- `SpotifyClient::for_tests(base_url)` builds the real rspotify client with a fixed token and `api_base_url` on localhost; `api::fake_spotify` is the HTTP stand-in for the two paged endpoints
+- Not reproduced end-to-end on the development machine (no Spotify credentials, no audio device); the limit is established from the Web API reference and rspotify's request, the Enter path from the call sites
+
 ## [0.8.4](https://github.com/bigknoxy/joshify/compare/v0.8.3...v0.8.4) (2026-08-27)
 
 ### Bug Fixes
