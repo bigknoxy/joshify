@@ -83,21 +83,45 @@ impl SpotifyClient {
         tracing::debug!("Loading playlist {}", playlist_id);
         let pid =
             rspotify::model::PlaylistId::from_id(playlist_id).context("Invalid playlist ID")?;
-        let result = self
-            .oauth
-            .playlist_items_manual(pid, None, None, None, None)
-            .await;
+        // Page through the whole playlist. A single call returns Spotify's
+        // default page of 100, so anything longer was silently truncated while
+        // the header went on showing the playlist's real track count.
+        const PAGE: u32 = 100;
+        const MAX_ITEMS: usize = 5_000;
+        let mut items = Vec::new();
+        let mut offset = 0u32;
 
-        match result {
-            Ok(r) => {
-                tracing::debug!("Got {} playlist items", r.items.len());
-                Ok(r.items)
+        loop {
+            let page = self
+                .oauth
+                .playlist_items_manual(pid.clone(), None, None, Some(PAGE), Some(offset))
+                .await;
+            let page = match page {
+                Ok(page) => page,
+                Err(e) => {
+                    tracing::warn!("Playlist items error at offset {}: {:?}", offset, e);
+                    // Keep what we already have rather than losing the whole
+                    // playlist to one bad page.
+                    if items.is_empty() {
+                        return Err(e).context("Failed to get playlist items");
+                    }
+                    break;
+                }
+            };
+
+            let returned = page.items.len();
+            items.extend(page.items);
+
+            // Stop on a short page, on a missing `next`, or at the safety cap -
+            // never rely on only one of these to terminate.
+            if returned < PAGE as usize || page.next.is_none() || items.len() >= MAX_ITEMS {
+                break;
             }
-            Err(e) => {
-                tracing::warn!("Playlist items error: {:?}", e);
-                Err(e).context("Failed to get playlist items")
-            }
+            offset += PAGE;
         }
+
+        tracing::debug!("Got {} playlist items", items.len());
+        Ok(items)
     }
 
     /// Search Spotify
@@ -323,17 +347,35 @@ impl SpotifyClient {
     ) -> Result<Vec<rspotify::model::SimplifiedTrack>> {
         tracing::debug!("Loading album tracks for {}", album_id);
         let aid = rspotify::model::AlbumId::from_id(album_id).context("Invalid album ID")?;
-        let result = self
-            .oauth
-            .album_track_manual(
-                aid,
-                Some(rspotify::model::Market::FromToken),
-                Some(50), // limit
-                Some(0),  // offset
-            )
-            .await
-            .context("Failed to get album tracks")?;
-        Ok(result.items)
+        // One page of 50 silently cut off longer albums and compilations, and
+        // the album header then rewrote its track count to match.
+        const PAGE: u32 = 50;
+        const MAX_ITEMS: usize = 1_000;
+        let mut items = Vec::new();
+        let mut offset = 0u32;
+
+        loop {
+            let page = self
+                .oauth
+                .album_track_manual(
+                    aid.clone(),
+                    Some(rspotify::model::Market::FromToken),
+                    Some(PAGE),
+                    Some(offset),
+                )
+                .await
+                .context("Failed to get album tracks")?;
+
+            let returned = page.items.len();
+            items.extend(page.items);
+
+            if returned < PAGE as usize || page.next.is_none() || items.len() >= MAX_ITEMS {
+                break;
+            }
+            offset += PAGE;
+        }
+
+        Ok(items)
     }
 
     /// Get artist top tracks

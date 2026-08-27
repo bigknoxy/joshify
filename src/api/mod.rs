@@ -7,6 +7,7 @@
 
 mod client;
 mod library;
-mod playback;
+pub mod playback;
 
 pub use client::SpotifyClient;
+pub use playback::select_play_device;

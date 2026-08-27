@@ -207,6 +207,11 @@ impl LocalPlayer {
 
     /// Set volume (0-65535)
     pub fn set_volume(&self, volume: u16) {
+        // `emit_volume_changed_event` only broadcasts a notification to
+        // listeners; it does not move the mixer. On its own it made the
+        // on-screen volume number change while the audio stayed exactly as loud
+        // as before. Set the mixer first, then announce it.
+        self.mixer.set_volume(volume);
         self.player.emit_volume_changed_event(volume);
     }
 

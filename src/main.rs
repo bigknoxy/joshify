@@ -12,7 +12,6 @@ use joshify::state::search_state::SearchState;
 use joshify::state::{ContentState, FocusTarget, LoadAction, NavItem};
 use joshify::CliArgs;
 use librespot::core::authentication::Credentials;
-use rspotify::clients::OAuthClient;
 use std::sync::Arc;
 
 /// Minimum interval between album-art fetch attempts (per app, not per URL).
@@ -66,17 +65,17 @@ fn advance_local_playback(app: &mut App) {
                 match player.load_uri(&next_uri, true, 0) {
                     Ok(_) => {
                         // Try to get track info from the content state
-                        let track_name = app
-                            .player_state
-                            .current_track_name
-                            .clone()
-                            .unwrap_or_else(|| "Unknown".to_string());
-                        let artist_name = app
-                            .player_state
-                            .current_artist_name
-                            .clone()
-                            .unwrap_or_else(|| "Unknown".to_string());
-
+                        // Look the next track up by URI. This used to copy the
+                        // name and artist already in player_state - which still
+                        // held the track that just ended - so the bar and the
+                        // status line named the wrong song.
+                        let (track_name, artist_name) = app
+                            .context_track_meta
+                            .get(&next_uri)
+                            .cloned()
+                            .unwrap_or_else(|| ("Unknown".to_string(), "Unknown".to_string()));
+                        app.player_state.current_track_name = Some(track_name.clone());
+                        app.player_state.current_artist_name = Some(artist_name.clone());
                         app.player_state.current_track_uri = Some(next_uri.clone());
                         app.player_state.is_playing = true;
                         app.player_state.progress_ms = 0;
@@ -139,6 +138,265 @@ impl App {
     }
 }
 
+/// Turn Spotify tracks into radio queue entries, skipping anything already
+/// queued or currently playing.
+///
+/// Marked `is_recommendation` so toggling radio back off can drop exactly these
+/// and leave tracks the user queued by hand alone.
+fn radio_entries_from(
+    tracks: &[rspotify::model::FullTrack],
+    exclude_uris: &std::collections::HashSet<String>,
+) -> Vec<joshify::state::queue_state::QueueEntry> {
+    tracks
+        .iter()
+        .filter_map(|t| {
+            let id = t.id.as_ref()?;
+            let uri = format!("spotify:track:{}", id.id());
+            if exclude_uris.contains(&uri) {
+                return None;
+            }
+            Some(joshify::state::queue_state::QueueEntry {
+                uri,
+                name: t.name.clone(),
+                artist: t
+                    .artists
+                    .first()
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| "Unknown Artist".to_string()),
+                added_by_user: false,
+                is_recommendation: true,
+            })
+        })
+        .collect()
+}
+
+/// Convert a click position on the progress bar (0-100) into a track offset.
+///
+/// Saturating throughout: a zero-length track (nothing loaded yet) must seek to
+/// 0 rather than divide by zero, and a percentage above 100 is clamped instead
+/// of running past the end of the track.
+fn position_from_percent(percent: u8, duration_ms: u32) -> u32 {
+    let percent = percent.min(100) as u64;
+    ((duration_ms as u64 * percent) / 100).min(duration_ms as u64) as u32
+}
+
+/// Result of a background playback request, reported back to the UI loop.
+///
+/// Remote commands are fire-and-forget on a spawned task, so the UI cannot know
+/// at keypress time whether Spotify accepted them. Without this the status bar
+/// claimed success for requests that failed.
+#[derive(Debug)]
+enum PlaybackFeedback {
+    Started {
+        name: String,
+        artist: String,
+        uri: String,
+    },
+    Failed(String),
+    /// A transport command failed. `revert` restores whatever the UI changed
+    /// optimistically before issuing it, so the display cannot keep asserting
+    /// a state Spotify rejected.
+    CommandFailed {
+        message: String,
+        revert: Revert,
+    },
+    /// A device transfer settled. Until this arrived the UI announced
+    /// "Switching to X..." and flipped to remote mode whether or not Spotify
+    /// accepted the transfer.
+    Transferred {
+        device_name: String,
+        error: Option<String>,
+    },
+}
+
+/// UI state to put back when a transport command is refused.
+#[derive(Debug, Clone, Copy)]
+enum Revert {
+    Nothing,
+    Shuffle(bool),
+    Repeat(joshify::state::player_state::RepeatMode),
+    Volume(u32),
+}
+
+/// A transport command issued against the remote device.
+#[derive(Debug, Clone, Copy)]
+enum RemoteCommand {
+    Pause,
+    Resume,
+    Next,
+    Previous,
+    Seek(u32),
+    Volume(u32),
+    Shuffle(bool),
+    Repeat(rspotify::model::RepeatState),
+}
+
+impl RemoteCommand {
+    /// How to name this command when telling the user it failed.
+    fn describe(self) -> &'static str {
+        match self {
+            Self::Pause => "Pause",
+            Self::Resume => "Resume",
+            Self::Next => "Next track",
+            Self::Previous => "Previous track",
+            Self::Seek(_) => "Seek",
+            Self::Volume(_) => "Volume",
+            Self::Shuffle(_) => "Shuffle",
+            Self::Repeat(_) => "Repeat",
+        }
+    }
+}
+
+/// Issue a transport command against the device the user picked, and report a
+/// refusal instead of dropping it.
+///
+/// Every one of these used to be `let _ = guard.<cmd>().await` with no device
+/// id, so with no active Spotify device the key was simply dead: no music, no
+/// message, nothing in the UI to explain it.
+fn spawn_remote_command(
+    client: &Arc<Mutex<joshify::api::SpotifyClient>>,
+    command: RemoteCommand,
+    preferred_id: Option<String>,
+    revert: Revert,
+    tx_feedback: tokio::sync::mpsc::Sender<PlaybackFeedback>,
+) {
+    let c = client.clone();
+    tokio::spawn(async move {
+        let guard = c.lock().await;
+
+        // Best effort: if the device lookup itself fails, fall through with
+        // None and let Spotify apply the command to whatever is active. That
+        // is still better than refusing to send it.
+        let device = guard
+            .device_to_play_on(preferred_id.as_deref())
+            .await
+            .ok()
+            .flatten();
+        let device_id = device.as_ref().and_then(|d| d.id.as_deref());
+
+        let result = match command {
+            RemoteCommand::Pause => guard.playback_pause(device_id).await,
+            RemoteCommand::Resume => guard.playback_resume(device_id).await,
+            RemoteCommand::Next => guard.playback_next(device_id).await,
+            RemoteCommand::Previous => guard.playback_previous(device_id).await,
+            RemoteCommand::Seek(pos) => guard.seek(pos, device_id).await,
+            RemoteCommand::Volume(v) => guard.set_volume(v, device_id).await,
+            RemoteCommand::Shuffle(on) => guard.toggle_shuffle(on, device_id).await,
+            RemoteCommand::Repeat(state) => guard.set_repeat(state, device_id).await,
+        };
+
+        if let Err(e) = result {
+            tracing::warn!("{} failed: {}", command.describe(), e);
+            let _ = tx_feedback
+                .send(PlaybackFeedback::CommandFailed {
+                    message: format!("{} failed: {}", command.describe(), e),
+                    revert,
+                })
+                .await;
+        }
+    });
+}
+
+/// Start remote playback of `track` (name, artist, uri) on a spawned task.
+///
+/// `context_uri` is an optional `spotify:playlist:...` to play the track
+/// within. `preferred_id` is the device the user picked with 'd', if any - it
+/// is used when it is still online, otherwise we fall back to whatever Spotify
+/// reports as active. Success/failure is reported on `tx_feedback`.
+fn spawn_remote_play(
+    client: &Arc<Mutex<joshify::api::SpotifyClient>>,
+    track: (String, String, String),
+    context_uri: Option<String>,
+    preferred_id: Option<String>,
+    tx_feedback: tokio::sync::mpsc::Sender<PlaybackFeedback>,
+) {
+    let c = client.clone();
+    let (name, artist, uri) = track;
+    tokio::spawn(async move {
+        let guard = c.lock().await;
+
+        let device = match guard.device_to_play_on(preferred_id.as_deref()).await {
+            Ok(Some(device)) => device,
+            Ok(None) => {
+                let _ = tx_feedback
+                    .send(PlaybackFeedback::Failed(
+                        "No Spotify device available - open Spotify somewhere, then press 'd' to pick a device".to_string(),
+                    ))
+                    .await;
+                return;
+            }
+            Err(e) => {
+                let _ = tx_feedback
+                    .send(PlaybackFeedback::Failed(format!(
+                        "Could not list Spotify devices: {}",
+                        e
+                    )))
+                    .await;
+                return;
+            }
+        };
+        let device_id = match device.id.clone() {
+            Some(id) => id,
+            None => {
+                let _ = tx_feedback
+                    .send(PlaybackFeedback::Failed(format!(
+                        "Device '{}' cannot be controlled remotely",
+                        device.name
+                    )))
+                    .await;
+                return;
+            }
+        };
+
+        // Only transfer when the device is idle - transferring to the already
+        // active device races with the play command that follows.
+        if !device.is_active {
+            if let Err(e) = guard.transfer_playback(&device_id).await {
+                tracing::warn!("Transfer to {} failed: {}", device.name, e);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        let playlist_id = context_uri
+            .as_deref()
+            .and_then(|c| c.strip_prefix("spotify:playlist:"))
+            .and_then(|id| rspotify::model::PlaylistId::from_id(id).ok())
+            .map(|id| id.into_static());
+
+        let result = match playlist_id {
+            Some(playlist_id) => {
+                tracing::info!(
+                    "Remote playback: playlist={} track={} device={}",
+                    playlist_id.id(),
+                    uri,
+                    device.name
+                );
+                guard
+                    .start_context_playback_on(
+                        rspotify::model::PlayContextId::from(playlist_id),
+                        Some(rspotify::model::Offset::Uri(uri.clone())),
+                        Some(&device_id),
+                    )
+                    .await
+            }
+            None => {
+                tracing::info!("Remote playback: track={} device={}", uri, device.name);
+                guard
+                    .start_playback_on(vec![uri.clone()], None, Some(&device_id))
+                    .await
+            }
+        };
+
+        let feedback = match result {
+            Ok(()) => PlaybackFeedback::Started { name, artist, uri },
+            Err(e) => {
+                PlaybackFeedback::Failed(format!("Playback failed on {}: {}", device.name, e))
+            }
+        };
+        let _ = tx_feedback.send(feedback).await;
+    });
+}
+
 /// Application state
 struct App {
     selected_nav: NavItem,
@@ -168,6 +426,19 @@ struct App {
     album_art_cache: joshify::album_art::AlbumArtCache,
     last_fetched_art_uri: Option<String>,
     playback_mode: PlaybackMode,
+    /// Remote device chosen with 'd'; commands target it explicitly.
+    /// `None` means "whatever Spotify says is active".
+    selected_device_id: Option<String>,
+    /// Cursor in the queue overlay. The overlay advertised Enter/D/arrow keys
+    /// while having no selection at all, so those keys acted on the main list's
+    /// highlight (or did nothing).
+    queue_selected_index: usize,
+    /// uri -> (track name, artist) for the tracks in the current context.
+    ///
+    /// The playback queue holds URIs only, so auto-advance had no name to show
+    /// and reused whatever was already on screen - announcing the track that
+    /// just *ended* as the one now playing.
+    context_track_meta: std::collections::HashMap<String, (String, String)>,
     local_session: Option<Arc<LocalSession>>,
     local_player: Option<Arc<LocalPlayer>>,
     player_event_rx:
@@ -209,6 +480,9 @@ impl App {
             album_art_cache: joshify::album_art::AlbumArtCache::new(),
             last_fetched_art_uri: None,
             playback_mode: PlaybackMode::Local,
+            selected_device_id: None,
+            queue_selected_index: 0,
+            context_track_meta: std::collections::HashMap::new(),
             local_session: None,
             local_player: None,
             local_history: Vec::new(),
@@ -438,12 +712,28 @@ impl App {
         };
 
         if let Some(next_uri) = next_from_queue {
-            // Play from user queue
+            // Play the track the user actually queued. This used to call
+            // playback_next(), which advances *Spotify's* queue - so the track
+            // queued here was dropped and whatever Spotify had lined up played
+            // instead.
             tracing::info!("Advancing to next track from queue: {}", next_uri);
             let c = client.clone();
+            let preferred = self.selected_device_id.clone();
             tokio::spawn(async move {
                 let guard = c.lock().await;
-                if let Err(e) = guard.playback_next().await {
+                let device_id = guard
+                    .device_to_play_on(preferred.as_deref())
+                    .await
+                    .ok()
+                    .flatten();
+                if let Err(e) = guard
+                    .start_playback_on(
+                        vec![next_uri],
+                        None,
+                        device_id.as_ref().and_then(|d| d.id.as_deref()),
+                    )
+                    .await
+                {
                     tracing::warn!("Failed to advance to next track: {}", e);
                 }
             });
@@ -906,6 +1196,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     // Channel for album art data (128 capacity for bursty loads)
     let (tx_art, mut rx_art) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(128);
 
+    // Channel for playback results from spawned command tasks
+    let (tx_play, mut rx_play) = tokio::sync::mpsc::channel::<PlaybackFeedback>(32);
+
+    // Channel for radio station seed tracks
+    let (tx_radio, mut rx_radio) = tokio::sync::mpsc::channel::<Vec<rspotify::model::FullTrack>>(8);
+
     // Main loop
     loop {
         let now = std::time::SystemTime::now()
@@ -923,11 +1219,74 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             }
         }
 
-        // Auto-clear expired search errors
-        if let Some(expiry) = app.search_state.error_display_until_ms {
-            if now >= expiry {
-                app.search_state.error = None;
-                app.search_state.error_display_until_ms = None;
+        // Fill the radio station from the seed tracks that just arrived.
+        while let Ok(tracks) = rx_radio.try_recv() {
+            if !app.queue_state.radio_mode {
+                continue; // toggled back off while the fetch was in flight
+            }
+            let already: std::collections::HashSet<String> = app
+                .queue_state
+                .local_queue
+                .iter()
+                .map(|e| e.uri.clone())
+                .chain(app.player_state.current_track_uri.clone())
+                .collect();
+            let added = radio_entries_from(&tracks, &already);
+            if added.is_empty() {
+                app.queue_state.radio_mode = false;
+                app.status_message = Some(
+                    "Radio needs listening history to build a station from - none found"
+                        .to_string(),
+                );
+            } else {
+                let count = added.len();
+                for entry in added {
+                    app.queue_state.add(entry);
+                }
+                app.status_message = Some(format!("Radio Mode: ON - {} tracks queued", count));
+            }
+        }
+
+        // Apply playback results so the UI reflects what Spotify actually did
+        // rather than an optimistic guess made at keypress time.
+        while let Ok(feedback) = rx_play.try_recv() {
+            match feedback {
+                PlaybackFeedback::Started { name, artist, uri } => {
+                    app.player_state.current_track_name = Some(name.clone());
+                    app.player_state.current_artist_name = Some(artist);
+                    app.player_state.current_track_uri = Some(uri);
+                    app.player_state.is_playing = true;
+                    app.player_state.progress_ms = 0;
+                    app.player_state.reset_scroll();
+                    app.status_message = Some(format!("Playing: {}", name));
+                }
+                PlaybackFeedback::Failed(msg) => {
+                    app.player_state.is_playing = false;
+                    tracing::warn!("{}", msg);
+                    app.status_message = Some(msg);
+                }
+                PlaybackFeedback::Transferred { device_name, error } => match error {
+                    None => {
+                        app.status_message = Some(format!("Playing on {}", device_name));
+                    }
+                    Some(e) => {
+                        // Put the user back where they were: the transfer did
+                        // not happen, so remote mode is a lie.
+                        app.playback_mode = PlaybackMode::Local;
+                        app.selected_device_id = None;
+                        app.status_message =
+                            Some(format!("Could not switch to {}: {}", device_name, e));
+                    }
+                },
+                PlaybackFeedback::CommandFailed { message, revert } => {
+                    match revert {
+                        Revert::Nothing => {}
+                        Revert::Shuffle(previous) => app.player_state.shuffle = previous,
+                        Revert::Repeat(previous) => app.player_state.repeat_mode = previous,
+                        Revert::Volume(previous) => app.player_state.volume = previous,
+                    }
+                    app.status_message = Some(message);
+                }
             }
         }
 
@@ -960,8 +1319,11 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     if app.search_state.is_active
                         && app.search_state.pending_query.as_ref() == Some(&app.search_state.query)
                     {
+                        // No expiry: the error used to clear itself after 5s,
+                        // leaving an empty result list that the overlay renders
+                        // as "No results found" - turning a failure into a
+                        // confident, wrong answer. Editing the query clears it.
                         app.search_state.set_error(error);
-                        app.search_state.error_display_until_ms = Some(now + 5000);
                     } else {
                         tracing::debug!(
                             "Search error discarded (stale): pending={:?}, current={}, error={}",
@@ -1351,6 +1713,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                     });
                 }
+            } else if !app.search_state.query.is_empty() {
+                // Without a client there is nothing to search. Rendering "No
+                // results found" blamed the query for an auth failure.
+                app.search_state.mark_search_started(now);
+                app.search_state
+                    .set_error("Not connected to Spotify - restart to sign in".to_string());
             }
         }
 
@@ -1476,7 +1844,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                 // Overlays (rendered last so they appear on top)
                 if app.show_queue {
-                    joshify::ui::render_queue_overlay(frame, area, &app.queue_state);
+                    joshify::ui::render_queue_overlay(
+                        frame,
+                        area,
+                        &app.queue_state,
+                        app.queue_selected_index,
+                    );
                 }
                 if let (Some(ref content), Some(ref mut state)) =
                     (&app.help_content, &mut app.help_state)
@@ -1584,12 +1957,23 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 };
                 app.selected_index = 0;
                 app.scroll_offset = 0;
+            } else if client.is_none() {
+                // Nothing will ever answer, and content_state was left on
+                // Loading - the spinner ran forever with no explanation.
+                app.content_state = ContentState::Error(
+                    "Not connected to Spotify - restart to sign in".to_string(),
+                );
             } else if let Some(ref client) = client {
                 match action {
                     LoadAction::Devices => {
                         let c = client.clone();
                         let tx_clone = tx.clone();
-                        let has_local = app.playback_mode == PlaybackMode::Local;
+                        // Offer "This device" whenever a local player exists -
+                        // gating on the current mode meant that once you switched
+                        // away to a remote device, this entry vanished and there
+                        // was no way back.
+                        let has_local = app.local_player.is_some();
+                        let local_active = app.playback_mode == PlaybackMode::Local;
                         tokio::spawn(async move {
                             let guard = c.lock().await;
                             let devices = match guard.available_devices().await {
@@ -1607,7 +1991,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             let mut entries = Vec::new();
                             if has_local {
                                 entries.push(joshify::state::app_state::DeviceEntry::ThisDevice {
-                                    active: true,
+                                    active: local_active,
                                 });
                             }
                             for device in devices {
@@ -1921,6 +2305,29 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let tx_clone = tx.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
+                            // Followed artists were never fetched, so the
+                            // Artists tab was always empty and told the user
+                            // they follow nobody. Load both in one pass.
+                            let artists: Vec<ArtistListItem> =
+                                match guard.get_user_artists(50).await {
+                                    Ok(list) => list
+                                        .into_iter()
+                                        .map(|a| ArtistListItem {
+                                            name: a.name,
+                                            id: a.id.id().to_string(),
+                                            image_url: a.images.first().map(|i| i.url.clone()),
+                                            genres: a.genres,
+                                            // Spotify removed the followers field
+                                            // from this payload; showing 0 would be
+                                            // a fabricated number.
+                                            follower_count: None,
+                                        })
+                                        .collect(),
+                                    Err(e) => {
+                                        tracing::warn!("Failed to load followed artists: {}", e);
+                                        Vec::new()
+                                    }
+                                };
                             match guard.get_user_albums(50).await {
                                 Ok(saved_albums) => {
                                     let albums: Vec<joshify::state::app_state::AlbumListItem> =
@@ -1955,7 +2362,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     let _ = tx_clone
                                         .send(ContentState::Library {
                                             albums,
-                                            artists: vec![], // Load artists separately
+                                            artists,
                                             selected_tab:
                                                 joshify::state::app_state::LibraryTab::Albums,
                                         })
@@ -1975,9 +2382,9 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             ContentState::LoadingInProgress(LoadAction::LibraryAlbums);
                     }
                     LoadAction::LibraryArtists => {
-                        // TODO: Implement artists loading
-                        app.content_state =
-                            ContentState::Error("Library artists not yet implemented".to_string());
+                        // Albums and artists arrive together; reuse that load
+                        // rather than reporting "not yet implemented".
+                        app.content_state = ContentState::Loading(LoadAction::LibraryAlbums);
                     }
                     LoadAction::AlbumTracks {
                         album_id,
@@ -2089,34 +2496,20 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             crossterm::event::KeyCode::Enter => {
                                 if let Some(track) = app.search_state.selected_track() {
                                     if let Some(ref client) = client {
-                                        let c = client.clone();
-                                        let uri = track.uri.clone();
-                                        let tx_clone = tx.clone();
-                                        tokio::spawn(async move {
-                                            let guard = c.lock().await;
-                                            if let Ok(devices) = guard.available_devices().await {
-                                                if let Some(device) = devices.first() {
-                                                    if let Some(ref device_id) = device.id {
-                                                        let _ = guard
-                                                            .transfer_playback(device_id)
-                                                            .await;
-                                                    }
-                                                }
-                                            }
-                                            if let Err(e) =
-                                                guard.start_playback(vec![uri], None).await
-                                            {
-                                                tracing::error!("Search playback error: {}", e);
-                                                let _ = tx_clone
-                                                    .send(ContentState::SearchErrorLive(format!(
-                                                        "Playback failed: {}",
-                                                        e
-                                                    )))
-                                                    .await;
-                                            }
-                                        });
+                                        spawn_remote_play(
+                                            client,
+                                            (
+                                                track.name.clone(),
+                                                track.artist.clone(),
+                                                track.uri.clone(),
+                                            ),
+                                            None,
+                                            app.selected_device_id.clone(),
+                                            tx_play.clone(),
+                                        );
+                                        app.status_message =
+                                            Some(format!("Starting: {}", track.name));
                                     }
-                                    app.status_message = Some(format!("Playing: {}", track.name));
                                 }
                                 app.search_state.deactivate();
                             }
@@ -2140,14 +2533,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             }
                             crossterm::event::KeyCode::Tab => {
                                 if let Some(track) = app.search_state.selected_track() {
-                                    if let Some(ref client) = client {
-                                        let c = client.clone();
-                                        let uri = track.uri.clone();
-                                        tokio::spawn(async move {
-                                            let guard = c.lock().await;
-                                            let _ = guard.add_to_queue(&uri).await;
-                                        });
-                                    }
+                                    // joshify drives its own queue: auto-advance
+                                    // plays the next local entry explicitly. This
+                                    // also pushed the track into *Spotify's* queue
+                                    // with the result discarded, so "Queued:"
+                                    // appeared even when that failed - and when it
+                                    // succeeded the track could play twice. One
+                                    // queue, one source of truth.
                                     let queue_pos = app.queue_state.total_count() + 1;
                                     app.queue_state
                                         .add(joshify::state::queue_state::QueueEntry {
@@ -2173,31 +2565,138 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                     // Queue overlay - handle navigation and management
                     if app.show_queue {
+                        let queue_len = app.queue_state.local_queue.len();
                         match key.code {
                             crossterm::event::KeyCode::Esc => {
                                 app.show_queue = false;
                                 continue;
                             }
+                            crossterm::event::KeyCode::Char('j')
+                            | crossterm::event::KeyCode::Down => {
+                                if queue_len > 0 {
+                                    app.queue_selected_index =
+                                        (app.queue_selected_index + 1).min(queue_len - 1);
+                                }
+                                continue;
+                            }
+                            crossterm::event::KeyCode::Char('k')
+                            | crossterm::event::KeyCode::Up => {
+                                app.queue_selected_index =
+                                    app.queue_selected_index.saturating_sub(1);
+                                continue;
+                            }
+                            crossterm::event::KeyCode::Enter => {
+                                // The footer has always advertised "Enter: Play"
+                                // while no arm handled it.
+                                if let Some(entry) =
+                                    app.queue_state.local_queue.get(app.queue_selected_index)
+                                {
+                                    let entry = entry.clone();
+                                    // Only consume the entry once something has
+                                    // actually taken responsibility for playing
+                                    // it - otherwise a missing local player
+                                    // silently discarded the track.
+                                    let mut started = false;
+                                    if app.playback_mode == PlaybackMode::Local {
+                                        match app.local_player {
+                                            Some(ref player) => {
+                                                match player.load_uri(&entry.uri, true, 0) {
+                                                    Ok(_) => {
+                                                        app.player_state.current_track_name =
+                                                            Some(entry.name.clone());
+                                                        app.player_state.current_artist_name =
+                                                            Some(entry.artist.clone());
+                                                        app.player_state.current_track_uri =
+                                                            Some(entry.uri.clone());
+                                                        app.player_state.is_playing = true;
+                                                        app.player_state.progress_ms = 0;
+                                                        app.last_progress_tick_ms = now;
+                                                        app.status_message = Some(format!(
+                                                            "Playing: {}",
+                                                            entry.name
+                                                        ));
+                                                        started = true;
+                                                    }
+                                                    Err(e) => {
+                                                        app.status_message = Some(format!(
+                                                            "Local playback error: {}",
+                                                            e
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                app.status_message = Some(
+                                                    "Local player not initialized".to_string(),
+                                                );
+                                            }
+                                        }
+                                    } else if let Some(ref client) = client {
+                                        spawn_remote_play(
+                                            client,
+                                            (
+                                                entry.name.clone(),
+                                                entry.artist.clone(),
+                                                entry.uri.clone(),
+                                            ),
+                                            None,
+                                            app.selected_device_id.clone(),
+                                            tx_play.clone(),
+                                        );
+                                        app.status_message =
+                                            Some(format!("Starting: {}", entry.name));
+                                        started = true;
+                                    } else {
+                                        app.status_message =
+                                            Some("Not connected to Spotify".to_string());
+                                    }
+
+                                    if started {
+                                        // Remove by index, not by URI: the same
+                                        // track queued twice must lose only the
+                                        // copy that is now playing.
+                                        app.queue_state
+                                            .local_queue
+                                            .remove(app.queue_selected_index);
+                                        app.queue_state.sync_from_playback_queue();
+                                        app.queue_selected_index = app.queue_selected_index.min(
+                                            app.queue_state.local_queue.len().saturating_sub(1),
+                                        );
+                                        app.show_queue = false;
+                                    }
+                                }
+                                continue;
+                            }
                             crossterm::event::KeyCode::Char('c') => {
-                                app.queue_state.clear();
-                                app.status_message = Some("Queue cleared".to_string());
+                                // clear() also reset the playback context, which
+                                // silently killed auto-advance through the rest
+                                // of the playlist. Only the pending queue goes.
+                                let removed = app.queue_state.local_queue.len();
+                                app.queue_state.clear_pending();
+                                app.queue_selected_index = 0;
+                                app.status_message = Some(if removed == 0 {
+                                    "Queue was already empty".to_string()
+                                } else {
+                                    format!("Cleared {} queued track(s)", removed)
+                                });
                                 continue;
                             }
                             crossterm::event::KeyCode::Char('D') => {
-                                // Remove highlighted item from queue
-                                if let Some(ref highlighted) = app.highlighted_item {
-                                    let idx = app
+                                // Acted on the *main list's* highlight, so it
+                                // removed the wrong entry or silently no-oped.
+                                if app.queue_selected_index < app.queue_state.local_queue.len() {
+                                    let removed = app
                                         .queue_state
                                         .local_queue
-                                        .iter()
-                                        .position(|e| e.uri == highlighted.uri);
-                                    if let Some(i) = idx {
-                                        app.queue_state.local_queue.remove(i);
-                                        app.status_message = Some(format!(
-                                            "Removed from queue: {}",
-                                            highlighted.name
-                                        ));
-                                    }
+                                        .remove(app.queue_selected_index);
+                                    app.queue_state.sync_from_playback_queue();
+                                    app.queue_selected_index = app
+                                        .queue_selected_index
+                                        .min(app.queue_state.local_queue.len().saturating_sub(1));
+                                    app.status_message =
+                                        Some(format!("Removed from queue: {}", removed.name));
+                                } else {
+                                    app.status_message = Some("Queue is empty".to_string());
                                 }
                                 continue;
                             }
@@ -2242,7 +2741,28 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             joshify::state::app_state::DeviceEntry::ThisDevice {
                                                 ..
                                             } => {
+                                                // Pause whatever remote device was
+                                                // playing, or it keeps going while
+                                                // the user believes they moved
+                                                // playback back to this terminal.
+                                                if app.playback_mode == PlaybackMode::Remote {
+                                                    if let Some(ref client) = client {
+                                                        spawn_remote_command(
+                                                            client,
+                                                            RemoteCommand::Pause,
+                                                            app.selected_device_id.clone(),
+                                                            Revert::Nothing,
+                                                            tx_play.clone(),
+                                                        );
+                                                    }
+                                                    // The bar is showing polled
+                                                    // remote state that will never
+                                                    // update again.
+                                                    app.player_state.is_playing = false;
+                                                    app.player_state.progress_ms = 0;
+                                                }
                                                 app.playback_mode = PlaybackMode::Local;
+                                                app.selected_device_id = None;
                                                 app.status_message =
                                                     Some("Switched to local playback".to_string());
                                             }
@@ -2252,13 +2772,36 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 if let Some(ref device_id) = device.id {
                                                     if let Some(ref client) = client {
                                                         let c = client.clone();
-                                                        let device_id = device_id.clone();
                                                         let device_name = device.name.clone();
+                                                        let id_for_task = device_id.clone();
+                                                        let name_for_task = device_name.clone();
+                                                        let tx_t = tx_play.clone();
                                                         tokio::spawn(async move {
                                                             let guard = c.lock().await;
-                                                            let _ = guard.transfer_playback(&device_id).await;
+                                                            let error = guard
+                                                                .transfer_playback(&id_for_task)
+                                                                .await
+                                                                .err()
+                                                                .map(|e| e.to_string());
+                                                            let _ = tx_t
+                                                                .send(PlaybackFeedback::Transferred {
+                                                                    device_name: name_for_task,
+                                                                    error,
+                                                                })
+                                                                .await;
                                                         });
+                                                        // Handing audio to another
+                                                        // device means this one must
+                                                        // stop, or both play at once.
+                                                        if let Some(ref player) = app.local_player {
+                                                            player.pause();
+                                                        }
                                                         app.playback_mode = PlaybackMode::Remote;
+                                                        // Remember the choice so later
+                                                        // commands target this device
+                                                        // instead of re-guessing.
+                                                        app.selected_device_id =
+                                                            Some(device_id.clone());
                                                         app.status_message = Some(format!(
                                                             "Switching to {}...",
                                                             device_name
@@ -2288,30 +2831,45 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             }
                         } else if let Some(ref client) = client {
-                            let c = client.clone();
-                            let is_playing = app.player_state.is_playing;
-                            tokio::spawn(async move {
-                                let guard = c.lock().await;
-                                if is_playing {
-                                    let _ = guard.playback_pause().await;
-                                } else {
-                                    let _ = guard.playback_resume().await;
-                                }
-                            });
+                            let command = if app.player_state.is_playing {
+                                RemoteCommand::Pause
+                            } else {
+                                RemoteCommand::Resume
+                            };
+                            spawn_remote_command(
+                                client,
+                                command,
+                                app.selected_device_id.clone(),
+                                Revert::Nothing,
+                                tx_play.clone(),
+                            );
                         }
                         continue;
                     }
 
                     // Shuffle toggle (s) - works from ANY focus
                     if key.code == crossterm::event::KeyCode::Char('s') {
+                        // Local playback has no shuffle: the queue is walked in
+                        // order by advance(). Claiming "Shuffle: ON" here lit an
+                        // indicator that changed nothing about what played next.
+                        if app.playback_mode == PlaybackMode::Local {
+                            app.status_message = Some(
+                                "Shuffle applies to remote devices - press 'd' to pick one"
+                                    .to_string(),
+                            );
+                            continue;
+                        }
                         if let Some(ref client) = client {
-                            let new_shuffle = !app.player_state.shuffle;
+                            let previous = app.player_state.shuffle;
+                            let new_shuffle = !previous;
                             app.player_state.shuffle = new_shuffle;
-                            let c = client.clone();
-                            tokio::spawn(async move {
-                                let guard = c.lock().await;
-                                let _ = guard.toggle_shuffle(new_shuffle).await;
-                            });
+                            spawn_remote_command(
+                                client,
+                                RemoteCommand::Shuffle(new_shuffle),
+                                app.selected_device_id.clone(),
+                                Revert::Shuffle(previous),
+                                tx_play.clone(),
+                            );
                             app.status_message = Some(if new_shuffle {
                                 "Shuffle: ON".to_string()
                             } else {
@@ -2323,8 +2881,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
                     // Repeat toggle (r) - cycles Off → Context → Track → Off
                     if key.code == crossterm::event::KeyCode::Char('r') {
+                        // Same as shuffle: local playback ignores repeat entirely.
+                        if app.playback_mode == PlaybackMode::Local {
+                            app.status_message = Some(
+                                "Repeat applies to remote devices - press 'd' to pick one"
+                                    .to_string(),
+                            );
+                            continue;
+                        }
                         if let Some(ref client) = client {
-                            app.player_state.repeat_mode = app.player_state.repeat_mode.cycle();
+                            let previous = app.player_state.repeat_mode;
+                            app.player_state.repeat_mode = previous.cycle();
                             let new_mode = app.player_state.repeat_mode;
                             let spotify_state = match new_mode {
                                 joshify::state::player_state::RepeatMode::Off => {
@@ -2337,11 +2904,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     rspotify::model::RepeatState::Track
                                 }
                             };
-                            let c = client.clone();
-                            tokio::spawn(async move {
-                                let guard = c.lock().await;
-                                let _ = guard.set_repeat(spotify_state).await;
-                            });
+                            spawn_remote_command(
+                                client,
+                                RemoteCommand::Repeat(spotify_state),
+                                app.selected_device_id.clone(),
+                                Revert::Repeat(previous),
+                                tx_play.clone(),
+                            );
                             let label = match new_mode {
                                 joshify::state::player_state::RepeatMode::Off => "OFF",
                                 joshify::state::player_state::RepeatMode::Context => "ALL",
@@ -2355,11 +2924,38 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     // Radio mode toggle (Shift+R) - works from ANY focus
                     if key.code == crossterm::event::KeyCode::Char('R') {
                         app.queue_state.radio_mode = !app.queue_state.radio_mode;
-                        app.status_message = Some(if app.queue_state.radio_mode {
-                            "Radio Mode: ON".to_string()
+                        if app.queue_state.radio_mode {
+                            // radio_mode was read by exactly one place: the player
+                            // bar renderer. Toggling it lit a badge and changed
+                            // nothing about what played. Seed it with real tracks.
+                            if let Some(ref client) = client {
+                                let c = client.clone();
+                                let tx_r = tx_radio.clone();
+                                tokio::spawn(async move {
+                                    let guard = c.lock().await;
+                                    match guard.get_top_tracks(50, "medium").await {
+                                        Ok(tracks) => {
+                                            let _ = tx_r.send(tracks).await;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Radio seed failed: {}", e);
+                                            let _ = tx_r.send(Vec::new()).await;
+                                        }
+                                    }
+                                });
+                                app.status_message =
+                                    Some("Radio Mode: ON - building station...".to_string());
+                            } else {
+                                app.queue_state.radio_mode = false;
+                                app.status_message =
+                                    Some("Radio needs a Spotify connection".to_string());
+                            }
                         } else {
-                            "Radio Mode: OFF".to_string()
-                        });
+                            // Drop what radio added; keep what the user queued.
+                            app.queue_state.local_queue.retain(|e| !e.is_recommendation);
+                            app.queue_state.sync_from_playback_queue();
+                            app.status_message = Some("Radio Mode: OFF".to_string());
+                        }
                         continue;
                     }
 
@@ -2557,6 +3153,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         .iter()
                                                         .map(|t| t.uri.clone())
                                                         .collect();
+                                                    app.context_track_meta = tracks
+                                                        .iter()
+                                                        .map(|t| {
+                                                            (
+                                                                t.uri.clone(),
+                                                                (t.name.clone(), t.artist.clone()),
+                                                            )
+                                                        })
+                                                        .collect();
                                                     app.queue_state
                                                         .playback_queue_mut()
                                                         .set_context(
@@ -2640,80 +3245,28 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 } else {
                                                     // Remote playback via Spotify API
                                                     if let Some(ref client) = client {
-                                                        let c = client.clone();
-                                                        let track_uri = track.uri.clone();
-                                                        let track_name = track.name.clone();
-                                                        let context = app.current_context.clone();
-                                                        tokio::spawn(async move {
-                                                            let guard = c.lock().await;
-                                                            if let Ok(devices) =
-                                                                guard.available_devices().await
-                                                            {
-                                                                if let Some(device) =
-                                                                    devices.first()
-                                                                {
-                                                                    if let Some(ref device_id) =
-                                                                        device.id
-                                                                    {
-                                                                        let _ = guard
-                                                                            .transfer_playback(
-                                                                                device_id,
-                                                                            )
-                                                                            .await;
-                                                                        // Small delay to let device transfer settle before play command
-                                                                        // This prevents race where transfer and play commands conflict
-                                                                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                                                    }
-                                                                }
-                                                            }
-                                                            if let Some(
-                                                                PlaybackContext::Playlist {
-                                                                    uri,
-                                                                    start_index,
-                                                                    ..
-                                                                },
-                                                            ) = &context
-                                                            {
-                                                                let playlist_id_str = uri
-                                                                    .strip_prefix(
-                                                                        "spotify:playlist:",
-                                                                    )
-                                                                    .unwrap_or(uri);
-                                                                if let Ok(playlist_id) =
-                                                                    rspotify::model::PlaylistId::from_id(
-                                                                        playlist_id_str,
-                                                                    )
-                                                                {
-                                                                    // Use URI-based offset for unambiguous track selection
-                                                                    // This is more reliable than index-based offsets which can drift
-                                                                    tracing::info!(
-                                                                        "Starting playlist playback: playlist_id={}, track_uri={}, start_index={}",
-                                                                        playlist_id_str,
-                                                                        track_uri,
-                                                                        *start_index
-                                                                    );
-                                                                    let offset = rspotify::model::Offset::Uri(track_uri.clone());
-                                                                    let _ = guard.oauth.start_context_playback(
-                                                                        rspotify::model::PlayContextId::from(playlist_id),
-                                                                        None,
-                                                                        Some(offset),
-                                                                        None,
-                                                                    ).await;
-                                                                } else {
-                                                                    let _ = guard.start_playback(vec![track_uri], None).await;
-                                                                }
-                                                            } else {
-                                                                let _ = guard
-                                                                    .start_playback(
-                                                                        vec![track_uri],
-                                                                        None,
-                                                                    )
-                                                                    .await;
-                                                            }
-                                                        });
+                                                        let context_uri = match &app.current_context
+                                                        {
+                                                            Some(PlaybackContext::Playlist {
+                                                                uri,
+                                                                ..
+                                                            }) => Some(uri.clone()),
+                                                            _ => None,
+                                                        };
+                                                        spawn_remote_play(
+                                                            client,
+                                                            (
+                                                                track.name.clone(),
+                                                                track.artist.clone(),
+                                                                track.uri.clone(),
+                                                            ),
+                                                            context_uri,
+                                                            app.selected_device_id.clone(),
+                                                            tx_play.clone(),
+                                                        );
                                                         app.status_message = Some(format!(
-                                                            "Playing: {}",
-                                                            track_name
+                                                            "Starting: {}",
+                                                            track.name
                                                         ));
                                                     }
                                                 }
@@ -2775,12 +3328,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                             artists: artists.clone()
                                                         });
                                                         // Load artist detail
-                                                        app.content_state = ContentState::Loading(
-                                                            LoadAction::ArtistTopTracks {
-                                                                artist_id: artist.id.clone(),
-                                                                name: artist.name.clone(),
-                                                            },
-                                                        );
+                                                        // Routing through
+                                                        // ArtistTopTracks rebuilt an
+                                                        // empty placeholder, throwing
+                                                        // away the genres and image
+                                                        // the library load fetched, so
+                                                        // the detail view showed a
+                                                        // bare name.
+                                                        app.content_state =
+                                                            ContentState::ArtistDetail {
+                                                                artist: artist.clone(),
+                                                            };
                                                         app.selected_index = 0;
                                                         app.scroll_offset = 0;
                                                     }
@@ -2812,6 +3370,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 {
                                                     let queue =
                                                         app.queue_state.playback_queue_mut();
+                                                    app.context_track_meta = tracks
+                                                        .iter()
+                                                        .map(|t| {
+                                                            (
+                                                                t.uri.clone(),
+                                                                (t.name.clone(), t.artist.clone()),
+                                                            )
+                                                        })
+                                                        .collect();
                                                     queue.set_context(album_ctx, album_track_uris);
                                                     queue.set_context_position(app.selected_index);
                                                 }
@@ -2866,32 +3433,19 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                         }
                                                     }
                                                 } else if let Some(ref client) = client {
-                                                    let c = client.clone();
-                                                    let track_uri = track.uri.clone();
-                                                    let track_name = track.name.clone();
-                                                    tokio::spawn(async move {
-                                                        let guard = c.lock().await;
-                                                        if let Ok(devices) =
-                                                            guard.available_devices().await
-                                                        {
-                                                            if let Some(device) = devices.first() {
-                                                                if let Some(ref device_id) =
-                                                                    device.id
-                                                                {
-                                                                    let _ = guard
-                                                                        .transfer_playback(
-                                                                            device_id,
-                                                                        )
-                                                                        .await;
-                                                                }
-                                                            }
-                                                        }
-                                                        let _ = guard
-                                                            .start_playback(vec![track_uri], None)
-                                                            .await;
-                                                    });
+                                                    spawn_remote_play(
+                                                        client,
+                                                        (
+                                                            track.name.clone(),
+                                                            track.artist.clone(),
+                                                            track.uri.clone(),
+                                                        ),
+                                                        None,
+                                                        app.selected_device_id.clone(),
+                                                        tx_play.clone(),
+                                                    );
                                                     app.status_message =
-                                                        Some(format!("Playing: {}", track_name));
+                                                        Some(format!("Starting: {}", track.name));
                                                 }
                                             }
                                         }
@@ -2909,16 +3463,18 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                             }
                                         }
                                     } else if let Some(ref client) = client {
-                                        let c = client.clone();
-                                        let is_playing = app.player_state.is_playing;
-                                        tokio::spawn(async move {
-                                            let guard = c.lock().await;
-                                            if is_playing {
-                                                let _ = guard.playback_pause().await;
-                                            } else {
-                                                let _ = guard.playback_resume().await;
-                                            }
-                                        });
+                                        let command = if app.player_state.is_playing {
+                                            RemoteCommand::Pause
+                                        } else {
+                                            RemoteCommand::Resume
+                                        };
+                                        spawn_remote_command(
+                                            client,
+                                            command,
+                                            app.selected_device_id.clone(),
+                                            Revert::Nothing,
+                                            tx_play.clone(),
+                                        );
                                     }
                                 }
                             }
@@ -3042,6 +3598,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume down when player focused
+                                let previous_volume = app.player_state.volume;
                                 app.player_state.volume = app.player_state.volume.saturating_sub(5);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
@@ -3051,12 +3608,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
-                                    let new_vol = app.player_state.volume;
-                                    let c = client.clone();
-                                    tokio::spawn(async move {
-                                        let guard = c.lock().await;
-                                        let _ = guard.set_volume(new_vol).await;
-                                    });
+                                    spawn_remote_command(
+                                        client,
+                                        RemoteCommand::Volume(app.player_state.volume),
+                                        app.selected_device_id.clone(),
+                                        Revert::Volume(previous_volume),
+                                        tx_play.clone(),
+                                    );
                                 }
                             }
                         }
@@ -3103,6 +3661,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 }
                             } else if app.focus == FocusTarget::PlayerBar {
                                 // Volume up when player focused
+                                let previous_volume = app.player_state.volume;
                                 app.player_state.volume = (app.player_state.volume + 5).min(100);
                                 if app.playback_mode == PlaybackMode::Local {
                                     if let Some(ref player) = app.local_player {
@@ -3112,14 +3671,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         player.set_volume(new_vol);
                                     }
                                 } else if let Some(ref client) = client {
-                                    let new_vol = app.player_state.volume;
-                                    let c = client.clone();
-                                    tokio::spawn(async move {
-                                        let guard = c.lock().await;
-                                        if let Err(e) = guard.set_volume(new_vol).await {
-                                            tracing::error!("Volume up failed: {}", e);
-                                        }
-                                    });
+                                    spawn_remote_command(
+                                        client,
+                                        RemoteCommand::Volume(app.player_state.volume),
+                                        app.selected_device_id.clone(),
+                                        Revert::Volume(previous_volume),
+                                        tx_play.clone(),
+                                    );
                                 }
                             }
                         }
@@ -3132,13 +3690,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                 // the old Stopped-triggers-advance behaviour).
                                 advance_local_playback(&mut app);
                             } else if let Some(ref client) = client {
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if let Err(e) = guard.playback_next().await {
-                                        tracing::error!("Next failed: {}", e);
-                                    }
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Next,
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         crossterm::event::KeyCode::Char('p') => {
@@ -3176,13 +3734,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                 }
                             } else if let Some(ref client) = client {
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if let Err(e) = guard.playback_previous().await {
-                                        tracing::error!("Previous failed: {}", e);
-                                    }
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Previous,
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         crossterm::event::KeyCode::Left => {
@@ -3202,13 +3760,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     app.player_state.progress_ms,
                                 );
                                 app.player_state.progress_ms = new_pos;
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if let Err(e) = guard.seek(new_pos, None).await {
-                                        tracing::error!("Seek back failed: {}", e);
-                                    }
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Seek(new_pos),
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         crossterm::event::KeyCode::Right => {
@@ -3227,16 +3785,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     app.player_state.duration_ms,
                                 );
                                 app.player_state.progress_ms = new_pos;
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if let Err(e) = guard.seek(new_pos, None).await {
-                                        tracing::error!("Seek forward failed: {}", e);
-                                    }
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Seek(new_pos),
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         crossterm::event::KeyCode::Char('+') => {
+                            let previous_volume = app.player_state.volume;
                             app.player_state.volume = (app.player_state.volume + 5).min(100);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
@@ -3245,17 +3804,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
-                                let new_vol = app.player_state.volume;
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if let Err(e) = guard.set_volume(new_vol).await {
-                                        tracing::error!("Volume up (+) failed: {}", e);
-                                    }
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Volume(app.player_state.volume),
+                                    app.selected_device_id.clone(),
+                                    Revert::Volume(previous_volume),
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         crossterm::event::KeyCode::Char('-') => {
+                            let previous_volume = app.player_state.volume;
                             app.player_state.volume = app.player_state.volume.saturating_sub(5);
                             if app.playback_mode == PlaybackMode::Local {
                                 if let Some(ref player) = app.local_player {
@@ -3264,14 +3823,13 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
-                                let new_vol = app.player_state.volume;
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if let Err(e) = guard.set_volume(new_vol).await {
-                                        tracing::error!("Volume down (-) failed: {}", e);
-                                    }
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Volume(app.player_state.volume),
+                                    app.selected_device_id.clone(),
+                                    Revert::Volume(previous_volume),
+                                    tx_play.clone(),
+                                );
                             }
                         }
 
@@ -3514,6 +4072,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         // so queue advancement works correctly
                                         let track_uris: Vec<String> =
                                             tracks.iter().map(|t| t.uri.clone()).collect();
+                                        app.context_track_meta = tracks
+                                            .iter()
+                                            .map(|t| {
+                                                (t.uri.clone(), (t.name.clone(), t.artist.clone()))
+                                            })
+                                            .collect();
                                         app.queue_state
                                             .playback_queue_mut()
                                             .set_context(context, track_uris);
@@ -3536,6 +4100,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         if let Some(ref ctx) = app.current_context {
                                             let track_uris: Vec<String> =
                                                 ctx_tracks.iter().map(|t| t.uri.clone()).collect();
+                                            app.context_track_meta = ctx_tracks
+                                                .iter()
+                                                .map(|t| {
+                                                    (
+                                                        t.uri.clone(),
+                                                        (t.name.clone(), t.artist.clone()),
+                                                    )
+                                                })
+                                                .collect();
                                             app.queue_state
                                                 .playback_queue_mut()
                                                 .set_context(ctx.clone(), track_uris.clone());
@@ -3606,108 +4179,34 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     } else {
                                         // Remote playback via Spotify API
                                         if let Some(ref client) = client {
-                                            let c = client.clone();
-                                            let track_uri = track.uri.clone();
-                                            let track_name = track.name.clone();
-                                            let context = app.current_context.clone();
-                                            let track_index = index; // Capture index for async block
-                                            let playlist_id_for_context =
-                                                if let ContentState::PlaylistTracks(pid, _) =
-                                                    &app.content_state
-                                                {
-                                                    Some(pid.clone())
-                                                } else {
-                                                    None
-                                                };
-
-                                            tokio::spawn(async move {
-                                                let guard = c.lock().await;
-                                                if let Ok(devices) = guard.available_devices().await
-                                                {
-                                                    if let Some(device) = devices.first() {
-                                                        if let Some(ref device_id) = device.id {
-                                                            let _ = guard
-                                                                .transfer_playback(device_id)
-                                                                .await;
-                                                        }
-                                                    }
+                                            // Play within the playlist context when
+                                            // the click came from a playlist view,
+                                            // otherwise fall back to whatever context
+                                            // is currently loaded.
+                                            let context_uri = match &app.content_state {
+                                                ContentState::PlaylistTracks(pid, _) => {
+                                                    Some(format!("spotify:playlist:{}", pid))
                                                 }
-
-                                                // Use playlist context if available
-                                                if let Some(pid) = playlist_id_for_context {
-                                                    let _playlist_uri =
-                                                        format!("spotify:playlist:{}", pid);
-                                                    if let Ok(playlist_id) =
-                                                        rspotify::model::PlaylistId::from_id(&pid)
-                                                    {
-                                                        // Use URI-based offset for unambiguous track selection
-                                                        // This is more reliable than index-based offsets
-                                                        tracing::info!(
-                                                            "Mouse: Starting playlist playback: playlist_id={}, track_uri={}, track_index={}",
-                                                            pid,
-                                                            track_uri,
-                                                            track_index
-                                                        );
-                                                        let offset = rspotify::model::Offset::Uri(
-                                                            track_uri.clone(),
-                                                        );
-                                                        let _ = guard.oauth.start_context_playback(
-                                                            rspotify::model::PlayContextId::from(playlist_id),
-                                                            None,
-                                                            Some(offset),
-                                                            None,
-                                                        ).await;
-                                                    } else {
-                                                        // Fallback to direct track playback
-                                                        let _ = guard
-                                                            .start_playback(vec![track_uri], None)
-                                                            .await;
-                                                    }
-                                                } else if let Some(PlaybackContext::Playlist {
-                                                    uri,
-                                                    start_index,
-                                                    ..
-                                                }) = &context
-                                                {
-                                                    // Use existing context if available
-                                                    let playlist_id_str = uri
-                                                        .strip_prefix("spotify:playlist:")
-                                                        .unwrap_or(uri);
-                                                    if let Ok(playlist_id) =
-                                                        rspotify::model::PlaylistId::from_id(
-                                                            playlist_id_str,
-                                                        )
-                                                    {
-                                                        // Use URI-based offset for unambiguous track selection
-                                                        tracing::info!(
-                                                            "Existing context: Starting playlist playback: playlist_id={}, track_uri={}, start_index={}",
-                                                            playlist_id_str,
-                                                            track_uri,
-                                                            *start_index
-                                                        );
-                                                        let offset = rspotify::model::Offset::Uri(
-                                                            track_uri.clone(),
-                                                        );
-                                                        let _ = guard.oauth.start_context_playback(
-                                                            rspotify::model::PlayContextId::from(playlist_id),
-                                                            None,
-                                                            Some(offset),
-                                                            None,
-                                                        ).await;
-                                                    } else {
-                                                        let _ = guard
-                                                            .start_playback(vec![track_uri], None)
-                                                            .await;
-                                                    }
-                                                } else {
-                                                    // No context - play track directly
-                                                    let _ = guard
-                                                        .start_playback(vec![track_uri], None)
-                                                        .await;
-                                                }
-                                            });
+                                                _ => match &app.current_context {
+                                                    Some(PlaybackContext::Playlist {
+                                                        uri, ..
+                                                    }) => Some(uri.clone()),
+                                                    _ => None,
+                                                },
+                                            };
+                                            spawn_remote_play(
+                                                client,
+                                                (
+                                                    track.name.clone(),
+                                                    track.artist.clone(),
+                                                    track.uri.clone(),
+                                                ),
+                                                context_uri,
+                                                app.selected_device_id.clone(),
+                                                tx_play.clone(),
+                                            );
                                             app.status_message =
-                                                Some(format!("Playing: {}", track_name));
+                                                Some(format!("Starting: {}", track.name));
                                         }
                                     }
                                 }
@@ -3727,36 +4226,42 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     }
                                 }
                             } else if let Some(ref client) = client {
-                                let c = client.clone();
-                                let is_playing = app.player_state.is_playing;
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    if is_playing {
-                                        let _ = guard.playback_pause().await;
-                                    } else {
-                                        let _ = guard.playback_resume().await;
-                                    }
-                                });
+                                let command = if app.player_state.is_playing {
+                                    RemoteCommand::Pause
+                                } else {
+                                    RemoteCommand::Resume
+                                };
+                                spawn_remote_command(
+                                    client,
+                                    command,
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         joshify::ui::MouseAction::SkipNext => {
                             // Next track
                             if let Some(ref client) = client {
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.playback_next().await;
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Next,
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         joshify::ui::MouseAction::SkipPrevious => {
                             // Previous track
                             if let Some(ref client) = client {
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.playback_previous().await;
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Previous,
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         joshify::ui::MouseAction::ToggleQueue => {
@@ -3829,6 +4334,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                             // Adjust volume
                             let new_volume =
                                 (app.player_state.volume as i32 + delta).clamp(0, 100) as u32;
+                            let previous_volume = app.player_state.volume;
                             app.player_state.volume = new_volume;
 
                             if app.playback_mode == PlaybackMode::Local {
@@ -3838,32 +4344,42 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     player.set_volume(new_vol);
                                 }
                             } else if let Some(ref client) = client {
-                                // Use Spotify API for remote playback
-                                let c = client.clone();
-                                let volume = new_volume;
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.set_volume(volume).await;
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Volume(new_volume),
+                                    app.selected_device_id.clone(),
+                                    Revert::Volume(previous_volume),
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         joshify::ui::MouseAction::ToggleShuffle => {
-                            // Toggle shuffle
-                            if let Some(ref client) = client {
-                                let new_shuffle = !app.player_state.shuffle;
-                                app.player_state.shuffle = new_shuffle;
-                                let c = client.clone();
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.toggle_shuffle(new_shuffle).await;
-                                });
+                            if app.playback_mode == PlaybackMode::Local {
+                                app.status_message = Some(
+                                    "Shuffle applies to remote devices - press 'd' to pick one"
+                                        .to_string(),
+                                );
+                            } else if let Some(ref client) = client {
+                                let previous = app.player_state.shuffle;
+                                app.player_state.shuffle = !previous;
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Shuffle(!previous),
+                                    app.selected_device_id.clone(),
+                                    Revert::Shuffle(previous),
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         joshify::ui::MouseAction::CycleRepeat => {
-                            // Cycle repeat mode
-                            if let Some(ref client) = client {
-                                app.player_state.repeat_mode = app.player_state.repeat_mode.cycle();
-                                let c = client.clone();
+                            if app.playback_mode == PlaybackMode::Local {
+                                app.status_message = Some(
+                                    "Repeat applies to remote devices - press 'd' to pick one"
+                                        .to_string(),
+                                );
+                            } else if let Some(ref client) = client {
+                                let previous = app.player_state.repeat_mode;
+                                app.player_state.repeat_mode = previous.cycle();
                                 let mode = match app.player_state.repeat_mode {
                                     joshify::state::player_state::RepeatMode::Off => {
                                         rspotify::model::RepeatState::Off
@@ -3875,10 +4391,54 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         rspotify::model::RepeatState::Context
                                     }
                                 };
-                                tokio::spawn(async move {
-                                    let guard = c.lock().await;
-                                    let _ = guard.set_repeat(mode).await;
-                                });
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Repeat(mode),
+                                    app.selected_device_id.clone(),
+                                    Revert::Repeat(previous),
+                                    tx_play.clone(),
+                                );
+                            }
+                        }
+                        // Clicking the progress bar and the volume bar both
+                        // emitted actions that no arm handled - they fell into
+                        // the catch-all below and did nothing at all, while the
+                        // help screen advertised both.
+                        joshify::ui::MouseAction::Seek(percent) => {
+                            let new_pos =
+                                position_from_percent(percent, app.player_state.duration_ms);
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    player.seek(new_pos);
+                                    app.player_state.progress_ms = new_pos;
+                                }
+                            } else if let Some(ref client) = client {
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Seek(new_pos),
+                                    app.selected_device_id.clone(),
+                                    Revert::Nothing,
+                                    tx_play.clone(),
+                                );
+                            }
+                        }
+                        joshify::ui::MouseAction::SetVolume(percent) => {
+                            let previous_volume = app.player_state.volume;
+                            app.player_state.volume = (percent as u32).min(100);
+                            if app.playback_mode == PlaybackMode::Local {
+                                if let Some(ref player) = app.local_player {
+                                    player.set_volume(joshify::player::percent_to_volume(
+                                        app.player_state.volume,
+                                    ));
+                                }
+                            } else if let Some(ref client) = client {
+                                spawn_remote_command(
+                                    client,
+                                    RemoteCommand::Volume(app.player_state.volume),
+                                    app.selected_device_id.clone(),
+                                    Revert::Volume(previous_volume),
+                                    tx_play.clone(),
+                                );
                             }
                         }
                         _ => {}
@@ -4312,6 +4872,104 @@ mod version_flag_tests {
             ..Default::default()
         };
         assert!(args.version);
+    }
+}
+
+#[cfg(test)]
+mod radio_entries_tests {
+    use super::radio_entries_from;
+    use std::collections::HashSet;
+
+    fn track(id: &str, name: &str) -> rspotify::model::FullTrack {
+        let json = format!(
+            r#"{{
+              "album": {{
+                "album_type": "album", "artists": [], "available_markets": [],
+                "external_urls": {{}}, "href": "h", "id": "alb1", "images": [],
+                "name": "An Album", "release_date": "2020-01-01",
+                "release_date_precision": "day", "type": "album",
+                "uri": "spotify:album:alb1"
+              }},
+              "artists": [{{
+                "external_urls": {{}}, "href": "h", "id": "art1",
+                "name": "An Artist", "type": "artist", "uri": "spotify:artist:art1"
+              }}],
+              "available_markets": [], "disc_number": 1, "duration_ms": 1000,
+              "explicit": false, "external_ids": {{}}, "external_urls": {{}},
+              "href": "h", "id": "{id}", "is_local": false, "name": "{name}",
+              "popularity": 1, "preview_url": null, "track_number": 1,
+              "type": "track", "uri": "spotify:track:{id}"
+            }}"#
+        );
+        serde_json::from_str(&json).expect("fixture must deserialize")
+    }
+
+    #[test]
+    fn builds_entries_marked_as_recommendations() {
+        // The flag is what lets toggling radio off remove exactly these and
+        // leave hand-queued tracks alone.
+        let entries = radio_entries_from(&[track("t1", "One")], &HashSet::new());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].uri, "spotify:track:t1");
+        assert_eq!(entries[0].name, "One");
+        assert_eq!(entries[0].artist, "An Artist");
+        assert!(entries[0].is_recommendation);
+        assert!(!entries[0].added_by_user);
+    }
+
+    #[test]
+    fn skips_tracks_already_queued_or_playing() {
+        let mut exclude = HashSet::new();
+        exclude.insert("spotify:track:t1".to_string());
+        let entries = radio_entries_from(&[track("t1", "One"), track("t2", "Two")], &exclude);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].uri, "spotify:track:t2");
+    }
+
+    #[test]
+    fn an_empty_seed_produces_nothing_to_queue() {
+        // The caller relies on this to turn radio back off rather than leave a
+        // badge lit over an empty station.
+        assert!(radio_entries_from(&[], &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn everything_excluded_produces_nothing_to_queue() {
+        let mut exclude = HashSet::new();
+        exclude.insert("spotify:track:t1".to_string());
+        assert!(radio_entries_from(&[track("t1", "One")], &exclude).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod position_from_percent_tests {
+    use super::position_from_percent;
+
+    #[test]
+    fn maps_the_ends_and_the_middle() {
+        assert_eq!(position_from_percent(0, 200_000), 0);
+        assert_eq!(position_from_percent(50, 200_000), 100_000);
+        assert_eq!(position_from_percent(100, 200_000), 200_000);
+    }
+
+    #[test]
+    fn never_runs_past_the_end_of_the_track() {
+        assert_eq!(position_from_percent(200, 200_000), 200_000);
+        assert_eq!(position_from_percent(u8::MAX, 200_000), 200_000);
+    }
+
+    #[test]
+    fn a_long_track_does_not_overflow_the_multiply() {
+        // u32 * 100 overflows 32 bits for anything over ~11.9 hours, so the
+        // arithmetic has to widen before multiplying.
+        assert_eq!(position_from_percent(100, u32::MAX), u32::MAX);
+        assert_eq!(position_from_percent(50, u32::MAX), u32::MAX / 2);
+    }
+
+    #[test]
+    fn a_track_with_no_duration_seeks_to_zero() {
+        // Nothing is loaded yet - this must not divide by zero or panic.
+        assert_eq!(position_from_percent(75, 0), 0);
     }
 }
 
