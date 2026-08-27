@@ -162,15 +162,34 @@ async fn fetch_text(url: &str) -> Result<String> {
 /// cross a filesystem boundary, and a running process keeps its open handle to
 /// the old inode.
 pub fn atomic_replace(dest: &Path, bytes: &[u8]) -> Result<()> {
+    let staged = stage_beside(dest, bytes)?;
+    commit_staged(&staged, dest)
+}
+
+/// Where the new binary is written before it takes over from `dest`.
+pub fn staging_path_for(dest: &Path) -> Result<PathBuf> {
     let dir = dest
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", dest.display()))?;
-    let staged = dir.join(format!(
+    Ok(dir.join(format!(
         ".{}.new",
         dest.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("joshify")
-    ));
+    )))
+}
+
+/// Write the new binary next to `dest` and make it executable.
+///
+/// Deliberately beside the destination rather than in a temp directory. The
+/// update smoke-tests the new binary by running it, and hardened systems mount
+/// `/tmp` with `noexec` - where `execve` fails with `EACCES` ("Permission
+/// denied") no matter what the file's mode bits say. The directory the running
+/// binary lives in is by definition allowed to execute, and staging there also
+/// keeps the final rename on a single filesystem, which is what makes it
+/// atomic.
+pub fn stage_beside(dest: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    let staged = staging_path_for(dest)?;
 
     std::fs::write(&staged, bytes)
         .with_context(|| format!("writing {} (is it writable?)", staged.display()))?;
@@ -178,13 +197,42 @@ pub fn atomic_replace(dest: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+        if let Err(e) = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(e).with_context(|| format!("making {} executable", staged.display()));
+        }
     }
 
-    std::fs::rename(&staged, dest).inspect_err(|_| {
-        let _ = std::fs::remove_file(&staged);
-    })?;
+    Ok(staged)
+}
+
+/// Move a staged binary into place, cleaning up if the rename fails.
+pub fn commit_staged(staged: &Path, dest: &Path) -> Result<()> {
+    std::fs::rename(staged, dest)
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(staged);
+        })
+        .with_context(|| format!("replacing {}", dest.display()))?;
     Ok(())
+}
+
+/// Explain an exec failure in the terms most likely to be the actual cause.
+///
+/// `EACCES` from `execve` on a file we just wrote and chmod'ed almost always
+/// means the filesystem is mounted `noexec`, not that the permissions are
+/// wrong - a distinction the raw "Permission denied" hides.
+fn describe_exec_failure(path: &Path, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        format!(
+            "cannot execute the downloaded binary at {}: {e}\n\
+             The file is executable, so the filesystem holding it is most likely \
+             mounted `noexec`. Install with the script instead:\n  \
+             curl -fsSL https://raw.githubusercontent.com/{REPO_SLUG}/main/install.sh | bash",
+            path.display()
+        )
+    } else {
+        format!("running the downloaded binary at {}: {e}", path.display())
+    }
 }
 
 /// Extract the single binary from a release tarball.
@@ -275,24 +323,33 @@ pub async fn run_update(options: &UpdateOptions) -> Result<()> {
     println!("Checksum verified.");
 
     let dest = std::env::current_exe().context("locating the running binary")?;
-    let staging = tempfile::tempdir().context("creating a staging directory")?;
-    let extracted = extract_binary(&tarball, asset, staging.path())?;
+    let unpacked = tempfile::tempdir().context("creating a staging directory")?;
+    let extracted = extract_binary(&tarball, asset, unpacked.path())?;
+
+    // Stage beside the destination before the smoke test, not in the temp
+    // directory: running it from /tmp fails with EACCES wherever /tmp is
+    // mounted noexec, which is common on hardened and enterprise images.
+    let staged = stage_beside(&dest, &std::fs::read(&extracted)?)?;
 
     // Confirm the new binary runs before it replaces the running one.
-    let probe = std::process::Command::new(&extracted)
+    let probe = match std::process::Command::new(&staged)
         .arg("--version")
         .output()
-        .context("running the downloaded binary")?;
-    let reported = String::from_utf8_lossy(&probe.stdout);
+    {
+        Ok(probe) => probe,
+        Err(e) => {
+            let _ = std::fs::remove_file(&staged);
+            bail!("{}", describe_exec_failure(&staged, &e));
+        }
+    };
+    let reported = String::from_utf8_lossy(&probe.stdout).trim().to_string();
     if !probe.status.success() || !reported.starts_with(crate::VERSION_PREFIX) {
-        bail!(
-            "the downloaded binary did not report a version; not installing it\n{}",
-            reported.trim()
-        );
+        let _ = std::fs::remove_file(&staged);
+        bail!("the downloaded binary did not report a version; not installing it\n{reported}");
     }
 
-    atomic_replace(&dest, &std::fs::read(&extracted)?)?;
-    println!("Updated to {} at {}", reported.trim(), dest.display());
+    commit_staged(&staged, &dest)?;
+    println!("Updated to {reported} at {}", dest.display());
     Ok(())
 }
 
@@ -562,6 +619,96 @@ mod tests {
         atomic_replace(&target, b"new").expect("replace");
 
         assert_eq!(std::fs::read(&target).expect("read"), b"new");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with('.'))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "staging file left behind: {leftovers:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_happens_next_to_the_destination_not_in_tmp() {
+        // The bug: the update smoke-tested the new binary from
+        // tempfile::tempdir() (i.e. /tmp). Where /tmp is mounted noexec -
+        // common on hardened images - execve returns EACCES and the update
+        // died with a bare "Permission denied" after a verified download.
+        // The staged binary must live in the destination's own directory,
+        // which is by definition allowed to execute.
+        // Pure path math against a realistic install location, so the check
+        // is about where staging goes rather than about the test's fixture.
+        let dest = Path::new("/usr/local/bin/joshify");
+
+        let staged = staging_path_for(dest).expect("staging path");
+
+        assert_eq!(
+            staged,
+            Path::new("/usr/local/bin/.joshify.new"),
+            "staged binary must sit beside the destination"
+        );
+        assert_eq!(staged.parent(), dest.parent());
+        assert_ne!(staged, dest, "staging must not clobber the running binary");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_staged_binary_can_actually_be_executed() {
+        // The real property the fix is about: after staging, the file runs.
+        // Asserting mode bits alone would not have caught the original bug,
+        // because the mode bits were always right.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("joshify");
+
+        let staged = stage_beside(&dest, b"#!/bin/sh\necho 'Joshify 9.9.9'\n").expect("stage");
+
+        let mode = std::fs::metadata(&staged)
+            .expect("stat")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "staged binary must be executable");
+
+        let out = std::process::Command::new(&staged)
+            .arg("--version")
+            .output()
+            .expect("the staged binary must be executable in place");
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("Joshify "));
+    }
+
+    #[test]
+    fn commit_staged_moves_the_staged_binary_into_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("joshify");
+        std::fs::write(&dest, b"old").expect("seed");
+
+        let staged = stage_beside(&dest, b"new").expect("stage");
+        assert_eq!(std::fs::read(&dest).expect("read"), b"old", "not yet live");
+
+        commit_staged(&staged, &dest).expect("commit");
+        assert_eq!(std::fs::read(&dest).expect("read"), b"new");
+        assert!(!staged.exists(), "staging file must not survive the commit");
+    }
+
+    #[test]
+    fn a_failed_smoke_test_leaves_the_running_binary_untouched() {
+        // Staging beside the destination puts a file next to the live binary;
+        // if the new one turns out to be broken, that file must not be left
+        // behind and the running binary must be exactly as it was.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("joshify");
+        std::fs::write(&dest, b"old").expect("seed");
+
+        let staged = stage_beside(&dest, b"broken").expect("stage");
+        // Simulate the update bailing out after a failed probe.
+        std::fs::remove_file(&staged).expect("cleanup");
+
+        assert_eq!(std::fs::read(&dest).expect("read"), b"old");
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .expect("read_dir")
             .filter_map(Result::ok)
