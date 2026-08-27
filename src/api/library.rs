@@ -519,3 +519,128 @@ mod tests {
         }
     }
 }
+
+/// The real pagination code against a fake Spotify that enforces the real
+/// limits. These are the tests that would have caught 0.8.3: with the page
+/// size at 100 the fake answers 400 on page 0 and `playlist_get_items`
+/// returns "Failed to get playlist items".
+#[cfg(test)]
+mod paging_against_fake_spotify {
+    use super::super::fake_spotify::{track_id, Catalog, FakeSpotify};
+    use super::*;
+
+    const PLAYLIST: &str = "37i9dQZF1DXcBWIGoYBM5M";
+    const ALBUM: &str = "4aawyAB9vmqN3uQ7FjRGTy";
+
+    fn catalog(playlist_total: u32, album_total: u32) -> Catalog {
+        Catalog {
+            playlist_total,
+            album_total,
+            fail_from_offset: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn playlist_pager_stays_within_the_limit_and_reads_every_page() {
+        let fake = FakeSpotify::start(catalog(120, 0)).await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+
+        let items = client
+            .playlist_get_items(PLAYLIST)
+            .await
+            .expect("a 120-track playlist must load");
+
+        assert_eq!(items.len(), 120, "every page must be read, in order");
+        let last_id = match items[119].item.as_ref() {
+            Some(rspotify::model::PlayableItem::Track(t)) => t.id.as_ref().map(|i| i.to_string()),
+            other => panic!("expected a track, got {other:?}"),
+        };
+        assert_eq!(
+            last_id.as_deref(),
+            Some(format!("spotify:track:{}", track_id(119)).as_str())
+        );
+
+        let hits = fake.hits();
+        assert_eq!(hits.len(), 3, "120 items at 50 a page is three requests");
+        for hit in &hits {
+            let limit = hit
+                .query
+                .get("limit")
+                .expect("limit must be sent explicitly");
+            let limit: u32 = limit.parse().expect("numeric limit");
+            assert!(
+                (1..=SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT).contains(&limit),
+                "Spotify rejects limit={limit} on {}",
+                hit.path
+            );
+        }
+        let offsets: Vec<u32> = hits
+            .iter()
+            .map(|h| h.query["offset"].parse().unwrap())
+            .collect();
+        assert_eq!(offsets, vec![0, 50, 100]);
+    }
+
+    #[tokio::test]
+    async fn album_pager_stays_within_the_limit_and_reads_every_page() {
+        let fake = FakeSpotify::start(catalog(0, 75)).await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+
+        let tracks = client
+            .get_album_tracks(ALBUM)
+            .await
+            .expect("a 75-track album must load");
+
+        assert_eq!(tracks.len(), 75);
+        let hits = fake.hits();
+        assert_eq!(hits.len(), 2);
+        for hit in &hits {
+            let limit: u32 = hit.query["limit"].parse().unwrap();
+            assert!((1..=SPOTIFY_ALBUM_TRACKS_MAX_LIMIT).contains(&limit));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_short_playlist_is_a_single_request() {
+        let fake = FakeSpotify::start(catalog(7, 0)).await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+        let items = client.playlist_get_items(PLAYLIST).await.unwrap();
+        assert_eq!(items.len(), 7);
+        assert_eq!(fake.hits().len(), 1, "a short page must end the walk");
+    }
+
+    #[tokio::test]
+    async fn a_failing_first_page_is_reported_not_swallowed() {
+        let fake = FakeSpotify::start(Catalog {
+            playlist_total: 120,
+            album_total: 0,
+            fail_from_offset: Some(0),
+        })
+        .await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+        let err = client
+            .playlist_get_items(PLAYLIST)
+            .await
+            .expect_err("nothing was read, so the caller must hear about it");
+        assert!(
+            err.to_string().contains("Failed to get playlist items"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_later_page_keeps_what_was_already_read() {
+        let fake = FakeSpotify::start(Catalog {
+            playlist_total: 120,
+            album_total: 0,
+            fail_from_offset: Some(50),
+        })
+        .await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+        let items = client
+            .playlist_get_items(PLAYLIST)
+            .await
+            .expect("the first page was good; keep it");
+        assert_eq!(items.len(), 50);
+    }
+}

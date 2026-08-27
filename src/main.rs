@@ -397,6 +397,56 @@ fn spawn_remote_play(
     });
 }
 
+/// What happened when the user asked for a track to play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayOutcome {
+    /// The local player accepted the track; the player bar already reflects it.
+    StartedLocally,
+    /// The request went to Spotify on a spawned task; the result arrives as
+    /// `PlaybackFeedback`.
+    DispatchedRemotely,
+    /// Nothing is playing and the status message says why.
+    NotStarted,
+}
+
+/// The one way to start a track, wherever the user picked it.
+///
+/// Playback happens on this machine by default. Only when the user has chosen
+/// another device with 'd' - which is what puts the app in remote mode - does
+/// the track go to Spotify's API instead. 0.8.3 shipped one Enter handler
+/// (search results) that skipped this decision and went remote unconditionally,
+/// telling local users to go pick a device; `play_path_invariants` pins every
+/// caller to this function so that cannot recur.
+fn play_track(
+    app: &mut App,
+    client: Option<&Arc<Mutex<joshify::api::SpotifyClient>>>,
+    track: (String, String, String),
+    context_uri: Option<String>,
+    tx_feedback: &tokio::sync::mpsc::Sender<PlaybackFeedback>,
+) -> PlayOutcome {
+    let (name, artist, uri) = track;
+    if app.playback_mode == PlaybackMode::Local {
+        if app.play_locally(&name, &artist, &uri) {
+            PlayOutcome::StartedLocally
+        } else {
+            PlayOutcome::NotStarted
+        }
+    } else if let Some(client) = client {
+        app.status_message = Some(format!("Starting: {}", name));
+        spawn_remote_play(
+            client,
+            (name, artist, uri),
+            context_uri,
+            app.selected_device_id.clone(),
+            tx_feedback.clone(),
+        );
+        PlayOutcome::DispatchedRemotely
+    } else {
+        app.status_message = Some("Not connected to Spotify".to_string());
+        PlayOutcome::NotStarted
+    }
+}
+
 /// Application state
 struct App {
     selected_nav: NavItem,
@@ -465,6 +515,16 @@ impl App {
         };
         match player.load_uri(uri, true, 0) {
             Ok(()) => {
+                // Remember what was playing so local `p` (previous) can return
+                // to it, whichever list the new track came from.
+                if let Some(previous) = self.player_state.current_track_uri.clone() {
+                    if self.local_history.last() != Some(&previous) {
+                        self.local_history.push(previous);
+                        if self.local_history.len() > 50 {
+                            self.local_history.remove(0);
+                        }
+                    }
+                }
                 self.player_state.current_track_name = Some(name.to_string());
                 self.player_state.current_artist_name = Some(artist.to_string());
                 self.player_state.current_track_uri = Some(uri.to_string());
@@ -2531,19 +2591,8 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     .search_state
                                     .selected_track()
                                     .map(|t| (t.name.clone(), t.artist.clone(), t.uri.clone()));
-                                if let Some((name, artist, uri)) = picked {
-                                    if app.playback_mode == PlaybackMode::Local {
-                                        app.play_locally(&name, &artist, &uri);
-                                    } else if let Some(ref client) = client {
-                                        spawn_remote_play(
-                                            client,
-                                            (name.clone(), artist, uri),
-                                            None,
-                                            app.selected_device_id.clone(),
-                                            tx_play.clone(),
-                                        );
-                                        app.status_message = Some(format!("Starting: {}", name));
-                                    }
+                                if let Some(picked) = picked {
+                                    play_track(&mut app, client.as_ref(), picked, None, &tx_play);
                                 }
                                 app.search_state.deactivate();
                             }
@@ -2630,62 +2679,23 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                     // actually taken responsibility for playing
                                     // it - otherwise a missing local player
                                     // silently discarded the track.
-                                    let mut started = false;
-                                    if app.playback_mode == PlaybackMode::Local {
-                                        match app.local_player {
-                                            Some(ref player) => {
-                                                match player.load_uri(&entry.uri, true, 0) {
-                                                    Ok(_) => {
-                                                        app.player_state.current_track_name =
-                                                            Some(entry.name.clone());
-                                                        app.player_state.current_artist_name =
-                                                            Some(entry.artist.clone());
-                                                        app.player_state.current_track_uri =
-                                                            Some(entry.uri.clone());
-                                                        app.player_state.is_playing = true;
-                                                        app.player_state.progress_ms = 0;
-                                                        app.last_progress_tick_ms = now;
-                                                        app.status_message = Some(format!(
-                                                            "Playing: {}",
-                                                            entry.name
-                                                        ));
-                                                        started = true;
-                                                    }
-                                                    Err(e) => {
-                                                        app.status_message = Some(format!(
-                                                            "Local playback error: {}",
-                                                            e
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            None => {
-                                                app.status_message = Some(
-                                                    "Local player not initialized".to_string(),
-                                                );
-                                            }
-                                        }
-                                    } else if let Some(ref client) = client {
-                                        spawn_remote_play(
-                                            client,
-                                            (
-                                                entry.name.clone(),
-                                                entry.artist.clone(),
-                                                entry.uri.clone(),
-                                            ),
-                                            None,
-                                            app.selected_device_id.clone(),
-                                            tx_play.clone(),
-                                        );
-                                        app.status_message =
-                                            Some(format!("Starting: {}", entry.name));
-                                        started = true;
-                                    } else {
-                                        app.status_message =
-                                            Some("Not connected to Spotify".to_string());
+                                    let picked = (
+                                        entry.name.clone(),
+                                        entry.artist.clone(),
+                                        entry.uri.clone(),
+                                    );
+                                    let outcome = play_track(
+                                        &mut app,
+                                        client.as_ref(),
+                                        picked,
+                                        None,
+                                        &tx_play,
+                                    );
+                                    if outcome == PlayOutcome::StartedLocally {
+                                        app.last_progress_tick_ms = now;
                                     }
 
-                                    if started {
+                                    if outcome != PlayOutcome::NotStarted {
                                         // Remove by index, not by URI: the same
                                         // track queued twice must lose only the
                                         // copy that is now playing.
@@ -3218,91 +3228,36 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     );
                                                 }
 
-                                                if app.playback_mode == PlaybackMode::Local {
-                                                    // Play locally with librespot
-                                                    // Remember current track for local `p`.
-                                                    if let Some(hist_uri) =
-                                                        app.player_state.current_track_uri.clone()
-                                                    {
-                                                        if app.local_history.last()
-                                                            != Some(&hist_uri)
-                                                        {
-                                                            app.local_history.push(hist_uri);
-                                                            if app.local_history.len() > 50 {
-                                                                app.local_history.remove(0);
-                                                            }
-                                                        }
-                                                    }
-                                                    if let Some(ref player) = app.local_player {
-                                                        match player.load_uri(&track.uri, true, 0) {
-                                                            Ok(_) => {
-                                                                app.player_state
-                                                                    .current_track_name =
-                                                                    Some(track.name.clone());
-                                                                app.player_state
-                                                                    .current_artist_name =
-                                                                    Some(track.artist.clone());
-                                                                app.player_state
-                                                                    .current_track_uri =
-                                                                    Some(track.uri.clone());
-                                                                app.player_state.is_playing = true;
-                                                                app.player_state.progress_ms = 0;
-                                                                app.status_message = Some(format!(
-                                                                    "Playing locally: {}",
-                                                                    track.name
-                                                                ));
-                                                                // Advance queue position so the selected track is "consumed"
-                                                                // This ensures when track ends, advance() returns the NEXT track
-                                                                let _ = app
-                                                                    .queue_state
-                                                                    .playback_queue_mut()
-                                                                    .advance();
-                                                                tracing::info!(
-                                                                    "Local playback started: consumed selected track, queue position now at {} ({} remaining)",
-                                                                    app.queue_state.playback_queue().context_position(),
-                                                                    app.queue_state.playback_queue().remaining_context_tracks()
-                                                                );
-                                                            }
-                                                            Err(e) => {
-                                                                app.status_message = Some(format!(
-                                                                    "Local playback error: {}",
-                                                                    e
-                                                                ));
-                                                            }
-                                                        }
-                                                    } else {
-                                                        app.status_message = Some(
-                                                            "Local player not initialized"
-                                                                .to_string(),
-                                                        );
-                                                    }
-                                                } else {
-                                                    // Remote playback via Spotify API
-                                                    if let Some(ref client) = client {
-                                                        let context_uri = match &app.current_context
-                                                        {
-                                                            Some(PlaybackContext::Playlist {
-                                                                uri,
-                                                                ..
-                                                            }) => Some(uri.clone()),
-                                                            _ => None,
-                                                        };
-                                                        spawn_remote_play(
-                                                            client,
-                                                            (
-                                                                track.name.clone(),
-                                                                track.artist.clone(),
-                                                                track.uri.clone(),
-                                                            ),
-                                                            context_uri,
-                                                            app.selected_device_id.clone(),
-                                                            tx_play.clone(),
-                                                        );
-                                                        app.status_message = Some(format!(
-                                                            "Starting: {}",
-                                                            track.name
-                                                        ));
-                                                    }
+                                                let context_uri = match &app.current_context {
+                                                    Some(PlaybackContext::Playlist {
+                                                        uri, ..
+                                                    }) => Some(uri.clone()),
+                                                    _ => None,
+                                                };
+                                                let picked = (
+                                                    track.name.clone(),
+                                                    track.artist.clone(),
+                                                    track.uri.clone(),
+                                                );
+                                                if play_track(
+                                                    &mut app,
+                                                    client.as_ref(),
+                                                    picked,
+                                                    context_uri,
+                                                    &tx_play,
+                                                ) == PlayOutcome::StartedLocally
+                                                {
+                                                    // Advance queue position so the selected track is "consumed"
+                                                    // This ensures when track ends, advance() returns the NEXT track
+                                                    let _ = app
+                                                        .queue_state
+                                                        .playback_queue_mut()
+                                                        .advance();
+                                                    tracing::info!(
+                                                        "Local playback started: consumed selected track, queue position now at {} ({} remaining)",
+                                                        app.queue_state.playback_queue().context_position(),
+                                                        app.queue_state.playback_queue().remaining_context_tracks()
+                                                    );
                                                 }
                                             }
                                         }
@@ -3438,30 +3393,20 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                     _context: app.current_context.clone(),
                                                 });
 
-                                                if app.playback_mode == PlaybackMode::Local {
-                                                    // `track` borrows content_state; copy
-                                                    // what the player needs first.
-                                                    let (name, artist, uri) = (
-                                                        track.name.clone(),
-                                                        track.artist.clone(),
-                                                        track.uri.clone(),
-                                                    );
-                                                    app.play_locally(&name, &artist, &uri);
-                                                } else if let Some(ref client) = client {
-                                                    spawn_remote_play(
-                                                        client,
-                                                        (
-                                                            track.name.clone(),
-                                                            track.artist.clone(),
-                                                            track.uri.clone(),
-                                                        ),
-                                                        None,
-                                                        app.selected_device_id.clone(),
-                                                        tx_play.clone(),
-                                                    );
-                                                    app.status_message =
-                                                        Some(format!("Starting: {}", track.name));
-                                                }
+                                                // `track` borrows content_state; copy what
+                                                // the player needs first.
+                                                let picked = (
+                                                    track.name.clone(),
+                                                    track.artist.clone(),
+                                                    track.uri.clone(),
+                                                );
+                                                play_track(
+                                                    &mut app,
+                                                    client.as_ref(),
+                                                    picked,
+                                                    None,
+                                                    &tx_play,
+                                                );
                                             }
                                         }
                                         _ => {}
@@ -4141,88 +4086,41 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                         }
                                     }
 
-                                    if app.playback_mode == PlaybackMode::Local {
-                                        // Play locally with librespot
-                                        // Remember current track for local `p`.
-                                        if let Some(hist_uri) =
-                                            app.player_state.current_track_uri.clone()
-                                        {
-                                            if app.local_history.last() != Some(&hist_uri) {
-                                                app.local_history.push(hist_uri);
-                                                if app.local_history.len() > 50 {
-                                                    app.local_history.remove(0);
-                                                }
+                                    // Play within the playlist context when the click
+                                    // came from a playlist view, otherwise fall back to
+                                    // whatever context is currently loaded. Local vs
+                                    // remote is play_track's decision, not ours.
+                                    let context_uri = match &app.content_state {
+                                        ContentState::PlaylistTracks(pid, _) => {
+                                            Some(format!("spotify:playlist:{}", pid))
+                                        }
+                                        _ => match &app.current_context {
+                                            Some(PlaybackContext::Playlist { uri, .. }) => {
+                                                Some(uri.clone())
                                             }
-                                        }
-                                        if let Some(ref player) = app.local_player {
-                                            match player.load_uri(&track.uri, true, 0) {
-                                                Ok(_) => {
-                                                    app.player_state.current_track_name =
-                                                        Some(track.name.clone());
-                                                    app.player_state.current_artist_name =
-                                                        Some(track.artist.clone());
-                                                    app.player_state.current_track_uri =
-                                                        Some(track.uri.clone());
-                                                    app.player_state.is_playing = true;
-                                                    app.player_state.progress_ms = 0;
-                                                    app.status_message = Some(format!(
-                                                        "Playing locally: {}",
-                                                        track.name
-                                                    ));
-                                                    // Advance queue position so the selected track is "consumed"
-                                                    let _ = app
-                                                        .queue_state
-                                                        .playback_queue_mut()
-                                                        .advance();
-                                                    tracing::info!(
-                                                        "Mouse: Local playback started - consumed selected track, position now at {} ({} remaining)",
-                                                        app.queue_state.playback_queue().context_position(),
-                                                        app.queue_state.playback_queue().remaining_context_tracks()
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    app.status_message = Some(format!(
-                                                        "Local playback error: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                        } else {
-                                            app.status_message =
-                                                Some("Local player not initialized".to_string());
-                                        }
-                                    } else {
-                                        // Remote playback via Spotify API
-                                        if let Some(ref client) = client {
-                                            // Play within the playlist context when
-                                            // the click came from a playlist view,
-                                            // otherwise fall back to whatever context
-                                            // is currently loaded.
-                                            let context_uri = match &app.content_state {
-                                                ContentState::PlaylistTracks(pid, _) => {
-                                                    Some(format!("spotify:playlist:{}", pid))
-                                                }
-                                                _ => match &app.current_context {
-                                                    Some(PlaybackContext::Playlist {
-                                                        uri, ..
-                                                    }) => Some(uri.clone()),
-                                                    _ => None,
-                                                },
-                                            };
-                                            spawn_remote_play(
-                                                client,
-                                                (
-                                                    track.name.clone(),
-                                                    track.artist.clone(),
-                                                    track.uri.clone(),
-                                                ),
-                                                context_uri,
-                                                app.selected_device_id.clone(),
-                                                tx_play.clone(),
-                                            );
-                                            app.status_message =
-                                                Some(format!("Starting: {}", track.name));
-                                        }
+                                            _ => None,
+                                        },
+                                    };
+                                    let picked = (
+                                        track.name.clone(),
+                                        track.artist.clone(),
+                                        track.uri.clone(),
+                                    );
+                                    if play_track(
+                                        &mut app,
+                                        client.as_ref(),
+                                        picked,
+                                        context_uri,
+                                        &tx_play,
+                                    ) == PlayOutcome::StartedLocally
+                                    {
+                                        // Advance queue position so the selected track is "consumed"
+                                        let _ = app.queue_state.playback_queue_mut().advance();
+                                        tracing::info!(
+                                            "Mouse: Local playback started - consumed selected track, position now at {} ({} remaining)",
+                                            app.queue_state.playback_queue().context_position(),
+                                            app.queue_state.playback_queue().remaining_context_tracks()
+                                        );
                                     }
                                 }
                             }
@@ -5113,5 +5011,96 @@ mod play_locally_tests {
             !msg.contains("press 'd'"),
             "local mode must not send the user to the device picker: {msg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod play_path_invariants {
+    /// Every way to start a track goes through `play_track`, which is where
+    /// "local by default, remote only after 'd'" is decided. 0.8.3 shipped one
+    /// Enter handler that called the remote path directly and told local users
+    /// to pick a device. A new direct call to either half fails here.
+    ///
+    /// The needles are assembled at compile time so this test's own source does
+    /// not count as a call site.
+    #[test]
+    fn remote_play_is_only_reachable_through_play_track() {
+        let src = include_str!("main.rs");
+        let needle = concat!("spawn_remote_", "play(");
+        let count = src.matches(needle).count();
+        // The fn definition and the single call inside play_track.
+        assert_eq!(
+            count, 2,
+            "spawn_remote_play must only be called from play_track; found {} occurrences",
+            count
+        );
+    }
+
+    #[test]
+    fn local_play_is_only_reachable_through_play_track() {
+        let src = include_str!("main.rs");
+        let needle = concat!("play_", "locally(");
+        let count = src.matches(needle).count();
+        // The fn definition, the call inside play_track, and the unit tests
+        // below that exercise it directly.
+        let in_tests = src
+            .split_once("mod play_locally_tests")
+            .map(|(_, tests)| tests.matches(needle).count())
+            .unwrap_or(0);
+        assert_eq!(
+            count - in_tests,
+            2,
+            "play_locally must only be called from play_track; found {} non-test occurrences",
+            count - in_tests
+        );
+    }
+}
+
+#[cfg(test)]
+mod play_track_tests {
+    use super::*;
+
+    fn feedback() -> tokio::sync::mpsc::Sender<PlaybackFeedback> {
+        tokio::sync::mpsc::channel(1).0
+    }
+
+    /// Local mode with no client must still try the local player - it must
+    /// never route around it to Spotify, and never mention the device picker.
+    #[test]
+    fn local_mode_stays_local_even_with_a_client_absent() {
+        let mut app = App::new();
+        app.playback_mode = PlaybackMode::Local;
+        let outcome = play_track(
+            &mut app,
+            None,
+            ("Song".into(), "Artist".into(), "spotify:track:abc".into()),
+            None,
+            &feedback(),
+        );
+        assert_eq!(outcome, PlayOutcome::NotStarted);
+        let msg = app.status_message.clone().unwrap_or_default();
+        assert_eq!(msg, "Local player not initialized");
+        assert!(!msg.contains("press 'd'"), "{msg}");
+    }
+
+    /// Remote mode without a Spotify client cannot play and must say so rather
+    /// than report "Starting" or silently do nothing.
+    #[test]
+    fn remote_mode_without_a_client_explains_itself() {
+        let mut app = App::new();
+        app.playback_mode = PlaybackMode::Remote;
+        let outcome = play_track(
+            &mut app,
+            None,
+            ("Song".into(), "Artist".into(), "spotify:track:abc".into()),
+            None,
+            &feedback(),
+        );
+        assert_eq!(outcome, PlayOutcome::NotStarted);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Not connected to Spotify")
+        );
+        assert!(!app.player_state.is_playing);
     }
 }
