@@ -41,6 +41,16 @@ RUNTIME_APT_FALLBACK="libasound2 libssl3"
 RUNTIME_DNF="alsa-lib openssl-libs"
 RUNTIME_PACMAN="alsa-lib openssl"
 
+# WSL has no sound card. WSLg provides a PulseAudio server, but ALSA - which the
+# binary speaks - only reaches it through the ALSA-to-Pulse plugin, and no WSL
+# image ships that. Without it every ALSA open fails with "Unknown PCM default"
+# and joshify can only drive remote devices. pulseaudio-utils brings pacat, the
+# fallback joshify uses when the plugin is missing anyway.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    RUNTIME_APT="$RUNTIME_APT libasound2-plugins pulseaudio-utils"
+    RUNTIME_APT_FALLBACK="$RUNTIME_APT_FALLBACK libasound2-plugins pulseaudio-utils"
+fi
+
 info()  { echo -e "$1"; }
 warn()  { echo -e "${YELLOW}$1${NC}"; }
 die()   { echo -e "${RED}$1${NC}" >&2; exit 1; }
