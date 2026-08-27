@@ -1,3 +1,27 @@
+## [0.8.3](https://github.com/bigknoxy/joshify/compare/v0.8.2...v0.8.3) (2026-08-27)
+
+### Bug Fixes
+
+- **Pressing Enter on a track now actually plays it** ([#66](https://github.com/bigknoxy/joshify/pull/66)): the banner said "Playing: \<track\>" while nothing played and the player bar stayed empty. Three defects stacked on every remote playback path — no device id was ever sent (so Spotify answered `NO_ACTIVE_DEVICE`), the target was picked with `devices.first()` (an arbitrary device, often restricted or idle), and every call was `let _ = ...` in a spawned task with the status message set *before* it ran. Playback now resolves a concrete device up front via `select_play_device` — your explicit choice while it is online, then the active device, then any controllable one, never a restricted or id-less one — and reports what Spotify actually did.
+- **Every transport control targets the device you picked and admits failure**: pause/resume, next, previous, seek, volume, shuffle and repeat all sent `device_id: None` and discarded the result, so with no active device the key was simply dead — no music, no message. Shuffle, repeat and volume also moved the on-screen indicator before the call and never rolled it back; a refused command now reverts it. The device chosen with `d` is remembered and targeted instead of re-guessed on every command, and "This device" is listed whenever a local player exists — it used to appear only while local playback was already active, so switching away removed the only way back.
+- **Clicking the progress bar or the volume bar does something**: `MouseAction::Seek` and `MouseAction::SetVolume` were emitted by the mouse handler and matched by no arm, falling into a catch-all. The help screen advertised both.
+- **The queue overlay's keys are real**: the footer promised "Enter: Play" and "↑↓: Navigate" while the overlay had no selection at all, and `D` acted on the *main list's* highlight — removing the wrong entry or silently doing nothing. The overlay now has a cursor; Enter plays the selected entry (removing it by index, so a track queued twice loses only the copy that started), `D` removes it, and `c` clears only the pending queue instead of also resetting the playback context and silently ending the rest of the playlist.
+- **Radio mode does something**: `radio_mode` was read by exactly one place — the player bar renderer. Toggling it lit a badge and changed nothing about what played. It now seeds the queue from your top tracks, skipping anything already queued or playing, and turns itself back off with an explanation when there is nothing to build a station from.
+- **The Library "Artists" tab is no longer empty**: it was hardcoded `artists: vec![]` with a "load separately" comment and no loader, while `LoadAction::LibraryArtists` returned "not yet implemented". `get_user_artists` already existed and had never been called.
+- **Long playlists and albums load completely**: playlists fetched a single unpaginated page (Spotify's default 100) and albums one page of 50, while the header went on showing the real track count — and the album header rewrote its own count to the truncated length to hide it.
+- **A failed search says so**: the error cleared itself after 5 seconds, leaving an empty result list that the overlay renders as "No results found" — an API failure turned into a confident wrong answer. Searching with no Spotify client did the same, blaming the query for an auth failure, and any content load with no client hung on "Loading…" forever.
+- **Local volume changes the volume**: `LocalPlayer::set_volume` only emitted a volume-changed event and never touched the mixer, so the on-screen number moved and the audio did not.
+- **Switching devices tells the truth**: the selector reported "Switching to X..." regardless of whether the transfer succeeded, and left the local player running so both devices played at once. Switching back to "This device" now pauses the remote device instead of leaving it playing behind a frozen player bar.
+- **Auto-advance names the right song**: it announced the name and artist of the track that had just *ended*, because it copied them out of player state instead of looking the new track up by URI. Remote auto-advance also called `playback_next()` — advancing *Spotify's* queue and discarding the track you had queued here.
+- **Queueing a track reports honestly**: Tab in search pushed the track into Spotify's queue with the result discarded and said "Queued: …" either way — and when it succeeded the track could play twice, since joshify drives its own queue. One queue, one source of truth.
+
+### Technical Details
+
+- The defect class was found by auditing every path that reports success: 43 findings raised, 9 refuted by adversarial verification against the source, 34 confirmed
+- New pure functions with falsifier-checked tests — each fix was reverted to confirm the tests fail against the old behaviour rather than passing vacuously: `select_play_device` (8 tests; 6 of 7 scenarios fail against the old `devices.first()`), `position_from_percent` (4, including the `u32 * 100` overflow past ~11.9 hours), `radio_entries_from` (4)
+- `spawn_remote_play` and `spawn_remote_command` replace duplicated fire-and-forget blocks across 4 play sites and 22 command sites, so device targeting and error reporting cannot drift apart again
+- Clippy `-D warnings --all-targets --all-features` clean
+
 ## [0.8.2](https://github.com/bigknoxy/joshify/compare/v0.8.1...v0.8.2) (2026-08-26)
 
 ### Bug Fixes
