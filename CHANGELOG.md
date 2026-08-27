@@ -1,3 +1,17 @@
+## [0.8.4](https://github.com/bigknoxy/joshify/compare/v0.8.3...v0.8.4) (2026-08-27)
+
+### Bug Fixes
+
+- **`joshify update` no longer dies with "Permission denied" after a verified download** ([#67](https://github.com/bigknoxy/joshify/pull/67)): the update extracted the release into a temp directory and smoke-tested it there by running `--version`, to confirm the new binary works before installing it. Hardened images — the report came from an enterprise WSL image — mount `/tmp` with `noexec` as a standard CIS control, and `execve` on a `noexec` filesystem returns `EACCES` regardless of the file's mode bits. The update aborted with a bare "Permission denied" that pointed at file permissions rather than at the mount. The new binary is now staged next to the destination and smoke-tested there: that directory is by definition allowed to execute, since it is where the running process was exec'd from, and staging there is also what makes the final rename atomic. `stage_beside` sets mode 0755 explicitly, so a tarball or umask that lost the exec bit cannot cause the same failure either.
+- **A permission failure while exec'ing the new binary now explains itself** instead of surfacing a raw errno, and points at `install.sh` as the way through.
+- **A failed smoke test cleans up after itself**: a broken download could leave a stray `.joshify.new` next to the live binary.
+
+### Technical Details
+
+- `atomic_replace` is split into `stage_beside` + `commit_staged` so the smoke test can run against the staged path; `atomic_replace` remains as a thin wrapper
+- Four falsifier-checked tests — reverting staging to the temp directory fails `staging_happens_next_to_the_destination_not_in_tmp` and `a_staged_binary_can_actually_be_executed`. The latter pins the property that actually matters: after staging, the file *runs*. Asserting mode bits alone would not have caught this bug, because the mode bits were always correct
+- Not reproduced end-to-end: emulating a `noexec` mount needs root to bind-mount. The mechanism is established from the errno, the code path, and the published tarball's mode bits
+
 ## [0.8.3](https://github.com/bigknoxy/joshify/compare/v0.8.2...v0.8.3) (2026-08-27)
 
 ### Bug Fixes

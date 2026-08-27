@@ -2392,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "joshify"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "anyhow",
  "async-trait",
