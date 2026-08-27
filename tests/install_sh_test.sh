@@ -312,6 +312,26 @@ else
     fail "install.sh can be sourced without running"
 fi
 
+# WSL audio: pacat is installed only on WSL, only when missing, via apt.
+echo "WSL audio helper"
+is_wsl() { return 1; }
+out="$(ensure_wsl_audio 2>&1)"
+assert_eq "" "$out" "outside WSL nothing is installed or printed"
+
+is_wsl() { return 0; }
+command() { if [ "${2:-}" = "pacat" ]; then return 0; fi; builtin command "$@"; }
+out="$(ensure_wsl_audio 2>&1)"
+assert_eq "" "$out" "on WSL with pacat present nothing is installed"
+
+command() { if [ "${2:-}" = "pacat" ]; then return 1; fi; builtin command "$@"; }
+run_privileged() { echo "run_privileged:$*"; }
+out="$(ensure_wsl_audio 2>&1)"
+case "$out" in
+    *"run_privileged:"*"apt-get install"*"pulseaudio-utils"*) ok "on WSL without pacat, pulseaudio-utils is installed via apt" ;;
+    *) fail "on WSL without pacat, pulseaudio-utils is installed via apt (got: $out)" ;;
+esac
+unset -f command run_privileged is_wsl
+
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
     echo "All install.sh tests passed."

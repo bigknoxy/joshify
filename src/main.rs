@@ -1066,7 +1066,7 @@ fn no_audio_message(probe: &joshify::player::AudioProbe) -> String {
             "Remote playback only - no audio device as root ({reason}) - run as your normal user"
         )
     } else {
-        format!("Remote playback only - no audio device ({reason}) - press 'd' to pick a device")
+        remote_only_message(&format!("no audio device: {reason}"))
     }
 }
 
@@ -1078,9 +1078,16 @@ fn local_ready_message(output: &joshify::player::AudioOutput) -> String {
     )
 }
 
+/// The startup banner for remote-only mode: what to do first, then why. The
+/// status bar is one unwrapped line, so a long reason must be the part that
+/// gets clipped.
+fn remote_only_message(problem: &str) -> String {
+    format!("Remote playback only - press 'd' to pick a device - {problem}")
+}
+
 /// The startup banner when audio exists but the local player could not start.
 fn local_failed_message(reason: &str) -> String {
-    format!("Remote playback only - local player failed ({reason}) - press 'd' to pick a device")
+    remote_only_message(&format!("local player failed: {reason}"))
 }
 
 /// Whether the process is running as root.
@@ -1282,43 +1289,27 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         .or_else(|| std::env::var("SPOTIFY_ACCESS_TOKEN").ok())
         .or(client_access_token);
 
-    /// Build the local session and player, or say exactly which step refused.
-    async fn init_local_player(
-        token: &str,
+    /// Bring up local playback on `output`: player, Spotify Connect, app state.
+    ///
+    /// One path for both ways of obtaining a session (fresh token or librespot's
+    /// cache), so they cannot drift apart on what a working local player means.
+    async fn start_local_playback(
+        app: &mut App,
+        session: LocalSession,
+        credentials: Option<Credentials>,
         output: &joshify::player::AudioOutput,
-    ) -> Result<
-        (
-            Arc<LocalSession>,
-            Arc<LocalPlayer>,
-            tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>,
-        ),
-        String,
-    > {
-        let local_session = LocalSession::from_access_token(token)
-            .await
-            .map_err(|e| format!("Spotify session: {e}"))?;
-        let session = Arc::new(local_session);
+    ) -> Result<(), String> {
+        let session = Arc::new(session);
         let mut player =
             LocalPlayer::new(&session.session, output).map_err(|e| format!("player: {e}"))?;
         let event_rx = player
             .take_event_channel()
             .ok_or_else(|| "player event channel already taken".to_string())?;
-        Ok((session, Arc::new(player), event_rx))
-    }
+        let player = Arc::new(player);
 
-    if audio_output.is_none() {
-        // Do not build a local player at all. It would install a live sink that
-        // cannot make sound, and app.local_player is consulted in a dozen key
-        // handlers regardless of playback_mode, so playback commands would route
-        // into a dead path. Registering as a Spotify Connect device would also
-        // advertise a device that plays silence.
-        app.playback_mode = PlaybackMode::Remote;
-        app.status_message = Some(no_audio_message(&audio_probe));
-    } else if let (Some(ref token), Some(ref output)) = (&access_token, &audio_output) {
-        match init_local_player(token, output).await {
-            Ok((session, player, event_rx)) => {
-                // Start Spotify Connect to make joshify appear as a device
-                let credentials = Credentials::with_access_token(token.clone());
+        // Spotify Connect makes joshify appear as a device in other clients.
+        match credentials {
+            Some(credentials) => {
                 let mut connect_mgr =
                     joshify::connect::ConnectManager::new(joshify::connect::default_device_name());
                 if let Err(e) = connect_mgr
@@ -1332,69 +1323,66 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                 {
                     tracing::warn!("Spotify Connect failed to start: {}", e);
                 }
-
-                app.local_session = Some(session);
-                app.local_player = Some(player);
-                app.player_event_rx = Some(event_rx);
-                app.playback_mode = PlaybackMode::Local;
-                app.last_progress_tick_ms = now_ms();
-                app.status_message = Some(local_ready_message(output));
-                tracing::info!("Local playback initialized successfully via {:?}", output);
             }
-            Err(reason) => {
-                // This used to fall through to remote mode without a word, so
-                // the first sign of trouble was Enter asking for a device.
-                tracing::warn!("Local playback unavailable: {}", reason);
-                app.playback_mode = PlaybackMode::Remote;
-                app.status_message = Some(local_failed_message(&reason));
-            }
+            None => tracing::warn!(
+                "No credentials for Spotify Connect; this device will not be listed elsewhere"
+            ),
         }
-    } else if let (Ok(local_session), Some(ref output)) =
-        (LocalSession::from_cache().await, &audio_output)
-    {
-        let session = Arc::new(local_session);
-        match LocalPlayer::new(&session.session, output) {
-            Ok(mut player) => {
-                // Try to get token from cache for Connect
-                if let Ok(token) = std::fs::read_to_string(
-                    std::env::var("HOME")
-                        .map(|h| format!("{}/.cache/joshify/credentials.json", h))
-                        .unwrap_or_default(),
-                ) {
-                    if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&token) {
-                        if let Some(token_str) = creds.get("access_token").and_then(|v| v.as_str())
-                        {
-                            let credentials = Credentials::with_access_token(token_str.to_string());
-                            let mut connect_mgr = joshify::connect::ConnectManager::new(
-                                joshify::connect::default_device_name(),
-                            );
-                            let _ = connect_mgr
-                                .start(
-                                    &session.session,
-                                    credentials,
-                                    player.player(),
-                                    player.mixer(),
-                                )
-                                .await;
-                        }
+
+        app.local_session = Some(session);
+        app.local_player = Some(player);
+        app.player_event_rx = Some(event_rx);
+        app.playback_mode = PlaybackMode::Local;
+        app.last_progress_tick_ms = now_ms();
+        app.status_message = Some(local_ready_message(output));
+        tracing::info!("Local playback initialized via {:?}", output);
+        Ok(())
+    }
+
+    /// Fall back to controlling other devices, and say why in the status bar.
+    /// This used to happen without a word on some paths, so the first sign of
+    /// trouble was Enter asking for a device.
+    fn remote_only(app: &mut App, reason: String) {
+        tracing::warn!("Local playback unavailable: {}", reason);
+        app.playback_mode = PlaybackMode::Remote;
+        app.status_message = Some(local_failed_message(&reason));
+    }
+
+    match audio_output {
+        None => {
+            // Do not build a local player at all. It would install a live sink
+            // that cannot make sound, and app.local_player is consulted in a
+            // dozen key handlers regardless of playback_mode, so playback
+            // commands would route into a dead path. Registering as a Spotify
+            // Connect device would also advertise a device that plays silence.
+            app.playback_mode = PlaybackMode::Remote;
+            app.status_message = Some(no_audio_message(&audio_probe));
+        }
+        Some(ref output) => {
+            // A fresh token gives a session plus Connect credentials; failing
+            // that, librespot's cached session (and its stored credentials).
+            let session = match &access_token {
+                Some(token) => LocalSession::from_access_token(token)
+                    .await
+                    .map(|s| (s, Some(Credentials::with_access_token(token.clone()))))
+                    .map_err(|e| format!("Spotify session: {e}")),
+                None => LocalSession::from_cache()
+                    .await
+                    .map(|s| {
+                        let credentials = s.cache.credentials();
+                        (s, credentials)
+                    })
+                    .map_err(|e| format!("no cached Spotify session: {e}")),
+            };
+            match session {
+                Ok((session, credentials)) => {
+                    if let Err(reason) =
+                        start_local_playback(&mut app, session, credentials, output).await
+                    {
+                        remote_only(&mut app, reason);
                     }
                 }
-
-                let event_rx = player.take_event_channel();
-                let player = Arc::new(player);
-                app.local_session = Some(session);
-                app.local_player = Some(player);
-                app.player_event_rx = event_rx;
-                app.playback_mode = PlaybackMode::Local;
-                app.last_progress_tick_ms = now_ms();
-                app.status_message = Some(local_ready_message(output));
-                tracing::info!("Local playback restored from cache via {:?}", output);
-            }
-            Err(e) => {
-                let reason = format!("player: {e}");
-                tracing::warn!("Local playback unavailable: {}", reason);
-                app.playback_mode = PlaybackMode::Remote;
-                app.status_message = Some(local_failed_message(&reason));
+                Err(reason) => remote_only(&mut app, reason),
             }
         }
     }
@@ -4764,7 +4752,7 @@ mod audio_probe_tests {
 
     #[test]
     fn ready_banner_names_the_pulseaudio_route() {
-        let msg = super::local_ready_message(&AudioOutput::Subprocess("pacat".into()));
+        let msg = super::local_ready_message(&AudioOutput::Pacat("pacat".into()));
         assert!(msg.contains("Local playback active"), "{msg}");
         assert!(msg.contains("PulseAudio"), "{msg}");
     }
@@ -4774,6 +4762,24 @@ mod audio_probe_tests {
         let msg = super::local_failed_message("Spotify session: bad token");
         assert!(msg.contains("Remote playback only"), "{msg}");
         assert!(msg.contains("bad token"), "{msg}");
+    }
+
+    /// The status bar is one unwrapped line; the instruction must survive
+    /// truncation, so it comes before the (possibly long) reason.
+    #[test]
+    fn remote_only_banners_put_the_instruction_before_the_reason() {
+        for msg in [
+            super::local_failed_message(&"x".repeat(200)),
+            super::no_audio_message(&AudioProbe::Unavailable("y".repeat(200))),
+        ] {
+            let hint = msg
+                .find("press 'd'")
+                .expect("banner must tell the user what to do");
+            assert!(
+                hint < 60,
+                "the hint must fit an 80-column terminal: at {hint} in {msg}"
+            );
+        }
     }
 
     #[test]

@@ -41,16 +41,6 @@ RUNTIME_APT_FALLBACK="libasound2 libssl3"
 RUNTIME_DNF="alsa-lib openssl-libs"
 RUNTIME_PACMAN="alsa-lib openssl"
 
-# WSL has no sound card. WSLg provides a PulseAudio server, but ALSA - which the
-# binary speaks - only reaches it through the ALSA-to-Pulse plugin, and no WSL
-# image ships that. Without it every ALSA open fails with "Unknown PCM default"
-# and joshify can only drive remote devices. pulseaudio-utils brings pacat, the
-# fallback joshify uses when the plugin is missing anyway.
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    RUNTIME_APT="$RUNTIME_APT libasound2-plugins pulseaudio-utils"
-    RUNTIME_APT_FALLBACK="$RUNTIME_APT_FALLBACK libasound2-plugins pulseaudio-utils"
-fi
-
 info()  { echo -e "$1"; }
 warn()  { echo -e "${YELLOW}$1${NC}"; }
 die()   { echo -e "${RED}$1${NC}" >&2; exit 1; }
@@ -117,6 +107,29 @@ detect_sudo_mode() {
         echo "tty"
     else
         echo "unavailable"
+    fi
+}
+
+# WSL has no sound card. WSLg provides a PulseAudio server, but the binary
+# speaks ALSA, and no WSL image ships the ALSA-to-Pulse plugin, so every ALSA
+# open fails with "Unknown PCM default". joshify then plays through `pacat`
+# instead - which is in pulseaudio-utils and not installed by default either.
+is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
+
+ensure_wsl_audio() {
+    is_wsl || return 0
+    if command -v pacat > /dev/null 2>&1; then
+        return 0
+    fi
+    if [ -n "${JOSHIFY_SKIP_DEPS:-}" ] || ! command -v apt-get > /dev/null 2>&1; then
+        warn "   WSL: install pulseaudio-utils (for pacat) to get local audio."
+        return 0
+    fi
+    info "   WSL detected: installing pulseaudio-utils so joshify can play through WSLg's PulseAudio..."
+    if run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pulseaudio-utils; then
+        info "   pacat installed."
+    else
+        warn "   Could not install pulseaudio-utils; run: sudo apt-get install -y pulseaudio-utils"
     fi
 }
 
@@ -503,6 +516,7 @@ fi
 
 # --- verify ------------------------------------------------------------------
 echo ""
+ensure_wsl_audio
 INSTALLED_BIN="${INSTALL_DIR}/${BIN_NAME}"
 [ -x "$INSTALLED_BIN" ] || die "✗ Installation failed: ${INSTALLED_BIN} is not executable."
 
