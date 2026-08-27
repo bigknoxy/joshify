@@ -540,10 +540,50 @@ mod paging_against_fake_spotify {
         }
     }
 
+    /// rspotify builds its reqwest client with system proxy detection on and
+    /// offers no hook to turn it off, and reqwest's matcher has no implicit
+    /// loopback exemption. On a machine with `HTTP_PROXY` set and no
+    /// `NO_PROXY` covering 127.0.0.1, every request to the fake would be sent
+    /// to the proxy instead. Skip loudly there rather than fail confusingly;
+    /// CI sets no proxy, so these always run where it matters.
+    fn loopback_is_proxied() -> bool {
+        let set = |k: &str| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false);
+        let proxied = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+            .iter()
+            .any(|k| set(k));
+        if !proxied {
+            return false;
+        }
+        let exempt = ["NO_PROXY", "no_proxy"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .any(|v| {
+                v.split(',')
+                    .any(|h| matches!(h.trim(), "127.0.0.1" | "localhost" | "*"))
+            });
+        if exempt {
+            return false;
+        }
+        eprintln!("skipping: a proxy is configured and NO_PROXY does not exempt 127.0.0.1");
+        true
+    }
+
+    /// Start the fake and a client aimed at it, or `None` when the environment
+    /// would route loopback through a proxy.
+    async fn fake_and_client(catalog: Catalog) -> Option<(FakeSpotify, SpotifyClient)> {
+        if loopback_is_proxied() {
+            return None;
+        }
+        let fake = FakeSpotify::start(catalog).await;
+        let client = SpotifyClient::for_tests(&fake.base_url);
+        Some((fake, client))
+    }
+
     #[tokio::test]
     async fn playlist_pager_stays_within_the_limit_and_reads_every_page() {
-        let fake = FakeSpotify::start(catalog(120, 0)).await;
-        let client = SpotifyClient::for_tests(&fake.base_url);
+        let Some((fake, client)) = fake_and_client(catalog(120, 0)).await else {
+            return;
+        };
 
         let items = client
             .playlist_get_items(PLAYLIST)
@@ -583,8 +623,9 @@ mod paging_against_fake_spotify {
 
     #[tokio::test]
     async fn album_pager_stays_within_the_limit_and_reads_every_page() {
-        let fake = FakeSpotify::start(catalog(0, 75)).await;
-        let client = SpotifyClient::for_tests(&fake.base_url);
+        let Some((fake, client)) = fake_and_client(catalog(0, 75)).await else {
+            return;
+        };
 
         let tracks = client
             .get_album_tracks(ALBUM)
@@ -602,8 +643,9 @@ mod paging_against_fake_spotify {
 
     #[tokio::test]
     async fn a_short_playlist_is_a_single_request() {
-        let fake = FakeSpotify::start(catalog(7, 0)).await;
-        let client = SpotifyClient::for_tests(&fake.base_url);
+        let Some((fake, client)) = fake_and_client(catalog(7, 0)).await else {
+            return;
+        };
         let items = client.playlist_get_items(PLAYLIST).await.unwrap();
         assert_eq!(items.len(), 7);
         assert_eq!(fake.hits().len(), 1, "a short page must end the walk");
@@ -611,13 +653,15 @@ mod paging_against_fake_spotify {
 
     #[tokio::test]
     async fn a_failing_first_page_is_reported_not_swallowed() {
-        let fake = FakeSpotify::start(Catalog {
+        let Some((_fake, client)) = fake_and_client(Catalog {
             playlist_total: 120,
             album_total: 0,
             fail_from_offset: Some(0),
         })
-        .await;
-        let client = SpotifyClient::for_tests(&fake.base_url);
+        .await
+        else {
+            return;
+        };
         let err = client
             .playlist_get_items(PLAYLIST)
             .await
@@ -630,13 +674,15 @@ mod paging_against_fake_spotify {
 
     #[tokio::test]
     async fn a_failing_later_page_keeps_what_was_already_read() {
-        let fake = FakeSpotify::start(Catalog {
+        let Some((_fake, client)) = fake_and_client(Catalog {
             playlist_total: 120,
             album_total: 0,
             fail_from_offset: Some(50),
         })
-        .await;
-        let client = SpotifyClient::for_tests(&fake.base_url);
+        .await
+        else {
+            return;
+        };
         let items = client
             .playlist_get_items(PLAYLIST)
             .await
