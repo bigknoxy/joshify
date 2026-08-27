@@ -5,6 +5,23 @@ use rspotify::clients::{BaseClient, OAuthClient};
 
 use super::SpotifyClient;
 
+/// Largest `limit` Spotify accepts for `GET /playlists/{id}/items`.
+///
+/// The Web API documents "Default: 20. Minimum: 1. Maximum: 50." for this
+/// endpoint. Asking for more is not clamped - the whole request is rejected
+/// with a 400, which is what turned every playlist into "Failed to get
+/// playlist items" in 0.8.3.
+pub const SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT: u32 = 50;
+
+/// Largest `limit` Spotify accepts for `GET /albums/{id}/tracks`.
+pub const SPOTIFY_ALBUM_TRACKS_MAX_LIMIT: u32 = 50;
+
+/// Page size used when walking a playlist.
+pub const PLAYLIST_ITEMS_PAGE: u32 = SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT;
+
+/// Page size used when walking an album.
+pub const ALBUM_TRACKS_PAGE: u32 = SPOTIFY_ALBUM_TRACKS_MAX_LIMIT;
+
 impl SpotifyClient {
     /// Get user's liked tracks (first page)
     pub async fn current_user_saved_tracks(
@@ -84,9 +101,9 @@ impl SpotifyClient {
         let pid =
             rspotify::model::PlaylistId::from_id(playlist_id).context("Invalid playlist ID")?;
         // Page through the whole playlist. A single call returns Spotify's
-        // default page of 100, so anything longer was silently truncated while
+        // default page of 20, so anything longer was silently truncated while
         // the header went on showing the playlist's real track count.
-        const PAGE: u32 = 100;
+        const PAGE: u32 = PLAYLIST_ITEMS_PAGE;
         const MAX_ITEMS: usize = 5_000;
         let mut items = Vec::new();
         let mut offset = 0u32;
@@ -349,7 +366,7 @@ impl SpotifyClient {
         let aid = rspotify::model::AlbumId::from_id(album_id).context("Invalid album ID")?;
         // One page of 50 silently cut off longer albums and compilations, and
         // the album header then rewrote its track count to match.
-        const PAGE: u32 = 50;
+        const PAGE: u32 = ALBUM_TRACKS_PAGE;
         const MAX_ITEMS: usize = 1_000;
         let mut items = Vec::new();
         let mut offset = 0u32;
@@ -396,6 +413,36 @@ impl SpotifyClient {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Spotify rejects the whole request when `limit` exceeds the endpoint's
+    /// documented maximum; it does not clamp. 0.8.3 paged playlists at 100 and
+    /// every playlist came back "Failed to get playlist items". Pin the pages
+    /// to the numbers in the Web API reference, not to each other.
+    #[test]
+    // The point is that these are constants: the assertion pins them to the
+    // documented API limit so the next "page bigger" change fails here.
+    #[allow(clippy::assertions_on_constants)]
+    fn test_playlist_page_size_within_spotify_limit() {
+        assert!(
+            PLAYLIST_ITEMS_PAGE >= 1 && PLAYLIST_ITEMS_PAGE <= 50,
+            "GET /playlists/{{id}}/items accepts limit 1..=50, got {}",
+            PLAYLIST_ITEMS_PAGE
+        );
+    }
+
+    #[test]
+    // The point is that these are constants: the assertion pins them to the
+    // documented API limit so the next "page bigger" change fails here.
+    #[allow(clippy::assertions_on_constants)]
+    fn test_album_page_size_within_spotify_limit() {
+        assert!(
+            ALBUM_TRACKS_PAGE >= 1 && ALBUM_TRACKS_PAGE <= 50,
+            "GET /albums/{{id}}/tracks accepts limit 1..=50, got {}",
+            ALBUM_TRACKS_PAGE
+        );
+    }
+
     #[test]
     fn test_search_query_validation() {
         let long_query = "a".repeat(50);

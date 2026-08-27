@@ -453,6 +453,34 @@ struct App {
 }
 
 impl App {
+    /// Start `uri` on this machine's player and mirror it into the player bar.
+    ///
+    /// This is what Enter means in local mode, wherever the track came from.
+    /// Returns `false` when there is no local player; the status message says
+    /// so either way, so the caller has nothing to add.
+    fn play_locally(&mut self, name: &str, artist: &str, uri: &str) -> bool {
+        let Some(player) = self.local_player.as_ref() else {
+            self.status_message = Some("Local player not initialized".to_string());
+            return false;
+        };
+        match player.load_uri(uri, true, 0) {
+            Ok(()) => {
+                self.player_state.current_track_name = Some(name.to_string());
+                self.player_state.current_artist_name = Some(artist.to_string());
+                self.player_state.current_track_uri = Some(uri.to_string());
+                self.player_state.is_playing = true;
+                self.player_state.progress_ms = 0;
+                self.player_state.reset_scroll();
+                self.status_message = Some(format!("Playing locally: {}", name));
+                true
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Local playback error: {}", e));
+                false
+            }
+        }
+    }
+
     fn new() -> Self {
         Self {
             selected_nav: NavItem::Home,
@@ -2494,21 +2522,27 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     if app.search_state.is_active {
                         match key.code {
                             crossterm::event::KeyCode::Enter => {
-                                if let Some(track) = app.search_state.selected_track() {
-                                    if let Some(ref client) = client {
+                                // Play on this machine by default, exactly like
+                                // Enter on a playlist track. Only a device picked
+                                // with 'd' (remote mode) sends the track elsewhere;
+                                // this path used to go remote unconditionally and
+                                // told local users to go pick a device.
+                                let picked = app
+                                    .search_state
+                                    .selected_track()
+                                    .map(|t| (t.name.clone(), t.artist.clone(), t.uri.clone()));
+                                if let Some((name, artist, uri)) = picked {
+                                    if app.playback_mode == PlaybackMode::Local {
+                                        app.play_locally(&name, &artist, &uri);
+                                    } else if let Some(ref client) = client {
                                         spawn_remote_play(
                                             client,
-                                            (
-                                                track.name.clone(),
-                                                track.artist.clone(),
-                                                track.uri.clone(),
-                                            ),
+                                            (name.clone(), artist, uri),
                                             None,
                                             app.selected_device_id.clone(),
                                             tx_play.clone(),
                                         );
-                                        app.status_message =
-                                            Some(format!("Starting: {}", track.name));
+                                        app.status_message = Some(format!("Starting: {}", name));
                                     }
                                 }
                                 app.search_state.deactivate();
@@ -3405,33 +3439,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                                                 });
 
                                                 if app.playback_mode == PlaybackMode::Local {
-                                                    if let Some(ref player) = app.local_player {
-                                                        match player.load_uri(&track.uri, true, 0) {
-                                                            Ok(_) => {
-                                                                app.player_state
-                                                                    .current_track_name =
-                                                                    Some(track.name.clone());
-                                                                app.player_state
-                                                                    .current_artist_name =
-                                                                    Some(track.artist.clone());
-                                                                app.player_state
-                                                                    .current_track_uri =
-                                                                    Some(track.uri.clone());
-                                                                app.player_state.is_playing = true;
-                                                                app.player_state.progress_ms = 0;
-                                                                app.status_message = Some(format!(
-                                                                    "Playing locally: {}",
-                                                                    track.name
-                                                                ));
-                                                            }
-                                                            Err(e) => {
-                                                                app.status_message = Some(format!(
-                                                                    "Local playback error: {}",
-                                                                    e
-                                                                ));
-                                                            }
-                                                        }
-                                                    }
+                                                    // `track` borrows content_state; copy
+                                                    // what the player needs first.
+                                                    let (name, artist, uri) = (
+                                                        track.name.clone(),
+                                                        track.artist.clone(),
+                                                        track.uri.clone(),
+                                                    );
+                                                    app.play_locally(&name, &artist, &uri);
                                                 } else if let Some(ref client) = client {
                                                     spawn_remote_play(
                                                         client,
@@ -5067,6 +5082,36 @@ mod tui_init_order_tests {
         assert!(
             code.contains(&suspended),
             "the settings key should run setup inside suspend_tui()"
+        );
+    }
+}
+
+#[cfg(test)]
+mod play_locally_tests {
+    use super::*;
+
+    /// In local mode Enter must never turn into "go pick a device". With no
+    /// local player the helper reports that plainly and leaves the player bar
+    /// alone, so a caller that trusts its return value cannot claim playback.
+    #[test]
+    fn test_play_locally_without_player_reports_and_does_not_claim_playback() {
+        let mut app = App::new();
+        app.playback_mode = PlaybackMode::Local;
+        assert!(app.local_player.is_none());
+
+        let started = app.play_locally("Song", "Artist", "spotify:track:abc");
+
+        assert!(!started);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Local player not initialized")
+        );
+        assert!(!app.player_state.is_playing);
+        assert!(app.player_state.current_track_uri.is_none());
+        let msg = app.status_message.unwrap();
+        assert!(
+            !msg.contains("press 'd'"),
+            "local mode must not send the user to the device picker: {msg}"
         );
     }
 }
