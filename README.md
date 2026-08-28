@@ -233,6 +233,27 @@ Or write the two config files directly. Both live in
   If you prefer the ALSA route, `sudo apt install libasound2-plugins` plus
   `pcm.!default { type pulse }` in `~/.asoundrc` makes the default backend
   work and joshify will use that first.
+- **Corporate network / SSL-inspecting proxy (Zscaler and similar) blocks
+  local playback**: if you see "local player failed: did not come up within
+  30s" but the Spotify web player and REST calls work fine, the firewall is
+  likely allowing 80/443 outbound and dropping everything else — Spotify's
+  access-point connection normally uses port 4070, which is not standard
+  HTTPS traffic even when it happens to travel over 443, so an inspecting
+  proxy silently blackholes or resets it. Two escape hatches, same ones
+  browsers rely on:
+  - `SPOTIFY_AP_PORT=443` asks Spotify's resolver for an access point on
+    port 443 instead of 4070. Try this first — no proxy required.
+  - If that alone doesn't get through, set `HTTPS_PROXY` (or `SPOTIFY_PROXY`,
+    `ALL_PROXY`, `HTTP_PROXY`, lowercase variants also honored) to your
+    org's forward proxy URL, e.g. `HTTPS_PROXY=http://proxy.corp.example:8080`.
+    joshify tunnels the access-point connection through it via HTTP CONNECT,
+    the same mechanism a browser uses for HTTPS — and defaults the access
+    point to port 443 automatically in this case, since most forward proxies
+    only permit CONNECT to that port. `SPOTIFY_AP_PORT` overrides that
+    default if your proxy allows other ports.
+  - Diagnose which case you're in with `curl -v --max-time 8
+    telnet://ap-gew1.spotify.com:4070` — a hang/timeout (not a clean
+    connection or a fast reset) confirms the port is being dropped.
 
 Joshify probes the audio device at startup and tells you in the status bar when
 it has fallen back to remote-only, rather than claiming local playback and
