@@ -1,3 +1,13 @@
+## [0.8.9](https://github.com/bigknoxy/joshify/compare/v0.8.8...v0.8.9) (2026-08-28)
+
+### Bug Fixes
+
+- **librespot's internal errors now reach `joshify.log`** ([#75](https://github.com/bigknoxy/joshify/pull/75)): librespot logs through the `log` facade, not `tracing`; joshify only ever installed a `tracing` subscriber, so none of librespot's own error output was ever captured. Found while diagnosing a real report: after 0.8.8 got local playback connecting through a corporate proxy, a track still failed to play with only joshify's generic "Couldn't play '<name>' — unavailable" — librespot logs the actual reason (a CDN request rejected, region restriction, decrypt failure, etc.) via `log::error!` right before that event fires, but it was being silently dropped. `tracing_log::LogTracer::init()` routes `log` records into the same subscriber already writing `joshify.log`, so that detail is now captured.
+
+### Technical Details
+
+- Not verified end-to-end on the development machine (no Spotify credentials/audio here); confirmed via `cargo check`, `cargo fmt -- --check`, `cargo clippy` and GitHub Actions CI
+
 ## [0.8.8](https://github.com/bigknoxy/joshify/compare/v0.8.7...v0.8.8) (2026-08-28)
 
 ### Bug Fixes
