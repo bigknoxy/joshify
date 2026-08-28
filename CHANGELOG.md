@@ -1,3 +1,20 @@
+## [0.8.6](https://github.com/bigknoxy/joshify/compare/v0.8.5...v0.8.6) (2026-08-27)
+
+### Bug Fixes
+
+- **Local playback works on WSL** ([#70](https://github.com/bigknoxy/joshify/pull/70)): on WSL, Enter on any track answered "No Spotify device available - press 'd'". WSLg provides a PulseAudio server, but joshify's Linux build speaks ALSA (through rodio), and a stock WSL image has neither `libasound2-plugins` nor an `.asoundrc`, so every ALSA open failed with `Unknown PCM default`. The audio probe reported that honestly, the app went remote-only, and the device it was running on — which had working audio the whole time — was never an option. When the default backend has no device and `pacat` is installed, joshify now pipes 44.1 kHz stereo PCM into PulseAudio through its own `PacatSink`. The probe feeds 200 ms of silence and checks `pacat` survived it (a missing server kills it on the first write), so "Local playback active (local audio via PulseAudio)" is only shown when sound can actually come out. Machines with working ALSA or CoreAudio see no change and fork nothing.
+- **A dead PulseAudio is an error, not silence**: `PacatSink` reports a helper that stopped accepting audio as a sink error — the player pauses and the status bar reads "Local audio stopped: …" — instead of librespot's generic subprocess behaviour of respawning it on every packet while the position advances. Writes to `pacat` are bounded (a pipe nobody reads for 5 s is an error, not a wedged player thread), `stop` lets `pacat` drain before exiting so track ends are not cut off, and pacat's own output is discarded rather than inherited by the terminal the TUI owns.
+- **Starting without local playback is never silent**: if audio exists but the Spotify session or player fails to start — or there is no session at all — the banner now says which step refused and why, with "press 'd' to pick a device" first so it survives the one-line status bar. Two of those paths used to fall through without a word; one of them stayed in *local* mode with no player, so every key was a no-op.
+- **Spotify Connect starts on the cached-session path**: it read `~/.cache/joshify/credentials.json` for an `access_token` that file never contains (librespot writes its own schema there), so joshify never appeared as a device when started from a cached session. It now uses the credentials librespot cached.
+- **`install.sh` sets up WSL audio**: on WSL it refreshes package lists and installs `pulseaudio-utils` (for `pacat`) when missing, or prints the command when it has no privileges.
+
+### Technical Details
+
+- `AudioProbe::Available` carries the `AudioOutput` that was tested (`Default` or `Pacat(command)`); `LocalPlayer::new` opens exactly that, so the player never uses an output the probe did not
+- Startup is one path: `start_local_playback` takes the session from either source and fills app state once; `remote_only` handles every failure
+- Tests exercise the real sink with `cat` (healthy helper), `false` (exits at once) and `sleep` (accepts but never reads): the probe passes and fails accordingly, a write after the helper dies is an error with no respawn, a stalled pipe is a bounded error reported to the UI, `stop` drains then kills, the fallback closure is not evaluated when the default backend works, and the `pacat` command line matches the sink's sample format
+- Not reproduced on the development machine (no PulseAudio here); the WSL diagnosis is from the user's environment output (`PULSE_SERVER` set, socket present, `pacat` installed, `libasound2-plugins` absent, `Unknown PCM default`)
+
 ## [0.8.5](https://github.com/bigknoxy/joshify/compare/v0.8.4...v0.8.5) (2026-08-27)
 
 ### Bug Fixes
