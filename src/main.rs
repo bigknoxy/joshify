@@ -1295,6 +1295,12 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
     let mut app = App::new();
 
+    // Token for local playback (librespot) — separate from the Web API
+    // token below; see `librespot_auth` for why. Skipped in mock mode
+    // (no Spotify at all) and, for its interactive/browser fallback, in
+    // non-interactive (`has_tokens`) mode.
+    let mut local_playback_token: Option<String> = None;
+
     // Mock mode (JOSHIFY_MOCK=1): demo data, no Spotify auth or network
     let mock_mode = joshify::state::mock_data::is_mock_mode();
     if mock_mode {
@@ -1308,12 +1314,24 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         app.is_authenticated = true;
         app.status_message =
             Some("Connected to Spotify (non-interactive) - Press ? for help".to_string());
+        // Cache-only: a first-run browser prompt would break unattended use,
+        // but reusing an already-cached token (e.g. from a prior interactive
+        // run) does not, and local playback needs this token either way.
+        local_playback_token = joshify::librespot_auth::get_cached_local_playback_token().await;
     } else {
         // Ensure we have credentials configured (runs interactive setup if needed)
         let config = joshify::setup::ensure_configured()?;
 
+        // The Web API flow and the local-playback flow authenticate against
+        // different client IDs for different purposes and share no data, so
+        // run them concurrently rather than paying both round trips serially.
+        let (oauth_result, local_playback_result) = tokio::join!(
+            joshify::setup::run_oauth_flow(&config),
+            joshify::librespot_auth::get_local_playback_token()
+        );
+
         // Run OAuth browser flow to get access tokens
-        match joshify::setup::run_oauth_flow(&config).await {
+        match oauth_result {
             Ok(true) => {
                 // Already authenticated with valid credentials
                 app.is_authenticated = true;
@@ -1327,6 +1345,14 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             Err(e) => {
                 app.status_message = Some(format!("OAuth error: {}", e));
                 // Continue anyway - may have cached credentials
+            }
+        }
+
+        match local_playback_result {
+            Ok(token) => local_playback_token = Some(token),
+            Err(e) => {
+                tracing::warn!("Local playback authorization unavailable: {}", e);
+                // Continue anyway - remote (Spotify Connect) mode still works.
             }
         }
     }
@@ -1438,24 +1464,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         };
     }
 
-    // Extract access token from the rspotify client (works for OAuth flow too)
-    let mut client_access_token: Option<String> = None;
-    if let Some(ref client) = client {
-        let client_guard = client.lock().await;
-        let token_result = client_guard.oauth.token.lock().await;
-        if let Ok(token_guard) = token_result {
-            if let Some(ref token) = *token_guard {
-                client_access_token = Some(token.access_token.clone());
-            }
-        }
-    }
-
-    // Initialize local playback (librespot) - try all token sources
+    // Initialize local playback (librespot) - try all token sources. Does
+    // not fall back to the Web API client's token (see `librespot_auth`);
+    // an explicit CLI/env override is still honored, on the assumption a
+    // caller providing one directly knows it works for this purpose.
     let access_token = args
         .access_token
         .clone()
         .or_else(|| std::env::var("SPOTIFY_ACCESS_TOKEN").ok())
-        .or(client_access_token);
+        .or(local_playback_token);
 
     // Bring local playback up in the background. Connecting the librespot
     // session and registering as a Spotify Connect device are network round
@@ -5346,6 +5363,72 @@ mod local_startup_tests {
             first_draw < client,
             "draw something before the first network call, or the screen is \
              black until Spotify answers"
+        );
+    }
+
+    /// Local playback must not regress to the Web API client's token — see
+    /// `librespot_auth` for why (login5 rejects it with INVALID_CREDENTIALS).
+    #[test]
+    fn local_playback_token_does_not_come_from_the_web_api_client() {
+        let body = run_with_args_body();
+        let bring_up_call = body
+            .find("bring_up_local_playback(access_token, output)")
+            .expect("run_with_args should start the bring-up with `access_token`");
+        let before_bring_up = &body[..bring_up_call];
+
+        assert!(
+            before_bring_up.contains("librespot_auth::get_local_playback_token()"),
+            "the local playback access token must come from librespot_auth, \
+             which authorizes against the login5-approved client ID"
+        );
+        assert!(
+            !before_bring_up.contains("client_access_token"),
+            "the Web API client's token must not feed into local playback; \
+             it is rejected by login5 with INVALID_CREDENTIALS"
+        );
+    }
+
+    /// The non-interactive (`has_tokens`) path must still get a local
+    /// playback token from an already-cached login, since that carries no
+    /// risk of hanging on a browser nobody can click — only the interactive
+    /// fallback (which can prompt a browser) is unsafe there.
+    #[test]
+    fn non_interactive_mode_uses_the_cache_only_local_playback_lookup() {
+        let body = run_with_args_body();
+        let has_tokens_branch = body
+            .find("} else if has_tokens {")
+            .expect("run_with_args should have a has_tokens branch");
+        let else_branch = body[has_tokens_branch..]
+            .find("} else {")
+            .map(|i| has_tokens_branch + i)
+            .expect("has_tokens branch should be followed by the interactive else");
+        let has_tokens_body = &body[has_tokens_branch..else_branch];
+
+        assert!(
+            has_tokens_body.contains("librespot_auth::get_cached_local_playback_token()"),
+            "non-interactive mode should still pick up an already-cached local playback token"
+        );
+        assert!(
+            !has_tokens_body.contains("librespot_auth::get_local_playback_token()"),
+            "non-interactive mode must not risk opening a browser on a cache miss"
+        );
+    }
+
+    /// Must run before raw-mode init, not inside the background bring-up
+    /// task — a human clicking "Allow" would blow through the 30s deadline.
+    #[test]
+    fn local_playback_authorization_happens_before_tui_init() {
+        let body = run_with_args_body();
+        let auth_call = body
+            .find("librespot_auth::get_local_playback_token()")
+            .expect("run_with_args should request a local playback token");
+        let init = body
+            .find("ratatui::init()")
+            .expect("run_with_args should initialize the terminal");
+        assert!(
+            auth_call < init,
+            "local playback authorization must happen before ratatui::init(), \
+             like the rest of interactive setup"
         );
     }
 
