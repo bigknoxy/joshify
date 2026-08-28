@@ -110,6 +110,35 @@ detect_sudo_mode() {
     fi
 }
 
+# WSL has no sound card. WSLg provides a PulseAudio server, but the binary
+# speaks ALSA, and no WSL image ships the ALSA-to-Pulse plugin, so every ALSA
+# open fails with "Unknown PCM default". joshify then plays through `pacat`
+# instead - which is in pulseaudio-utils and not installed by default either.
+is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
+
+ensure_wsl_audio() {
+    is_wsl || return 0
+    if command -v pacat > /dev/null 2>&1; then
+        return 0
+    fi
+    if [ -n "${JOSHIFY_SKIP_DEPS:-}" ] || ! command -v apt-get > /dev/null 2>&1; then
+        warn "   WSL: install pulseaudio-utils (for pacat) to get local audio."
+        return 0
+    fi
+    if [ "${SUDO_MODE:-unavailable}" = "unavailable" ]; then
+        warn "   WSL: run 'sudo apt-get install -y pulseaudio-utils' to get local audio (pacat)."
+        return 0
+    fi
+    info "   WSL detected: installing pulseaudio-utils so joshify can play through WSLg's PulseAudio..."
+    # A fresh WSL image has no package lists at all; install fails without this.
+    run_privileged apt-get update -qq > /dev/null 2>&1 || true
+    if run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pulseaudio-utils; then
+        info "   pacat installed."
+    else
+        warn "   Could not install pulseaudio-utils; run: sudo apt-get update && sudo apt-get install -y pulseaudio-utils"
+    fi
+}
+
 run_privileged() {
     case "${SUDO_MODE:-unavailable}" in
         none)         "$@" ;;
@@ -493,6 +522,7 @@ fi
 
 # --- verify ------------------------------------------------------------------
 echo ""
+ensure_wsl_audio
 INSTALLED_BIN="${INSTALL_DIR}/${BIN_NAME}"
 [ -x "$INSTALLED_BIN" ] || die "✗ Installation failed: ${INSTALLED_BIN} is not executable."
 

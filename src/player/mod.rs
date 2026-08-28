@@ -3,6 +3,7 @@
 //! Provides a high-level interface for local Spotify playback
 //! with event-driven updates for the TUI.
 
+pub mod pacat;
 pub mod visualization;
 
 use anyhow::{Context, Result};
@@ -10,7 +11,7 @@ use librespot::{
     core::{SpotifyId, SpotifyUri},
     metadata::audio::UniqueFields,
     playback::{
-        audio_backend,
+        audio_backend::{self, Sink},
         config::{AudioFormat, PlayerConfig},
         mixer::{self, Mixer, MixerConfig},
         player::{Player, PlayerEvent},
@@ -53,14 +54,42 @@ pub fn artist_from_unique_fields(fields: &UniqueFields) -> Option<String> {
     }
 }
 
+/// Where local audio goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioOutput {
+    /// librespot's default backend for this platform: CoreAudio on macOS,
+    /// ALSA (through rodio) on Linux.
+    Default,
+    /// PCM piped into PulseAudio's `pacat`. Used when ALSA has no default
+    /// device but a Pulse server is reachable - the normal state of a WSL
+    /// distribution, where WSLg provides Pulse and nobody installs the
+    /// ALSA-to-Pulse plugin. Carries the command line.
+    Pacat(String),
+}
+
+impl AudioOutput {
+    /// A short label for the status bar.
+    pub fn describe(&self) -> &'static str {
+        match self {
+            AudioOutput::Default => "local audio",
+            AudioOutput::Pacat(_) => "local audio via PulseAudio",
+        }
+    }
+}
+
 /// Result of checking whether audio can actually be played on this machine.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioProbe {
-    /// A device was opened and closed successfully.
-    Available,
+    /// A device was opened and closed successfully through this output.
+    Available(AudioOutput),
     /// No device could be opened. Carries a human-readable reason.
     Unavailable(String),
 }
+
+/// How long the pacat probe waits to see whether the helper survives its
+/// first buffer. Only paid on machines where the default backend has already
+/// failed.
+const PACAT_PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Try to actually open the audio output device.
 ///
@@ -70,14 +99,48 @@ pub enum AudioProbe {
 /// where a failure never reaches the user and playback is simply silent.
 ///
 /// Opening and immediately closing a sink here converts that silent failure
-/// into something reportable. See issue #49.
+/// into something reportable. See issue #49. When the default backend has no
+/// device and `pacat` is installed, PulseAudio is tried next, so WSL gets local
+/// playback instead of a "remote only" banner.
 pub fn probe_audio_output() -> AudioProbe {
+    probe_with_fallback(pacat::pacat_on_path)
+}
+
+/// [`probe_audio_output`] with the fallback supplied by the caller.
+///
+/// `fallback` is only consulted after the default backend has failed, so a
+/// machine with working ALSA or CoreAudio never pays for it.
+pub fn probe_with_fallback(fallback: impl FnOnce() -> Option<String>) -> AudioProbe {
+    let default_error = match try_open_default_sink() {
+        Ok(()) => return AudioProbe::Available(AudioOutput::Default),
+        Err(reason) => reason,
+    };
+    let Some(command) = fallback() else {
+        return AudioProbe::Unavailable(default_error);
+    };
+    match pacat::probe(&command, PACAT_PROBE_DEADLINE) {
+        Ok(()) => {
+            // Keep the reason the default failed: it is the diagnostic anyone
+            // asking "why is my audio going through Pulse?" needs.
+            tracing::warn!(
+                "Default audio backend unavailable ({}); playing through PulseAudio via pacat",
+                default_error
+            );
+            AudioProbe::Available(AudioOutput::Pacat(command))
+        }
+        Err(pacat_error) => AudioProbe::Unavailable(format!(
+            "{default_error}; PulseAudio via pacat failed: {pacat_error}"
+        )),
+    }
+}
+
+/// Open and immediately close the default backend's sink, reporting why it
+/// could not.
+fn try_open_default_sink() -> Result<(), String> {
     use std::panic::{self, AssertUnwindSafe};
 
     let Some(backend) = audio_backend::find(None) else {
-        return AudioProbe::Unavailable(
-            "no audio backend is compiled in for this platform".to_string(),
-        );
+        return Err("no audio backend is compiled in for this platform".to_string());
     };
 
     // librespot's rodio backend panics rather than returning an error when it
@@ -118,9 +181,9 @@ pub fn probe_audio_output() -> AudioProbe {
     }
 
     match result {
-        Ok(Ok(())) => AudioProbe::Available,
-        Ok(Err(e)) => AudioProbe::Unavailable(e.to_string()),
-        Err(_) => AudioProbe::Unavailable("no audio output device available".to_string()),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("no audio output device available".to_string()),
     }
 }
 
@@ -129,15 +192,33 @@ pub struct LocalPlayer {
     player: Arc<Player>,
     mixer: Arc<dyn Mixer>,
     event_rx: Option<UnboundedReceiver<PlayerEvent>>,
+    /// Failures the audio sink reported (only the pacat sink does); the UI
+    /// shows them, since librespot itself only logs and pauses. Behind a mutex
+    /// because a `Receiver` is not `Sync` and this struct lives in an `Arc`.
+    sink_errors: std::sync::Mutex<Option<std::sync::mpsc::Receiver<String>>>,
     pub state: PlaybackState,
 }
 
 impl LocalPlayer {
-    /// Create a new player with the default audio backend
-    pub fn new(session: &librespot::core::session::Session) -> Result<Self> {
-        let backend = audio_backend::find(None).context(
-            "No audio backend available. Install ALSA (Linux) or ensure audio drivers are present.",
-        )?;
+    /// Create a new player that plays through `output` - the one the probe
+    /// found working, so what the player opens is what was tested.
+    pub fn new(session: &librespot::core::session::Session, output: &AudioOutput) -> Result<Self> {
+        let (sink_errors_tx, sink_errors_rx) = std::sync::mpsc::channel();
+        let sink_builder: Box<dyn FnOnce() -> Box<dyn Sink> + Send> = match output {
+            AudioOutput::Default => {
+                let backend = audio_backend::find(None).context(
+                    "No audio backend available. Install ALSA (Linux) or ensure audio drivers are present.",
+                )?;
+                Box::new(move || backend(None, AudioFormat::default()))
+            }
+            AudioOutput::Pacat(command) => {
+                let command = command.clone();
+                Box::new(move || {
+                    Box::new(pacat::PacatSink::new(&command).with_error_reporting(sink_errors_tx))
+                        as Box<dyn Sink>
+                })
+            }
+        };
         let mixer_builder = mixer::find(None).context("No mixer available")?;
         let mixer_config = MixerConfig::default();
         let mixer = mixer_builder(mixer_config).context("Failed to create mixer")?;
@@ -149,13 +230,11 @@ impl LocalPlayer {
             position_update_interval: Some(std::time::Duration::from_secs(1)),
             ..PlayerConfig::default()
         };
-        let audio_format = AudioFormat::default();
-
         let player = Player::new(
             player_config,
             session.clone(),
             mixer.get_soft_volume(),
-            move || backend(None, audio_format),
+            sink_builder,
         );
 
         let event_rx = player.get_player_event_channel();
@@ -164,6 +243,7 @@ impl LocalPlayer {
             player,
             mixer,
             event_rx: Some(event_rx),
+            sink_errors: std::sync::Mutex::new(Some(sink_errors_rx)),
             state: PlaybackState::default(),
         })
     }
@@ -216,6 +296,14 @@ impl LocalPlayer {
     }
 
     /// Get the event channel for TUI updates
+    /// Take the receiver for sink failures; `None` if already taken.
+    pub fn take_sink_error_channel(&self) -> Option<std::sync::mpsc::Receiver<String>> {
+        self.sink_errors
+            .lock()
+            .map(|mut slot| slot.take())
+            .unwrap_or(None)
+    }
+
     pub fn take_event_channel(&mut self) -> Option<UnboundedReceiver<PlayerEvent>> {
         self.event_rx.take()
     }
@@ -560,5 +648,84 @@ mod tests {
         assert_eq!(state.is_playing, cloned.is_playing);
         assert_eq!(state.current_track_uri, cloned.current_track_uri);
         assert_eq!(state.progress_ms, cloned.progress_ms);
+    }
+}
+
+#[cfg(test)]
+mod audio_output_tests {
+    use super::*;
+
+    /// The fallback is only consulted when the default backend has no device.
+    /// On a machine with working audio it must never displace the default; on
+    /// one without (CI, WSL without the ALSA plugin) it must be what makes
+    /// local playback available. `cat` stands in for `pacat`: it accepts PCM
+    /// on stdin and stays up.
+    #[test]
+    #[serial_test::serial(panic_hook)]
+    fn fallback_is_used_exactly_when_the_default_has_no_device() {
+        let alone = probe_with_fallback(|| None);
+        let with_cat = probe_with_fallback(|| Some("cat".to_string()));
+        match alone {
+            AudioProbe::Available(AudioOutput::Default) => {
+                assert_eq!(with_cat, AudioProbe::Available(AudioOutput::Default));
+            }
+            AudioProbe::Unavailable(_) => {
+                assert_eq!(
+                    with_cat,
+                    AudioProbe::Available(AudioOutput::Pacat("cat".to_string()))
+                );
+            }
+            other => panic!("the default probe never yields pacat: {other:?}"),
+        }
+    }
+
+    /// The fallback closure must not run when the default works - it forks a
+    /// process, and on a working desktop that is pure startup cost.
+    #[test]
+    #[serial_test::serial(panic_hook)]
+    fn fallback_is_not_evaluated_when_the_default_works() {
+        use std::cell::Cell;
+        let asked = Cell::new(false);
+        let probe = probe_with_fallback(|| {
+            asked.set(true);
+            None
+        });
+        if let AudioProbe::Available(AudioOutput::Default) = probe {
+            assert!(
+                !asked.get(),
+                "the default worked; the fallback must not be consulted"
+            );
+        } else {
+            assert!(
+                asked.get(),
+                "the default failed; the fallback must be consulted"
+            );
+        }
+    }
+
+    /// A helper that exits at once (pacat with no server) or cannot be
+    /// spawned is a failure carrying both reasons - never a silent success.
+    #[test]
+    #[serial_test::serial(panic_hook)]
+    fn a_dead_fallback_is_reported_with_both_reasons() {
+        if let AudioProbe::Available(_) = probe_with_fallback(|| None) {
+            return; // the default works here; the fallback is never consulted
+        }
+        for helper in ["false", "/nonexistent/joshify-fake-pacat"] {
+            match probe_with_fallback(|| Some(helper.to_string())) {
+                AudioProbe::Unavailable(reason) => {
+                    assert!(reason.contains("PulseAudio via pacat failed"), "{reason}");
+                }
+                other => panic!("{helper} cannot be an available output: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn outputs_are_named_for_the_status_bar() {
+        assert_eq!(AudioOutput::Default.describe(), "local audio");
+        assert!(AudioOutput::Pacat("pacat".into())
+            .describe()
+            .contains("PulseAudio"));
     }
 }

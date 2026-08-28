@@ -226,9 +226,13 @@ Or write the two config files directly. Both live in
   back to a file, and local playback has no device.
 - **Remote (Spotify Connect) mode works out of the box** — joshify controls
   playback on another device with no audio setup at all.
-- **Local playback** additionally needs WSLg plus an ALSA→PulseAudio bridge:
-  `sudo apt install libasound2-plugins` and a default of
-  `pcm.!default { type pulse }` in `~/.asoundrc`.
+- **Local playback** needs WSLg (which provides a PulseAudio server) and
+  `pacat` from `pulseaudio-utils` — `install.sh` installs it for you on WSL.
+  ALSA has no device on WSL, so joshify pipes audio into `pacat` instead; the
+  status bar then reads "Local playback active (local audio via PulseAudio)".
+  If you prefer the ALSA route, `sudo apt install libasound2-plugins` plus
+  `pcm.!default { type pulse }` in `~/.asoundrc` makes the default backend
+  work and joshify will use that first.
 
 Joshify probes the audio device at startup and tells you in the status bar when
 it has fallen back to remote-only, rather than claiming local playback and
