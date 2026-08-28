@@ -1,3 +1,16 @@
+## [0.8.8](https://github.com/bigknoxy/joshify/compare/v0.8.7...v0.8.8) (2026-08-28)
+
+### Bug Fixes
+
+- **Local playback works behind corporate firewalls that block port 4070** ([#73](https://github.com/bigknoxy/joshify/pull/73)): Spotify's access-point protocol connects on TCP 4070 by default. SSL-inspecting corporate proxies (Zscaler and similar) commonly allow only 80/443 outbound and silently drop everything else, so the connection just hangs until joshify's 30s startup deadline gives up and falls back to remote-only — even though the REST API and the Spotify web player work fine over 443. librespot already supports `ap_port` and `proxy` on its session config for this exact case; joshify never wired them up. `SPOTIFY_AP_PORT=443` now forces an access point on that port directly, and setting a standard proxy env var (`SPOTIFY_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `HTTP_PROXY`, lowercase variants too) tunnels the access-point connection through it via HTTP CONNECT, defaulting the port to 443 to match what most forward proxies permit.
+
+### Technical Details
+
+- `session_config()` in `src/session.rs` builds `SessionConfig` from these env vars instead of `SessionConfig::default()`; used by both `LocalSession::from_access_token` and `from_cache` so the two session-creation paths cannot drift apart on proxy handling
+- A scheme-less proxy value (e.g. `proxy.corp.example:8080`) parses "successfully" under `Url::parse` as a scheme with no host rather than a host:port pair; the proxy is only accepted when `url.host()` is present, so a value like that is ignored rather than silently producing a useless tunnel target
+- Diagnosed against a real corporate WSL environment: `curl -v --max-time 8 telnet://ap-gew1.spotify.com:4070` timed out completely (no reset, no response) while `curl https://api.spotify.com/v1` connected cleanly through the same Zscaler proxy, confirming the port-block theory rather than a broader connectivity or DNS issue
+- Not reproduced end-to-end on the development machine (no corporate proxy here); confirmed via `cargo test --lib session::` (6 new tests covering env-var precedence, forced-port override, and the scheme-less-value guard)
+
 ## [0.8.7](https://github.com/bigknoxy/joshify/compare/v0.8.6...v0.8.7) (2026-08-28)
 
 ### Bug Fixes
