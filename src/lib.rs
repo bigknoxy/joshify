@@ -16,6 +16,7 @@ pub mod cli;
 pub mod config;
 pub mod connect;
 pub mod keyring_store;
+pub mod librespot_auth;
 pub mod logging;
 pub mod lyrics;
 pub mod manage;
