@@ -324,12 +324,30 @@ out="$(ensure_wsl_audio 2>&1)"
 assert_eq "" "$out" "on WSL with pacat present nothing is installed"
 
 command() { if [ "${2:-}" = "pacat" ]; then return 1; fi; builtin command "$@"; }
-run_privileged() { echo "run_privileged:$*"; }
+# The update step is deliberately quiet, so record privileged calls in a file.
+PRIV_LOG="$WORK/privileged.log"; : > "$PRIV_LOG"
+run_privileged() { echo "run_privileged:$*" >> "$PRIV_LOG"; }
+SUDO_MODE=passwordless
+ensure_wsl_audio > /dev/null 2>&1
+if grep -q '^run_privileged:apt-get update' "$PRIV_LOG" \
+   && grep -q 'apt-get install.*pulseaudio-utils' "$PRIV_LOG" \
+   && [ "$(grep -n 'apt-get update' "$PRIV_LOG" | cut -d: -f1)" -lt "$(grep -n 'pulseaudio-utils' "$PRIV_LOG" | cut -d: -f1)" ]; then
+    ok "on WSL without pacat, package lists are refreshed then pulseaudio-utils is installed"
+else
+    fail "on WSL without pacat, package lists are refreshed then pulseaudio-utils is installed (got: $(cat "$PRIV_LOG"))"
+fi
+SUDO_MODE=unavailable
+: > "$PRIV_LOG"
 out="$(ensure_wsl_audio 2>&1)"
-case "$out" in
-    *"run_privileged:"*"apt-get install"*"pulseaudio-utils"*) ok "on WSL without pacat, pulseaudio-utils is installed via apt" ;;
-    *) fail "on WSL without pacat, pulseaudio-utils is installed via apt (got: $out)" ;;
-esac
+if [ -s "$PRIV_LOG" ]; then
+    fail "without privileges nothing is attempted (got: $(cat "$PRIV_LOG"))"
+else
+    case "$out" in
+        *"sudo apt-get install -y pulseaudio-utils"*) ok "without privileges the user is told the command" ;;
+        *) fail "without privileges the user is told the command (got: $out)" ;;
+    esac
+fi
+unset SUDO_MODE
 unset -f command run_privileged is_wsl
 
 echo ""

@@ -10,20 +10,37 @@
 //! say so, and offers a real probe that feeds silence and checks the process
 //! survived it.
 
-use std::io::Write;
-use std::process::{Child, Command, Stdio};
+use std::io::{ErrorKind, Write};
+use std::os::fd::AsRawFd;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use librespot::playback::audio_backend::{Sink, SinkError, SinkResult};
 use librespot::playback::config::AudioFormat;
 use librespot::playback::convert::Converter;
 use librespot::playback::decoder::AudioPacket;
+use librespot::playback::{NUM_CHANNELS, SAMPLE_RATE};
 
-/// librespot decodes to 44.1 kHz stereo.
-pub const SAMPLE_RATE: u32 = 44_100;
-pub const CHANNELS: u32 = 2;
 /// The one sample format this sink emits; `f64` samples are converted to it.
 pub const FORMAT: AudioFormat = AudioFormat::S16;
+
+/// How long a write may sit on a full pipe before the helper is declared
+/// stuck. pacat that connected but never gets a stream reads ~4 KB and stops;
+/// without this the player thread would block in `write_all` forever, and with
+/// it pause, stop and quit.
+const WRITE_STALL: Duration = Duration::from_secs(5);
+
+/// How long `stop` waits for the helper to drain and exit after EOF before
+/// killing it. Every other librespot backend drains on stop; killing at once
+/// drops the pipe plus pacat's server-side buffer, which truncates the end of a
+/// track and jumps forward on resume.
+const DRAIN_DEADLINE: Duration = Duration::from_secs(3);
+
+/// Playback latency asked of PulseAudio. Small enough that pause responds
+/// promptly and `stop` drains quickly; large enough not to underrun through a
+/// pipe.
+const LATENCY_MS: u32 = 250;
 
 /// pacat's name for `format`, when it has one.
 pub fn pacat_sample_format(format: AudioFormat) -> Option<&'static str> {
@@ -41,8 +58,68 @@ pub fn pacat_sample_format(format: AudioFormat) -> Option<&'static str> {
 pub fn pacat_command() -> String {
     let format = pacat_sample_format(FORMAT).expect("FORMAT is one pacat understands");
     format!(
-        "pacat --playback --raw --format={format} --rate={SAMPLE_RATE} --channels={CHANNELS} --client-name=joshify --stream-name=Spotify"
+        "pacat --playback --raw --format={format} --rate={SAMPLE_RATE} --channels={NUM_CHANNELS} --latency-msec={LATENCY_MS} --client-name=joshify --stream-name=Spotify"
     )
+}
+
+/// What the helper's exit looks like right now, if it has exited.
+fn exit_status(child: &mut Child) -> Option<String> {
+    match child.try_wait() {
+        Ok(Some(status)) => Some(status.to_string()),
+        Ok(None) => None,
+        Err(e) => Some(format!("unknown, could not poll: {e}")),
+    }
+}
+
+/// Write all of `data` to a non-blocking pipe, giving up if it makes no
+/// progress for `stall`.
+fn write_all_bounded(
+    stdin: &mut ChildStdin,
+    mut data: &[u8],
+    stall: Duration,
+) -> std::io::Result<()> {
+    let mut last_progress = Instant::now();
+    while !data.is_empty() {
+        match stdin.write(data) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::WriteZero,
+                    "pipe accepted nothing",
+                ))
+            }
+            Ok(n) => {
+                data = &data[n..];
+                last_progress = Instant::now();
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                if last_progress.elapsed() >= stall {
+                    return Err(std::io::Error::new(
+                        ErrorKind::TimedOut,
+                        format!("no audio consumed for {}s", stall.as_secs()),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Put the helper's stdin pipe in non-blocking mode so writes can be bounded.
+fn set_nonblocking(stdin: &ChildStdin) -> std::io::Result<()> {
+    let fd = stdin.as_raw_fd();
+    // SAFETY: fcntl on a file descriptor we own; F_GETFL/F_SETFL take no
+    // pointers and cannot invalidate memory.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// `pacat` if it is on `PATH`.
@@ -59,6 +136,10 @@ pub struct PacatSink {
     program: String,
     args: Vec<String>,
     child: Option<Child>,
+    /// Where write failures are reported so the UI can show them. librespot
+    /// only logs a sink error and pauses; nothing else would tell the user why
+    /// their music stopped.
+    errors: Option<Sender<String>>,
 }
 
 impl PacatSink {
@@ -69,7 +150,14 @@ impl PacatSink {
             program: words.next().unwrap_or_default(),
             args: words.collect(),
             child: None,
+            errors: None,
         }
+    }
+
+    /// Report write failures on `errors` as well as returning them.
+    pub fn with_error_reporting(mut self, errors: Sender<String>) -> Self {
+        self.errors = Some(errors);
+        self
     }
 
     fn write_bytes(&mut self, data: &[u8]) -> SinkResult<()> {
@@ -81,36 +169,22 @@ impl PacatSink {
             .stdin
             .as_mut()
             .ok_or_else(|| SinkError::NotConnected(format!("{} has no stdin", self.program)))?;
-        if let Err(e) = stdin.write_all(data) {
-            // The helper is gone. Do not respawn: a fresh one would accept a
-            // pipe buffer's worth and die the same way, and the user would hear
-            // silence while the position advances. Report it so the player
-            // pauses and the UI can say so.
-            let exit = match child.try_wait() {
-                Ok(Some(status)) => status.to_string(),
-                _ => "still running".to_string(),
-            };
+        if let Err(e) = write_all_bounded(stdin, data, WRITE_STALL) {
+            // The helper is gone or stuck. Do not respawn here: a fresh one
+            // would accept a pipe buffer's worth and die the same way, and the
+            // user would hear silence while the position advances. Return the
+            // error so the player pauses, and report it so the UI can say why.
+            let exit = exit_status(child).unwrap_or_else(|| "still running".to_string());
             let _ = child.kill();
             let _ = child.wait();
             self.child = None;
-            return Err(SinkError::OnWrite(format!(
-                "{} stopped accepting audio ({exit}): {e}",
-                self.program
-            )));
+            let message = format!("{} stopped accepting audio ({exit}): {e}", self.program);
+            if let Some(errors) = &self.errors {
+                let _ = errors.send(message.clone());
+            }
+            return Err(SinkError::OnWrite(message));
         }
         Ok(())
-    }
-
-    /// Whether the helper has exited; `Some(status)` if so.
-    fn exited(&mut self) -> Result<Option<String>, String> {
-        match self.child.as_mut() {
-            None => Ok(Some("never started".to_string())),
-            Some(child) => match child.try_wait() {
-                Ok(Some(status)) => Ok(Some(status.to_string())),
-                Ok(None) => Ok(None),
-                Err(e) => Err(format!("could not poll {}: {e}", self.program)),
-            },
-        }
     }
 }
 
@@ -127,6 +201,14 @@ impl Sink for PacatSink {
                 .map_err(|e| {
                     SinkError::ConnectionRefused(format!("could not start {}: {e}", self.program))
                 })?;
+            if let Some(stdin) = child.stdin.as_ref() {
+                set_nonblocking(stdin).map_err(|e| {
+                    SinkError::ConnectionRefused(format!(
+                        "could not configure {}'s pipe: {e}",
+                        self.program
+                    ))
+                })?;
+            }
             self.child = Some(child);
         }
         Ok(())
@@ -134,9 +216,18 @@ impl Sink for PacatSink {
 
     fn stop(&mut self) -> SinkResult<()> {
         if let Some(mut child) = self.child.take() {
+            // EOF lets pacat play out what it has buffered and exit on its
+            // own; kill only a helper that does not.
             drop(child.stdin.take());
-            let _ = child.kill();
-            let _ = child.wait();
+            let started = Instant::now();
+            while exit_status(&mut child).is_none() {
+                if started.elapsed() >= DRAIN_DEADLINE {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
         Ok(())
     }
@@ -165,21 +256,27 @@ impl Sink for PacatSink {
 pub fn probe(command: &str, deadline: Duration) -> Result<(), String> {
     let mut sink = PacatSink::new(command);
     sink.start().map_err(|e| e.to_string())?;
-    let silence = vec![0u8; (SAMPLE_RATE * CHANNELS * 2 / 5) as usize];
-    let fed = sink.write_bytes(&silence).map_err(|e| e.to_string());
-    let outcome = fed.and_then(|()| {
-        let started = Instant::now();
-        while started.elapsed() < deadline {
-            if let Some(status) = sink.exited()? {
-                return Err(format!(
-                    "{} exited during the probe ({status})",
-                    sink.program
-                ));
+    let silence = vec![0u8; SAMPLE_RATE as usize * NUM_CHANNELS as usize * FORMAT.size() / 5];
+    // A helper that dies before or during the write fails here; one that dies
+    // shortly after fails below. Both are "exited" to the caller.
+    let outcome = match sink.write_bytes(&silence) {
+        Err(e) => Err(format!("{} exited during the probe: {e}", sink.program)),
+        Ok(()) => {
+            let started = Instant::now();
+            let mut outcome = Ok(());
+            while started.elapsed() < deadline {
+                if let Some(status) = sink.child.as_mut().and_then(exit_status) {
+                    outcome = Err(format!(
+                        "{} exited during the probe ({status})",
+                        sink.program
+                    ));
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
             }
-            std::thread::sleep(Duration::from_millis(50));
+            outcome
         }
-        Ok(())
-    });
+    };
     let _ = sink.stop();
     outcome
 }
@@ -200,8 +297,63 @@ mod tests {
     /// the case librespot's own subprocess sink reports as success.
     #[test]
     fn a_helper_that_exits_at_once_fails_the_probe() {
+        // Whether the exit is seen by the write or by the poll afterwards is a
+        // scheduling race; both must read as "exited".
         let err = probe("false", DEADLINE).expect_err("an exited helper is not an output");
-        assert!(err.contains("exited"), "{err}");
+        assert!(err.contains("exited during the probe"), "{err}");
+    }
+
+    /// A helper that accepts the connection but never reads (pacat whose
+    /// stream never becomes ready) must not wedge the player thread forever.
+    #[test]
+    fn a_helper_that_stops_reading_is_a_bounded_error() {
+        let mut sink = PacatSink::new("sleep 30");
+        sink.start().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        sink.errors = Some(tx);
+        let started = Instant::now();
+        let big = vec![0u8; 4 << 20]; // far more than any pipe buffer
+        let err = sink.write_bytes(&big).expect_err("nothing reads the pipe");
+        assert!(
+            started.elapsed() < WRITE_STALL + Duration::from_secs(2),
+            "write must give up"
+        );
+        assert!(matches!(err, SinkError::OnWrite(_)), "{err}");
+        assert!(sink.child.is_none(), "the stuck helper must be gone");
+        let reported = rx
+            .try_recv()
+            .expect("the failure must be reported for the UI");
+        assert!(reported.contains("no audio consumed"), "{reported}");
+    }
+
+    /// `stop` lets the helper drain: with `cat` (exits on EOF) it returns
+    /// promptly without needing to kill; with a helper ignoring EOF it kills
+    /// after the deadline rather than hanging.
+    #[test]
+    fn stop_waits_for_the_helper_to_drain_then_kills_it() {
+        let mut sink = PacatSink::new("cat");
+        sink.start().unwrap();
+        sink.write_bytes(&[0; 64]).unwrap();
+        let started = Instant::now();
+        sink.stop().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "cat exits on EOF at once"
+        );
+
+        let mut stubborn = PacatSink::new("sleep 30");
+        stubborn.start().unwrap();
+        let started = Instant::now();
+        stubborn.stop().unwrap();
+        let took = started.elapsed();
+        assert!(
+            took >= DRAIN_DEADLINE,
+            "must give the helper the drain window: {took:?}"
+        );
+        assert!(
+            took < DRAIN_DEADLINE + Duration::from_secs(2),
+            "then kill it: {took:?}"
+        );
     }
 
     #[test]
@@ -241,6 +393,7 @@ mod tests {
         assert!(cmd.contains("--format=s16le"), "{cmd}");
         assert!(cmd.contains("--rate=44100"), "{cmd}");
         assert!(cmd.contains("--channels=2"), "{cmd}");
+        assert!(cmd.contains("--latency-msec="), "{cmd}");
         assert_eq!(pacat_sample_format(AudioFormat::F64), None);
     }
 }

@@ -192,6 +192,10 @@ pub struct LocalPlayer {
     player: Arc<Player>,
     mixer: Arc<dyn Mixer>,
     event_rx: Option<UnboundedReceiver<PlayerEvent>>,
+    /// Failures the audio sink reported (only the pacat sink does); the UI
+    /// shows them, since librespot itself only logs and pauses. Behind a mutex
+    /// because a `Receiver` is not `Sync` and this struct lives in an `Arc`.
+    sink_errors: std::sync::Mutex<Option<std::sync::mpsc::Receiver<String>>>,
     pub state: PlaybackState,
 }
 
@@ -199,25 +203,22 @@ impl LocalPlayer {
     /// Create a new player that plays through `output` - the one the probe
     /// found working, so what the player opens is what was tested.
     pub fn new(session: &librespot::core::session::Session, output: &AudioOutput) -> Result<Self> {
-        let (sink_builder, audio_format): (Box<dyn FnOnce() -> Box<dyn Sink> + Send>, _) =
-            match output {
-                AudioOutput::Default => {
-                    let backend = audio_backend::find(None).context(
-                        "No audio backend available. Install ALSA (Linux) or ensure audio drivers are present.",
-                    )?;
-                    let format = AudioFormat::default();
-                    (Box::new(move || backend(None, format)), format)
-                }
-                AudioOutput::Pacat(command) => {
-                    let command = command.clone();
-                    (
-                        Box::new(move || {
-                            Box::new(pacat::PacatSink::new(&command)) as Box<dyn Sink>
-                        }),
-                        pacat::FORMAT,
-                    )
-                }
-            };
+        let (sink_errors_tx, sink_errors_rx) = std::sync::mpsc::channel();
+        let sink_builder: Box<dyn FnOnce() -> Box<dyn Sink> + Send> = match output {
+            AudioOutput::Default => {
+                let backend = audio_backend::find(None).context(
+                    "No audio backend available. Install ALSA (Linux) or ensure audio drivers are present.",
+                )?;
+                Box::new(move || backend(None, AudioFormat::default()))
+            }
+            AudioOutput::Pacat(command) => {
+                let command = command.clone();
+                Box::new(move || {
+                    Box::new(pacat::PacatSink::new(&command).with_error_reporting(sink_errors_tx))
+                        as Box<dyn Sink>
+                })
+            }
+        };
         let mixer_builder = mixer::find(None).context("No mixer available")?;
         let mixer_config = MixerConfig::default();
         let mixer = mixer_builder(mixer_config).context("Failed to create mixer")?;
@@ -229,8 +230,6 @@ impl LocalPlayer {
             position_update_interval: Some(std::time::Duration::from_secs(1)),
             ..PlayerConfig::default()
         };
-        let _ = audio_format; // the sink builder already carries it
-
         let player = Player::new(
             player_config,
             session.clone(),
@@ -244,6 +243,7 @@ impl LocalPlayer {
             player,
             mixer,
             event_rx: Some(event_rx),
+            sink_errors: std::sync::Mutex::new(Some(sink_errors_rx)),
             state: PlaybackState::default(),
         })
     }
@@ -296,6 +296,14 @@ impl LocalPlayer {
     }
 
     /// Get the event channel for TUI updates
+    /// Take the receiver for sink failures; `None` if already taken.
+    pub fn take_sink_error_channel(&self) -> Option<std::sync::mpsc::Receiver<String>> {
+        self.sink_errors
+            .lock()
+            .map(|mut slot| slot.take())
+            .unwrap_or(None)
+    }
+
     pub fn take_event_channel(&mut self) -> Option<UnboundedReceiver<PlayerEvent>> {
         self.event_rx.take()
     }

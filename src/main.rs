@@ -627,6 +627,8 @@ struct App {
     local_player: Option<Arc<LocalPlayer>>,
     player_event_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<librespot::playback::player::PlayerEvent>>,
+    /// Failures reported by the local audio sink (pacat), shown in the status bar.
+    sink_error_rx: Option<std::sync::mpsc::Receiver<String>>,
     loading_more_liked_songs: bool,
     /// Layout cache for mouse hit testing
     layout_cache: joshify::ui::LayoutCache,
@@ -672,6 +674,7 @@ impl App {
             local_player: None,
             local_history: Vec::new(),
             player_event_rx: None,
+            sink_error_rx: None,
             loading_more_liked_songs: false,
             layout_cache: joshify::ui::LayoutCache::new(),
             mouse_state: joshify::ui::MouseState::new(),
@@ -1305,6 +1308,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         let event_rx = player
             .take_event_channel()
             .ok_or_else(|| "player event channel already taken".to_string())?;
+        app.sink_error_rx = player.take_sink_error_channel();
         let player = Arc::new(player);
 
         // Spotify Connect makes joshify appear as a device in other clients.
@@ -1653,6 +1657,17 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         }
 
         // Process local player events in batches (max 32 per loop iteration)
+        // The audio sink itself can fail (pacat lost its PulseAudio server).
+        // librespot only logs that and pauses; without this the music would
+        // stop with no explanation on screen.
+        if let Some(ref sink_errors) = app.sink_error_rx {
+            while let Ok(message) = sink_errors.try_recv() {
+                tracing::warn!("Audio sink error: {}", message);
+                app.player_state.is_playing = false;
+                app.status_message = Some(format!("Local audio stopped: {message}"));
+            }
+        }
+
         if let Some(ref mut event_rx) = app.player_event_rx {
             let batch_limit = 32;
             app.event_batch.clear();

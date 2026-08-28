@@ -125,11 +125,17 @@ ensure_wsl_audio() {
         warn "   WSL: install pulseaudio-utils (for pacat) to get local audio."
         return 0
     fi
+    if [ "${SUDO_MODE:-unavailable}" = "unavailable" ]; then
+        warn "   WSL: run 'sudo apt-get install -y pulseaudio-utils' to get local audio (pacat)."
+        return 0
+    fi
     info "   WSL detected: installing pulseaudio-utils so joshify can play through WSLg's PulseAudio..."
+    # A fresh WSL image has no package lists at all; install fails without this.
+    run_privileged apt-get update -qq > /dev/null 2>&1 || true
     if run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pulseaudio-utils; then
         info "   pacat installed."
     else
-        warn "   Could not install pulseaudio-utils; run: sudo apt-get install -y pulseaudio-utils"
+        warn "   Could not install pulseaudio-utils; run: sudo apt-get update && sudo apt-get install -y pulseaudio-utils"
     fi
 }
 
