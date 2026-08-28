@@ -327,6 +327,8 @@ command() { if [ "${2:-}" = "pacat" ]; then return 1; fi; builtin command "$@"; 
 # The update step is deliberately quiet, so record privileged calls in a file.
 PRIV_LOG="$WORK/privileged.log"; : > "$PRIV_LOG"
 run_privileged() { echo "run_privileged:$*" >> "$PRIV_LOG"; }
+# SUDO_MODE is read by install.sh's run_privileged/ensure_wsl_audio.
+# shellcheck disable=SC2034
 SUDO_MODE=passwordless
 ensure_wsl_audio > /dev/null 2>&1
 if grep -q '^run_privileged:apt-get update' "$PRIV_LOG" \
@@ -336,6 +338,7 @@ if grep -q '^run_privileged:apt-get update' "$PRIV_LOG" \
 else
     fail "on WSL without pacat, package lists are refreshed then pulseaudio-utils is installed (got: $(cat "$PRIV_LOG"))"
 fi
+# shellcheck disable=SC2034
 SUDO_MODE=unavailable
 : > "$PRIV_LOG"
 out="$(ensure_wsl_audio 2>&1)"
