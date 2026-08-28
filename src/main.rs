@@ -1007,6 +1007,10 @@ async fn main() -> Result<()> {
         .with_writer(log_file)
         .with_max_level(tracing::Level::DEBUG)
         .init();
+    // librespot logs through the `log` facade, not `tracing`; without this
+    // bridge its internal errors (e.g. why a track failed to load) never
+    // reach joshify.log, and only the generic "unavailable" status survives.
+    let _ = tracing_log::LogTracer::init();
 
     // Setup Ctrl-C handler for clean exit
     let result = tokio::select! {
