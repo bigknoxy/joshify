@@ -1,3 +1,19 @@
+## [0.8.7](https://github.com/bigknoxy/joshify/compare/v0.8.6...v0.8.7) (2026-08-28)
+
+### Bug Fixes
+
+- **No more black screen after sign-in**: 0.8.6 brought local playback up *between* taking over the terminal and drawing the first frame — connecting the librespot session, fetching a client token and registering as a Spotify Connect device, all network round trips with no deadline of their own. On a machine where those connections stall (a firewall dropping packets to Spotify's access points, a proxy that is not honoured by librespot), the result was a blank alternate screen with a hidden cursor that took no input, for as long as the connection attempts cared to run. 0.8.5 did not show this on the same machine only because its audio probe failed there and skipped the whole path; 0.8.6's PulseAudio fallback made the probe succeed, so the blocking path ran. Local playback now comes up on a background task: the UI draws at once, stays interactive, reports "starting local playback (…)" in the status bar, and switches to "Local playback active" when the player is ready — or to "Remote playback only - press 'd' to pick a device - local player failed: …" with the reason if it is not. The bring-up is bounded to 30 s; a stall past that is reported as "did not come up within 30s - is Spotify reachable from this network?" rather than waited out.
+- **Enter while the player is still starting says so**: "Local playback is still starting - try again in a moment", instead of "Local player not initialized" or being told to pick a device.
+- **A device chosen with `d` during the bring-up stands**: readiness installs the local player for later but does not flip the mode back under the user.
+- **Something is on the screen before the first network call**: a "connecting to Spotify..." frame is drawn right after the terminal is taken, so a slow token refresh shows as a message rather than as a hung program.
+
+### Technical Details
+
+- `bring_up_local_playback` (session → player → Connect) runs under `tokio::spawn`, wrapped in `within_deadline`, and hands a `LocalPlayback` bundle back over a oneshot channel; `apply_local_startup` installs it (or calls `remote_only`) from the main loop
+- Source-level falsifiers assert that no `LocalSession::`/`ConnectManager`/`LocalPlayer::new` appears between `ratatui::init()` and the main loop, that the bring-up call sits inside `tokio::spawn` under a deadline, and that `terminal.draw` precedes `SpotifyClient::new`
+- Behavioural tests cover a stalled step hitting the deadline, a failed bring-up landing in remote mode with the reason, a successful one (built against an offline librespot session and the pacat sink) activating local playback and wiring the sink-error channel, Enter during the pending window, and a user who went remote staying remote
+- Not reproduced on the development machine (no Spotify reachability issue here); diagnosed from the report (OAuth succeeds in the browser, then a black terminal) against the 0.8.6 startup order
+
 ## [0.8.6](https://github.com/bigknoxy/joshify/compare/v0.8.5...v0.8.6) (2026-08-27)
 
 ### Bug Fixes
