@@ -13,7 +13,10 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-README="$REPO_ROOT/README.md"
+# Both overridable so the tests can feed a README of their own and a stub in
+# place of curl (the stub sees curl's arguments; the URL is the last one).
+README="${CHECK_BADGES_README:-$REPO_ROOT/README.md}"
+FETCH="${CHECK_BADGES_FETCH:-curl}"
 EXPECT_RELEASE=""
 FAILURES=0
 
@@ -27,10 +30,46 @@ done
 ok()   { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
 
+fetch() { "$FETCH" -sS --max-time 20 --retry 3 --retry-delay 2 "$@" 2>/dev/null; }
+
 # shields.io renders the badge text into the SVG <title>, e.g. "CI: passing".
 badge_title() {
-    curl -sS --max-time 20 --retry 3 --retry-delay 2 "$1" 2>/dev/null \
-        | grep -oE '<title>[^<]*</title>' | head -1 | sed -e 's/<[^>]*>//g'
+    fetch "$1" | grep -oE '<title>[^<]*</title>' | head -1 | sed -e 's/<[^>]*>//g'
+}
+
+# What GitHub says the workflow behind a status badge last did on its branch.
+#
+# shields caches badges and, while a run is in progress, can render "failing"
+# for a workflow whose previous run passed and whose current run is seconds
+# from passing. Two workflows triggered by the same push race each other that
+# way, and twice now a release was graded red by it. So a red badge is not
+# taken at face value: the latest *completed* run decides.
+#
+# Prints one of: success | none (no completed run) | unknown (could not tell)
+# | any other GitHub conclusion (failure, cancelled, ...).
+workflow_conclusion() { # badge_url
+    local url="$1" path owner rest repo file branch api json
+    path=$(printf '%s' "$url" | sed -n 's|.*/actions/workflow/status/\([^?]*\).*|\1|p')
+    owner=${path%%/*}; rest=${path#*/}; repo=${rest%%/*}; file=${rest#*/}
+    branch=$(printf '%s' "$url" | sed -n 's/.*[?&]branch=\([^&]*\).*/\1/p')
+    if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$file" ] || ! command -v jq >/dev/null 2>&1; then
+        echo unknown
+        return
+    fi
+    api="https://api.github.com/repos/$owner/$repo/actions/workflows/$file/runs?branch=${branch:-main}&per_page=10"
+    if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+        json=$(fetch -H "Authorization: Bearer ${GH_TOKEN:-$GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "$api")
+    else
+        json=$(fetch -H "Accept: application/vnd.github+json" "$api")
+    fi
+    if [ -z "$json" ]; then
+        echo unknown
+        return
+    fi
+    printf '%s' "$json" | jq -r '
+        [.workflow_runs[]? | select(.status == "completed")][0]
+        | if . == null then "none" else (.conclusion // "unknown") end' 2>/dev/null \
+        || echo unknown
 }
 
 echo "Badges"
@@ -77,7 +116,19 @@ while IFS= read -r url; do
             fail "$title — badge does not resolve ($url)"
             ;;
         *failing*|*error*)
-            fail "$title — badge reports a broken workflow"
+            case "$url" in
+                */actions/workflow/status/*)
+                    conclusion=$(workflow_conclusion "$url")
+                    case "$conclusion" in
+                        success) ok "$title — stale badge: GitHub says the latest completed run passed" ;;
+                        none)    ok "$title — no completed run yet for that workflow" ;;
+                        *)       fail "$title — badge reports a broken workflow (GitHub: $conclusion)" ;;
+                    esac
+                    ;;
+                *)
+                    fail "$title — badge reports a broken workflow"
+                    ;;
+            esac
             ;;
         *)
             ok "$title"

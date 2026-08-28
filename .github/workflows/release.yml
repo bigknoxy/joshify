@@ -224,4 +224,6 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Check badges and README media
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/check-badges.sh --expect-release "${GITHUB_REF#refs/tags/}"

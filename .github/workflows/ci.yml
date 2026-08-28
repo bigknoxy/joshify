@@ -92,9 +92,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Shellcheck
-        run: shellcheck --severity=warning install.sh uninstall.sh tests/install_sh_test.sh scripts/check-badges.sh
+        run: shellcheck --severity=warning install.sh uninstall.sh tests/install_sh_test.sh tests/check_badges_test.sh scripts/check-badges.sh
       - name: Run install.sh helper tests
         run: bash tests/install_sh_test.sh
+      - name: Run check-badges.sh tests
+        run: bash tests/check_badges_test.sh
 
   # Every README badge resolves and reports a healthy workflow, and every
   # image the README references actually exists in the repo.
@@ -104,6 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Check badges and README media
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: scripts/check-badges.sh
 
   # Security audit — advisory only, never blocks CI.
