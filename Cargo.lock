@@ -2433,6 +2433,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-appender",
+ "tracing-log",
  "tracing-subscriber",
  "unicode-truncate 2.0.1",
  "unicode-width 0.2.0",
