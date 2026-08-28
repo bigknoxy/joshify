@@ -64,15 +64,28 @@ fn build_client() -> Result<librespot_oauth::OAuthClient> {
         .map_err(|e| anyhow::anyhow!("Failed to build local playback OAuth client: {e}"))
 }
 
+/// Cache the (possibly rotated) refresh token from a token response,
+/// logging rather than failing the caller if the write itself fails - the
+/// access token just obtained is still good for this run either way.
+fn cache_refresh_token(path: &Path, token: &librespot_oauth::OAuthToken) {
+    if token.refresh_token.is_empty() {
+        return;
+    }
+    if let Err(e) = save_refresh_token_at(path, &token.refresh_token) {
+        tracing::warn!(
+            "Failed to cache local playback refresh token ({e}); next run will need to \
+             re-authorize"
+        );
+    }
+}
+
 /// Try the cached refresh token, if any. On success, re-caches the
 /// (possibly rotated) refresh token and returns the fresh access token.
 async fn try_cached_refresh(client: &librespot_oauth::OAuthClient, path: &Path) -> Option<String> {
     let refresh_token = load_cached_refresh_token_at(path)?;
     match client.refresh_token_async(&refresh_token).await {
         Ok(token) => {
-            if !token.refresh_token.is_empty() {
-                let _ = save_refresh_token_at(path, &token.refresh_token);
-            }
+            cache_refresh_token(path, &token);
             Some(token.access_token)
         }
         Err(e) => {
@@ -101,9 +114,7 @@ pub async fn get_local_playback_token() -> Result<String> {
         .get_access_token_async()
         .await
         .map_err(|e| anyhow::anyhow!("Local playback authorization failed: {e}"))?;
-    if !token.refresh_token.is_empty() {
-        save_refresh_token_at(&path, &token.refresh_token)?;
-    }
+    cache_refresh_token(&path, &token);
     Ok(token.access_token)
 }
 

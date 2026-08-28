@@ -1295,10 +1295,30 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
 
     let mut app = App::new();
 
+    // Probed before the TUI takes the screen (ALSA writes diagnostics
+    // straight to stderr from C, which would otherwise land in the middle
+    // of a frame - issue #49) and before local-playback authorization: a
+    // session with no usable audio device never brings up local playback
+    // at all (see `audio_output` below), so there is no reason to make a
+    // headless or remote-only run sit through — and on first use, approve
+    // in a browser — an authorization for a capability it will never use.
+    let audio_probe = joshify::player::probe_audio_output();
+    let audio_output = match &audio_probe {
+        joshify::player::AudioProbe::Available(output) => {
+            tracing::info!("Audio output: {:?}", output);
+            Some(output.clone())
+        }
+        joshify::player::AudioProbe::Unavailable(reason) => {
+            tracing::warn!("Audio output unavailable: {}", reason);
+            None
+        }
+    };
+
     // Token for local playback (librespot) — separate from the Web API
     // token below; see `librespot_auth` for why. Skipped in mock mode
-    // (no Spotify at all) and, for its interactive/browser fallback, in
-    // non-interactive (`has_tokens`) mode.
+    // (no Spotify at all), when there is no audio device to play through,
+    // and, for its interactive/browser fallback, in non-interactive
+    // (`has_tokens`) mode.
     let mut local_playback_token: Option<String> = None;
 
     // Mock mode (JOSHIFY_MOCK=1): demo data, no Spotify auth or network
@@ -1317,21 +1337,15 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
         // Cache-only: a first-run browser prompt would break unattended use,
         // but reusing an already-cached token (e.g. from a prior interactive
         // run) does not, and local playback needs this token either way.
-        local_playback_token = joshify::librespot_auth::get_cached_local_playback_token().await;
+        if audio_output.is_some() {
+            local_playback_token = joshify::librespot_auth::get_cached_local_playback_token().await;
+        }
     } else {
         // Ensure we have credentials configured (runs interactive setup if needed)
         let config = joshify::setup::ensure_configured()?;
 
-        // The Web API flow and the local-playback flow authenticate against
-        // different client IDs for different purposes and share no data, so
-        // run them concurrently rather than paying both round trips serially.
-        let (oauth_result, local_playback_result) = tokio::join!(
-            joshify::setup::run_oauth_flow(&config),
-            joshify::librespot_auth::get_local_playback_token()
-        );
-
         // Run OAuth browser flow to get access tokens
-        match oauth_result {
+        match joshify::setup::run_oauth_flow(&config).await {
             Ok(true) => {
                 // Already authenticated with valid credentials
                 app.is_authenticated = true;
@@ -1348,11 +1362,26 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
             }
         }
 
-        match local_playback_result {
-            Ok(token) => local_playback_token = Some(token),
-            Err(e) => {
-                tracing::warn!("Local playback authorization unavailable: {}", e);
-                // Continue anyway - remote (Spotify Connect) mode still works.
+        // No audio device: skip entirely rather than make the user sit
+        // through (and on first use, approve in a browser) an authorization
+        // for a capability that will never be used - this session can only
+        // ever end up in PlaybackMode::Remote.
+        //
+        // Sequential, not concurrent with the flow above: librespot_oauth's
+        // interactive fallback blocks the executing thread on a synchronous
+        // `TcpListener::accept()` while waiting for the browser redirect (it
+        // is not `spawn_blocking`'d), so polling it alongside another future
+        // (e.g. via `tokio::join!`) can starve that other future's progress
+        // rather than overlap with it. Both flows also default to the same
+        // localhost port range, which only stays collision-free because
+        // they bind and release one at a time here.
+        if audio_output.is_some() {
+            match joshify::librespot_auth::get_local_playback_token().await {
+                Ok(token) => local_playback_token = Some(token),
+                Err(e) => {
+                    tracing::warn!("Local playback authorization unavailable: {}", e);
+                    // Continue anyway - remote (Spotify Connect) mode still works.
+                }
             }
         }
     }
@@ -1365,23 +1394,6 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
     if !inline_images_supported {
         tracing::info!("Terminal has no inline image support; using ASCII album art");
     }
-
-    // Probe the audio device before the TUI takes the screen. audio_backend::find
-    // succeeds even with no working audio, so without this the app claims local
-    // playback is active and then plays silence (issue #49). ALSA also writes
-    // diagnostics straight to stderr from C, which would otherwise land in the
-    // middle of a frame.
-    let audio_probe = joshify::player::probe_audio_output();
-    let audio_output = match &audio_probe {
-        joshify::player::AudioProbe::Available(output) => {
-            tracing::info!("Audio output: {:?}", output);
-            Some(output.clone())
-        }
-        joshify::player::AudioProbe::Unavailable(reason) => {
-            tracing::warn!("Audio output unavailable: {}", reason);
-            None
-        }
-    };
 
     // Initialize the terminal only now that any interactive setup is done.
     // setup::ensure_configured() and run_oauth_flow() above print with
@@ -5430,6 +5442,45 @@ mod local_startup_tests {
             "local playback authorization must happen before ratatui::init(), \
              like the rest of interactive setup"
         );
+    }
+
+    /// A session with no audio device only ever ends up in remote mode, so
+    /// it must never be made to sit through (or, on first use, approve in a
+    /// browser) an authorization it will never use.
+    #[test]
+    fn local_playback_authorization_is_skipped_without_an_audio_device() {
+        let body = run_with_args_body();
+        let audio_probe = body
+            .find("let audio_probe = joshify::player::probe_audio_output();")
+            .expect("run_with_args should probe for an audio device");
+        let auth_call = body
+            .find("librespot_auth::get_local_playback_token()")
+            .expect("run_with_args should request a local playback token");
+        let cached_auth_call = body
+            .find("librespot_auth::get_cached_local_playback_token()")
+            .expect("run_with_args should request a cached local playback token");
+
+        assert!(
+            audio_probe < auth_call,
+            "the audio device must be probed before requesting a local playback token, \
+             so the request can be skipped when there is no device"
+        );
+
+        for call in [auth_call, cached_auth_call] {
+            let guard_start = body[..call]
+                .rfind("if audio_output.is_some()")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the local playback token request at byte {call} must be guarded by \
+                     `if audio_output.is_some()`"
+                    )
+                });
+            assert!(
+                !body[guard_start..call].contains('}'),
+                "the `if audio_output.is_some()` guard nearest the call at byte {call} must \
+                 still be open when the call happens, not a stale one from earlier in the file"
+            );
+        }
     }
 
     #[tokio::test]
