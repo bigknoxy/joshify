@@ -1,3 +1,16 @@
+## [0.8.10](https://github.com/bigknoxy/joshify/compare/v0.8.9...v0.8.10) (2026-08-28)
+
+### Bug Fixes
+
+- **Local playback now authorizes against the login5-approved client ID** ([#77](https://github.com/bigknoxy/joshify/pull/77)): local playback was using the Web API access token (minted under the user's own Spotify Developer Dashboard app from `joshify --setup`) for `Credentials::with_access_token`. That token works fine for the Web API, but Spotify's `login5` service — which librespot calls to fetch a track's playback license before it can decrypt audio — only recognizes a small set of Spotify-approved client IDs, and rejects a self-registered app's token with `INVALID_CREDENTIALS`. Diagnosed on a real report: after 0.8.9's logging fix, `joshify.log` showed the session connecting fine (local playback "active") but every track failing with `Unable to load audio item: FaultyRequest(INVALID_CREDENTIALS)` — a pre-existing bug unrelated to the corporate-network issue 0.8.8/0.8.9 addressed. `src/librespot_auth.rs` adds a second, separate OAuth flow using `librespot-oauth` (already an unused dependency) against the community client ID librespot's own examples use, which `login5` does grant the streaming scope to. Only the refresh token is cached, so only the first run (or one after it's revoked) needs a browser; it runs before `ratatui::init()`, sequentially after the existing Web API OAuth flow, and is skipped entirely when there's no audio device or (for its interactive/browser fallback) in non-interactive mode.
+
+### Technical Details
+
+- 4 source-level falsifiers pin: the local playback token comes from `librespot_auth` and never the Web API client, authorization happens before `ratatui::init()` rather than inside the deadline-bounded background bring-up, non-interactive mode uses a cache-only lookup that never opens a browser, and authorization is skipped without an audio device
+- A cache-write failure after a successful interactive authorization no longer discards the freshly-obtained access token; both cache-write failure paths now log instead of silently swallowing
+- A `tokio::join!` concurrency attempt during review was reverted: `librespot_oauth`'s interactive fallback blocks the executing thread on a synchronous `TcpListener::accept()` rather than yielding, so polling it alongside another future starves that future instead of overlapping with it — sequential is both simpler and correct here
+- Not verified end-to-end on the development machine (no Spotify account here); confirmed via `cargo test --lib --bins` (509 tests), `cargo fmt`, `cargo clippy --all-targets`, and the reporting user's own environment
+
 ## [0.8.9](https://github.com/bigknoxy/joshify/compare/v0.8.8...v0.8.9) (2026-08-28)
 
 ### Bug Fixes
