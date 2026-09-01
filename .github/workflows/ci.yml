@@ -135,18 +135,20 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - name: Install audio system deps (for crates like alsa-sys / libdbus)
-        # Some audio/desktop crates need system libs (libasound2-dev,
-        # libdbus-1-dev, etc.) to build. Install the common ones so
-        # `cargo clippy --all-targets` and `cargo test --all-features`
-        # don't fail on missing pkg-config entries.
+      - name: Install audio/image system deps (alsa, dbus, chafa, ssl)
+        # Some audio/desktop/image crates need system libs:
+        #   - alsa-sys (alsa audio)         -> libasound2-dev
+        #   - libdbus (D-Bus bindings)      -> libdbus-1-dev
+        #   - ratatui-image (chafa backend) -> libchafa-dev
+        # Without these `cargo clippy --all-targets` and
+        # `cargo test --all-features` fail on missing pkg-config entries.
         if: steps.rust-check.outputs.has_rust == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libdbus-1-dev pkg-config libssl-dev 2>/dev/null || \
+            libasound2-dev libdbus-1-dev libchafa-dev pkg-config libssl-dev 2>/dev/null || \
             apt-get install -y --no-install-recommends \
-            libasound2-dev libdbus-1-dev pkg-config libssl-dev || true
+            libasound2-dev libdbus-1-dev libchafa-dev pkg-config libssl-dev || true
       - name: cargo fmt
         if: steps.rust-check.outputs.has_rust == 'true'
         run: cargo fmt --all -- --check
