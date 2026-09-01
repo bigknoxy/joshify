@@ -154,10 +154,15 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         if: steps.rust-check.outputs.has_rust == 'true'
+        # --all-targets includes tests/examples; we deliberately skip
+        # --all-features because optional image backends (e.g. ratatui-image's
+        # chafa) require system libs not always present in CI.
         run: cargo clippy --all-targets -- -D warnings
       - name: cargo test
         if: steps.rust-check.outputs.has_rust == 'true'
-        run: cargo test --all-features
+        # Skip --all-features to avoid pulling optional native deps
+        # (libchafa-dev, etc.) the runner may not have.
+        run: cargo test
 
   test-node:
     name: Node test
