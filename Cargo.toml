@@ -28,7 +28,7 @@ hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 bytes = "1"
-lru = "0.18"
+lru = "0.18.2"
 keyring = "2.0"
 base64 = "0.21"
 futures = "0.3"
@@ -43,7 +43,7 @@ dirs-next = "2.0"
 nucleo = "0.5"
 async-trait = "0.1"
 thiserror = "2"
-rand = "0.8"
+rand = ">=0.8.6, <0.9"
 
 # Audio visualization dependencies
 realfft = "3.4"
