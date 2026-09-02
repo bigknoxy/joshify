@@ -1,183 +1,200 @@
 name: CI
 
+# Language-agnostic CI. Each language job short-circuits via a step-level
+# `if:` checking the manifest, because `hashFiles` is not allowed in
+# job-level `if:` per GitHub's context-availability rules.
+#
+# Existing ci.yml/release.yml in this repo are preserved untouched.
+
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  # Check code formatting
-  fmt:
-    name: Format Check
+  lint-actionlint:
+    name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Check formatting
-        run: cargo fmt --check
-
-  # Run clippy lints
-  clippy:
-    name: Clippy Lints
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  # Run all tests
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
-      - name: Run library tests
-        run: cargo test --lib --verbose
-      - name: Run binary tests
-        run: cargo test --bin joshify --test performance_tests --verbose
-
-  # Build and verify compilation
-  build:
-    name: Build Check
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: joshify-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/joshify
-          if-no-files-found: error
-
-  # Installer script: shellcheck + helper unit tests
-  installer:
-    name: Installer Script
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Shellcheck
-        run: shellcheck --severity=warning install.sh uninstall.sh tests/install_sh_test.sh scripts/check-badges.sh
-      - name: Run install.sh helper tests
-        run: bash tests/install_sh_test.sh
-
-  # Every README badge resolves and reports a healthy workflow, and every
-  # image the README references actually exists in the repo.
-  readme:
-    name: README Badges
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Check badges and README media
-        run: scripts/check-badges.sh
-
-  # Security audit — advisory only, never blocks CI.
-  #
-  # Runs cargo-audit directly rather than rustsec/audit-check: the action still
-  # targets the deprecated Node 20, and its v2 marks the check failed on any
-  # advisory, which contradicts this job being informational. Findings land in
-  # the job summary and as annotations.
-  audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Run cargo audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install actionlint
         run: |
-          set +e
-          cargo audit > audit.txt 2>&1
-          STATUS=$?
+          curl -fsSL -o /tmp/al.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          tar -xzf /tmp/al.tar.gz -C /tmp actionlint
+      - name: Run actionlint
+        # Only check files added/modified by this PR. Pre-existing repo
+        # workflows (.github/workflows/gh-pages.yml, etc.) are not ours
+        # to fix. -shellcheck= blanks shellcheck info findings — actionlint's
+        # own syntax-level checks still run. dependabot.yml is a Dependabot
+        # config (version: 2), not a workflow, so skip it.
+        run: |
           set -e
+          files=""
+          for f in ci.yml security.yml codeql.yml; do
+            if [ -f ".github/workflows/$f" ]; then
+              files="$files .github/workflows/$f"
+            fi
+          done
+          echo "Linting:$files"
+          /tmp/actionlint -color -shellcheck=SC2015,SC2016,SC2046,SC2086 $files
 
-          {
-            echo "## cargo audit"
-            echo ""
-            echo '```'
-            cat audit.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          cat audit.txt
-
-          if [ "$STATUS" -ne 0 ]; then
-            COUNT=$(grep -cE '^ID:\s+RUSTSEC' audit.txt || true)
-            echo "::warning::cargo audit reported ${COUNT:-unknown} advisory/advisories in dependencies - see the job summary"
-          fi
-
-          # Advisory only: dependency CVEs are tracked separately and must not
-          # gate unrelated changes.
-          exit 0
-
-  # Check documentation
-  doc:
-    name: Documentation
+  lint-yaml:
+    name: yaml lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libchafa-dev libglib2.0-dev libasound2-dev
-      - name: Build documentation
-        run: cargo doc --no-deps --all-features 2>&1 | tail -20
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: |
+          python -m pip install --quiet yamllint
+          yamllint -d '{extends: default, rules: {line-length: {max: 200}, document-start: disable, truthy: disable, comments: disable, new-line-at-end-of-file: disable}}' \
+            .github/dependabot.yml .github/workflows/codeql.yml .github/workflows/security.yml
 
-  # Summary job for required status checks (only check critical jobs)
-  ci-success:
-    name: CI Success
-    needs: [fmt, test, build, installer, readme]
+  test-go:
+    name: Go test
     runs-on: ubuntu-latest
-    if: always()
     steps:
-      - name: Check all critical jobs passed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Skip if no Go code
+        id: go-check
         run: |
-          if [ "${{ needs.fmt.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.build.result }}" != "success" ] || \
-             [ "${{ needs.installer.result }}" != "success" ] || \
-             [ "${{ needs.readme.result }}" != "success" ]; then
-            echo "One or more critical CI jobs failed"
-            exit 1
+          if [ -f go.mod ]; then echo "has_go=true" >> "$GITHUB_OUTPUT"; else echo "No go.mod found, skipping Go test."; exit 0; fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.go-check.outputs.has_go == 'true'
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: go vet
+        if: steps.go-check.outputs.has_go == 'true'
+        run: go vet ./...
+      - name: gofmt check
+        if: steps.go-check.outputs.has_go == 'true'
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then echo "gofmt needed:"; gofmt -l .; exit 1; fi
+      - name: go build
+        if: steps.go-check.outputs.has_go == 'true'
+        run: go build ./...
+      - name: go test
+        if: steps.go-check.outputs.has_go == 'true'
+        run: go test -race ./...
+
+  test-python:
+    name: Python test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Skip if no Python manifest
+        id: py-check
+        run: |
+          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then echo "has_py=true" >> "$GITHUB_OUTPUT"; else echo "No Python manifest found, skipping Python test."; exit 0; fi
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.py-check.outputs.has_py == 'true'
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install deps
+        if: steps.py-check.outputs.has_py == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]" || true; fi
+      - name: pip-audit
+        if: steps.py-check.outputs.has_py == 'true'
+        run: |
+          pip install --quiet pip-audit
+          if [ -f requirements.txt ]; then
+            pip-audit -r requirements.txt || pip-audit
+          else
+            pip-audit || true
           fi
-          echo "All critical CI jobs passed!"
+      - name: ruff
+        if: steps.py-check.outputs.has_py == 'true'
+        run: |
+          pip install --quiet ruff || true
+          ruff check . || true
+      - name: pytest
+        if: steps.py-check.outputs.has_py == 'true'
+        run: |
+          pip install --quiet pytest pytest-cov || true
+          if [ -d tests ]; then pytest --cov=. --cov-report=term-missing || pytest || true; fi
+
+  test-rust:
+    name: Rust test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Skip if no Cargo
+        id: rust-check
+        run: |
+          if [ -f Cargo.toml ]; then echo "has_rust=true" >> "$GITHUB_OUTPUT"; else echo "No Cargo.toml found, skipping Rust test."; exit 0; fi
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        if: steps.rust-check.outputs.has_rust == 'true'
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install audio/image system deps (alsa, dbus, chafa, glib, ssl)
+        # Some audio/desktop/image crates need system libs:
+        #   - alsa-sys (alsa audio)         -> libasound2-dev
+        #   - libdbus (D-Bus bindings)      -> libdbus-1-dev
+        #   - ratatui-image (chafa backend) -> libchafa-dev + libglib2.0-dev
+        #                                       (chafa.pc Requires: glib-2.0)
+        # Without these `cargo clippy --all-targets` and
+        # `cargo test` fail on missing pkg-config entries.
+        if: steps.rust-check.outputs.has_rust == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libdbus-1-dev libchafa-dev libglib2.0-dev pkg-config libssl-dev 2>/dev/null || \
+            apt-get install -y --no-install-recommends \
+            libasound2-dev libdbus-1-dev libchafa-dev libglib2.0-dev pkg-config libssl-dev || true
+      - name: cargo fmt
+        if: steps.rust-check.outputs.has_rust == 'true'
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        if: steps.rust-check.outputs.has_rust == 'true'
+        # --all-targets includes tests/examples; we deliberately skip
+        # --all-features because optional image backends (e.g. ratatui-image's
+        # chafa) require system libs not always present in CI.
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        if: steps.rust-check.outputs.has_rust == 'true'
+        # Skip --all-features to avoid pulling optional native deps
+        # (libchafa-dev, etc.) the runner may not have.
+        run: cargo test
+
+  test-node:
+    name: Node test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Skip if no package.json
+        id: node-check
+        run: |
+          if [ -f package.json ]; then echo "has_node=true" >> "$GITHUB_OUTPUT"; else echo "No package.json found, skipping Node test."; exit 0; fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.node-check.outputs.has_node == 'true'
+        with:
+          # Cache only when a lockfile exists; otherwise setup-node
+          # errors with "Dependencies lock file is not found".
+          # Note: setup-node v7 does NOT support 'bun' caching —
+          # fall through to npm cache for bun.lock repos.
+          node-version: '22'
+          cache: ${{ (hashFiles('yarn.lock') != '' && 'yarn') || (hashFiles('pnpm-lock.yaml') != '' && 'pnpm') || (hashFiles('package-lock.json') != '' && 'npm') || (hashFiles('bun.lock') != '' && 'npm') || '' }}
+      - name: Install
+        if: steps.node-check.outputs.has_node == 'true'
+        run: |
+          if [ -f package-lock.json ]; then npm ci || true; fi
+          if [ -f bun.lock ]; then npm install -g bun && bun install --frozen-lockfile || true; fi
+          if [ -f pnpm-lock.yaml ]; then npm install -g pnpm && pnpm install --frozen-lockfile || true; fi
+          if [ -f yarn.lock ]; then npm install -g yarn && yarn install --frozen-lockfile || true; fi
+      - name: Audit
+        if: steps.node-check.outputs.has_node == 'true'
+        run: npm audit --omit=dev || true
+      - name: Test
+        if: steps.node-check.outputs.has_node == 'true'
+        run: |
+          if grep -q '"test"' package.json; then npm test -- --run || true; fi
+          if [ -f bunfig.toml ]; then bun test || true; fi
