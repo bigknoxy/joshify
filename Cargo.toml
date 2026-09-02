@@ -7,43 +7,43 @@ edition = "2021"
 # Only for geteuid(): /proc/self/status is Linux-only and macOS is a shipped target.
 libc = "0.2"
 # Checksum verification for `joshify update`.
-sha2 = "0.11"
+sha2 = "0.10"
 # Staging directory for the downloaded binary before it replaces the running one.
 tempfile = "3"
-ratatui = "0.30"
-ratatui-image = "11.0"
+ratatui = "0.29"
+ratatui-image = "10.0"
 rspotify = "0.16"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = "0.25"
 anyhow = "1"
-reqwest = { version = "0.13", features = ["json", "blocking"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 url = "2.5"
-crossterm = "0.29"
+crossterm = "0.28"
 chrono = "0.4"
-dialoguer = "0.12"
+dialoguer = "0.11"
 futures-util = "0.3"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 bytes = "1"
 lru = "0.18"
-keyring = "4.2"
-base64 = "0.22"
+keyring = "2.0"
+base64 = "0.21"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 tracing-log = "0.2"
 unicode-width = "0.2"
-unicode-truncate = "3"
-toml = "1.1"
+unicode-truncate = "2"
+toml = "0.8"
 dirs-next = "2.0"
 nucleo = "0.5"
 async-trait = "0.1"
 thiserror = "2"
-rand = "0.10"
+rand = "0.8"
 
 # Audio visualization dependencies
 realfft = "3.4"
@@ -60,8 +60,8 @@ librespot = { git = "https://github.com/librespot-org/librespot", branch = "dev"
 librespot = { git = "https://github.com/librespot-org/librespot", branch = "dev", features = ["rodio-backend"] }
 
 [dev-dependencies]
-mockall = "0.15"
+mockall = "0.13"
 tokio-test = "0.4"
-serial_test = "4"
+serial_test = "3"
 
 
