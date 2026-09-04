@@ -12,4 +12,8 @@ ignore = [
     # rsa Marvin timing sidechannel - no patched release exists yet.
     # Pulled in by librespot-core.
     "RUSTSEC-2023-0071",
+    # core2 is unmaintained and all versions yanked; no replacement release
+    # exists. Pulled in transitively via rav1e -> bitstream-io -> core2
+    # (image -> ravif -> rav1e).
+    "RUSTSEC-2026-0105",
 ]
