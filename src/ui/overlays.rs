@@ -178,6 +178,23 @@ fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
+/// Number of search results the overlay lists before collapsing the rest into
+/// an "... and N more" line.
+///
+/// Kept equal to the page size the search API is asked for
+/// (`SPOTIFY_SEARCH_TRACKS_MAX_LIMIT`) so the overlay never promises rows that
+/// were silently clamped away on the way in (#26).
+pub const SEARCH_VISIBLE_ROWS: usize = crate::api::SPOTIFY_SEARCH_TRACKS_MAX_LIMIT as usize;
+
+/// How many results are hidden behind the "... and N more" line.
+///
+/// Subtracting the rows actually rendered is the whole point: the previous
+/// code subtracted a hardcoded 10 while rendering up to 15, so a 20-result
+/// page reported "and 10 more" when only 5 were actually hidden.
+pub fn hidden_result_count(total: usize) -> usize {
+    total.saturating_sub(SEARCH_VISIBLE_ROWS)
+}
+
 /// Truncate text from the start to fit within max_width display columns, adding ellipsis prefix
 fn truncate_from_start(text: &str, max_width: usize) -> String {
     use unicode_truncate::UnicodeTruncateStr;
@@ -274,7 +291,11 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
 
         // Render results with selection
         let max_visible = (inner.height as usize).saturating_sub(6);
-        let results_to_show = search_state.results.iter().take(15).enumerate();
+        let results_to_show = search_state
+            .results
+            .iter()
+            .take(SEARCH_VISIBLE_ROWS)
+            .enumerate();
 
         for (i, track) in results_to_show {
             if i < search_state.scroll_offset {
@@ -297,9 +318,10 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
             lines.push(Line::styled(truncated, style));
         }
 
-        if search_state.results.len() > 15 {
+        let hidden = hidden_result_count(search_state.results.len());
+        if hidden > 0 {
             lines.push(Line::styled(
-                format!("  ... and {} more", search_state.results.len() - 10),
+                format!("  ... and {} more", hidden),
                 Catppuccin::dim(),
             ));
         }
@@ -339,6 +361,7 @@ pub fn render_search_overlay(frame: &mut ratatui::Frame, area: Rect, search_stat
 
 #[cfg(test)]
 mod tests {
+    use super::{hidden_result_count, SEARCH_VISIBLE_ROWS};
     use unicode_truncate::UnicodeTruncateStr;
     use unicode_width::UnicodeWidthStr;
 
@@ -406,5 +429,41 @@ mod tests {
     fn test_prefix_width_correct() {
         const SEARCH_PREFIX: &str = "  / ";
         assert_eq!(test_display_width(SEARCH_PREFIX), 4);
+    }
+
+    // ── Search result-count alignment (#26) ────────────────────────────
+    //
+    // The overlay used to render 15 rows, subtract 10 to build the
+    // "... and N more" line, and ask the API for 15 while the API silently
+    // clamped to 10. Three disagreeing numbers; these pin them to one.
+
+    #[test]
+    fn test_visible_rows_matches_the_api_page_limit() {
+        // The overlay must not promise more rows than the API is asked for.
+        assert_eq!(
+            SEARCH_VISIBLE_ROWS,
+            crate::api::SPOTIFY_SEARCH_TRACKS_MAX_LIMIT as usize,
+            "overlay renders a different number of rows than the API page size"
+        );
+    }
+
+    #[test]
+    fn test_hidden_count_is_zero_when_everything_fits() {
+        assert_eq!(hidden_result_count(SEARCH_VISIBLE_ROWS), 0);
+        assert_eq!(hidden_result_count(9), 0);
+    }
+
+    #[test]
+    fn test_hidden_count_subtracts_the_rows_actually_rendered() {
+        // The old code subtracted a hardcoded 10 while rendering 15, so a
+        // 20-result page claimed "and 10 more" when only 5 were hidden.
+        assert_eq!(hidden_result_count(20), 10);
+        assert_eq!(hidden_result_count(15), 5);
+        assert_eq!(hidden_result_count(11), 1);
+    }
+
+    #[test]
+    fn test_hidden_count_never_underflows() {
+        assert_eq!(hidden_result_count(0), 0);
     }
 }
