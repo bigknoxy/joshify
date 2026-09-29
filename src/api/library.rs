@@ -22,6 +22,15 @@ pub const PLAYLIST_ITEMS_PAGE: u32 = SPOTIFY_PLAYLIST_ITEMS_MAX_LIMIT;
 /// Page size used when walking an album.
 pub const ALBUM_TRACKS_PAGE: u32 = SPOTIFY_ALBUM_TRACKS_MAX_LIMIT;
 
+/// Largest `limit` Joshify sends for a track search.
+///
+/// The search overlay asks for a page of results and shows them inline, so this
+/// is the page size the UI is built around rather than a hard API ceiling. It
+/// is the single source of truth: the overlay renders
+/// `SEARCH_VISIBLE_ROWS` rows and the live search loop requests this many, so
+/// the two cannot drift apart again (#26).
+pub const SPOTIFY_SEARCH_TRACKS_MAX_LIMIT: u32 = 10;
+
 impl SpotifyClient {
     /// Get user's liked tracks (first page)
     pub async fn current_user_saved_tracks(
@@ -155,7 +164,7 @@ impl SpotifyClient {
             tracing::warn!("Token refresh failed before search: {:?}", e);
         }
 
-        let limit = track_limit.min(10);
+        let limit = track_limit.min(SPOTIFY_SEARCH_TRACKS_MAX_LIMIT);
         tracing::debug!(
             "Search params: query='{}', limit={}, market=FromToken",
             query,

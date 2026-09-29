@@ -12,4 +12,5 @@ mod library;
 pub mod playback;
 
 pub use client::SpotifyClient;
+pub use library::SPOTIFY_SEARCH_TRACKS_MAX_LIMIT;
 pub use playback::select_play_device;

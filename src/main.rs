@@ -1,4 +1,5 @@
 use anyhow::Result;
+use joshify::api::SPOTIFY_SEARCH_TRACKS_MAX_LIMIT;
 use joshify::auth::OAuthConfig;
 use joshify::playback::domain::PlaybackContext;
 use joshify::playback::PlaybackMode;
@@ -2036,7 +2037,7 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                     let tx_clone = tx.clone();
                     tokio::spawn(async move {
                         let guard = c.lock().await;
-                        match guard.search(&query, 15).await {
+                        match guard.search(&query, SPOTIFY_SEARCH_TRACKS_MAX_LIMIT).await {
                             Ok(tracks) => {
                                 tracing::info!(
                                     "Search spawned {} results for '{}'",
@@ -2566,7 +2567,10 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         let query_clone = query.clone();
                         tokio::spawn(async move {
                             let guard = c.lock().await;
-                            match guard.search(&query_clone, 15).await {
+                            match guard
+                                .search(&query_clone, SPOTIFY_SEARCH_TRACKS_MAX_LIMIT)
+                                .await
+                            {
                                 Ok(tracks) => {
                                     let items: Vec<TrackListItem> = tracks
                                         .into_iter()
