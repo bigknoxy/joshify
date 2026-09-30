@@ -332,6 +332,11 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
 
     let (tx, mut rx) = mpsc::channel::<String>(1);
 
+    // Shutdown handshake: the outer task signals once it has the code, which
+    // tells the in-flight connection to finish writing its response rather than
+    // being aborted mid-write (#25).
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
     // Spawn the server
     let handle = tokio::spawn(async move {
         loop {
@@ -367,6 +372,20 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
 
                             // Send the code to the main task
                             let _ = tx.send(code.to_string()).await;
+
+                            // Test-only: stall after the code is delivered but
+                            // before the response is written, reproducing a slow
+                            // write. The old fixed 100 ms sleep then aborted the
+                            // connection mid-response, which is the #25 race.
+                            #[cfg(test)]
+                            {
+                                let delay = crate::auth::test_response_delay_ms();
+                                if delay > 0 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
+                                        .await;
+                                }
+                            }
+
                             return Ok::<_, hyper::Error>(resp);
                         }
                     }
@@ -381,23 +400,176 @@ pub async fn run_oauth_callback_server(config: &OAuthConfig) -> Result<String> {
                 }
             });
 
-            if let Err(e) = http1::Builder::new()
-                .serve_connection(stream, service)
-                .await
-            {
-                eprintln!("Error serving connection: {:?}", e);
+            let conn = http1::Builder::new().serve_connection(stream, service);
+            tokio::pin!(conn);
+
+            // Poll the connection until it finishes on its own, or until the
+            // outer task signals that it has the code. In the latter case ask
+            // hyper to drain the in-flight response instead of dropping the
+            // connection, then keep polling until the write completes (#25).
+            let shutdown_requested = tokio::select! {
+                res = conn.as_mut() => {
+                    if let Err(e) = res {
+                        eprintln!("Error serving connection: {:?}", e);
+                    }
+                    false
+                }
+                _ = shutdown_rx.recv() => true,
+            };
+
+            if shutdown_requested {
+                conn.as_mut().graceful_shutdown();
+                if let Err(e) = conn.await {
+                    eprintln!("Error serving connection: {:?}", e);
+                }
             }
+
+            // One connection per exchange: once the response has been written
+            // the server has nothing left to serve, so return rather than
+            // looping back to accept. Dropping the listener also releases the
+            // port for the next run.
+            return;
         }
     });
 
     // Wait for the code
     let code = rx.recv().await.context("Callback server failed")?;
 
-    // Give the server a moment to finish sending the response
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    // Abort the server task
-    handle.abort();
+    // Ask the server to stop, then wait for the in-flight response to be
+    // written before returning. A fixed sleep raced that write: on a slow
+    // socket the abort landed mid-response and the browser saw a connection
+    // error even though the code had been received (#25).
+    let _ = shutdown_tx.send(()).await;
+    if tokio::time::timeout(SHUTDOWN_GRACE, handle).await.is_err() {
+        // The server did not wind down in time; drop it rather than hang.
+        eprintln!("OAuth callback server did not shut down gracefully");
+    }
 
     Ok(code)
+}
+
+/// How long to wait for the callback response to flush before giving up on a
+/// graceful stop and letting the dropped task end the server.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Test-only: artificial delay inserted between delivering the code and
+/// writing the response, so the shutdown race is reproducible on loopback
+/// instead of depending on real machine load (#25).
+#[cfg(test)]
+pub(crate) fn set_test_response_delay_ms(ms: u64) {
+    use std::sync::atomic::Ordering;
+    TEST_RESPONSE_DELAY_MS.store(ms, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn test_response_delay_ms() -> u64 {
+    use std::sync::atomic::Ordering;
+    TEST_RESPONSE_DELAY_MS.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+static TEST_RESPONSE_DELAY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal OAuthConfig pointing at a loopback port.
+    fn config_for(port: u16) -> OAuthConfig {
+        OAuthConfig {
+            client_id: "test-client".to_string(),
+            // A placeholder, not a credential: this exchange never leaves loopback.
+            client_secret: "not-a-real-secret".to_string(),
+            redirect_uri: format!("http://127.0.0.1:{}/callback", port),
+        }
+    }
+
+    /// An ephemeral port that was free a moment ago, so the server can bind it.
+    async fn free_port() -> u16 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let p = l.local_addr().unwrap().port();
+        drop(l);
+        p
+    }
+
+    /// #25 — the success response must reach the client before the server stops.
+    ///
+    /// The response is deliberately stalled past the old fixed 100 ms sleep, so
+    /// the old abort tears the connection down mid-response and the client sees
+    /// a dropped connection instead of the success page (#25).
+    #[tokio::test]
+    async fn callback_response_reaches_the_client() {
+        set_test_response_delay_ms(400);
+        let port = free_port().await;
+        let cfg = config_for(port);
+
+        let server = tokio::spawn({
+            let cfg = cfg.clone();
+            async move { run_oauth_callback_server(&cfg).await }
+        });
+
+        // Give the listener a moment to bind.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let url = format!("http://127.0.0.1:{}/callback?code=abc123", port);
+        let resp = reqwest::get(&url)
+            .await
+            .expect("client should get a response, not a dropped connection");
+
+        assert_eq!(
+            resp.status(),
+            200,
+            "callback must answer 200, not a dropped connection"
+        );
+        let body = resp.text().await.unwrap();
+        assert!(
+            body.contains("Success"),
+            "client should receive the success HTML body, got: {:?}",
+            body
+        );
+
+        let code = server.await.unwrap().unwrap();
+        assert_eq!(
+            code, "abc123",
+            "server should return the code from the query"
+        );
+        set_test_response_delay_ms(0);
+    }
+
+    /// The server must also stop serving after a successful exchange, or it
+    /// would hold the port and keep the process alive.
+    #[tokio::test]
+    async fn server_stops_after_the_exchange() {
+        set_test_response_delay_ms(0);
+        let port = free_port().await;
+        let cfg = config_for(port);
+
+        let server = tokio::spawn({
+            let cfg = cfg.clone();
+            async move { run_oauth_callback_server(&cfg).await }
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let url = format!("http://127.0.0.1:{}/callback?code=xyz789", port);
+        let resp = reqwest::get(&url)
+            .await
+            .expect("first request should succeed");
+        assert_eq!(resp.status(), 200);
+        let _ = resp.text().await;
+
+        let code = server.await.unwrap().unwrap();
+        assert_eq!(code, "xyz789");
+
+        // The port must be free again, proving the listener is gone.
+        let rebound = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::net::TcpListener::bind(("127.0.0.1", port)),
+        )
+        .await;
+        assert!(
+            rebound.is_ok(),
+            "callback server should release port {} after the exchange",
+            port
+        );
+    }
 }
