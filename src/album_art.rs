@@ -135,6 +135,38 @@ impl AlbumArtCache {
     }
 }
 
+/// Minimum gap between two art fetches **for the same URI**, in milliseconds.
+///
+/// Scoped per-URI on purpose: a global cooldown silently dropped the art fetch
+/// for any track change that landed inside the window, leaving the new track
+/// showing the previous track's cover (#24).
+pub const ART_FETCH_COOLDOWN_MS: u64 = 2000;
+
+/// Whether album art should be fetched for `current_uri` right now.
+///
+/// The cooldown exists to suppress refetch storms while seeking within one
+/// track, so it only ever blocks a *repeat* fetch of the URI that was fetched
+/// most recently. A different URI is always allowed through: it cannot be a
+/// refetch, and refusing it is what left rapid track changes showing stale art.
+pub fn should_fetch_art(
+    current_uri: &str,
+    last_fetched_uri: Option<&str>,
+    last_fetch_ms: u64,
+    now_ms: u64,
+) -> bool {
+    // A different track than the one we last fetched: always fetch.
+    match last_fetched_uri {
+        Some(prev) if prev == current_uri => {}
+        _ => return true,
+    }
+    // Same URI: honour the cooldown. A zero timestamp means "never fetched",
+    // which must not read as "fetched at the epoch and long expired".
+    if last_fetch_ms == 0 {
+        return true;
+    }
+    now_ms.saturating_sub(last_fetch_ms) >= ART_FETCH_COOLDOWN_MS
+}
+
 /// Validate an album-art HTTP response before it is trusted or cached.
 ///
 /// Requires a 2xx status AND bytes that decode as a real image — Spotify CDN
