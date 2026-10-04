@@ -1894,11 +1894,16 @@ async fn run_with_args(args: CliArgs) -> Result<()> {
                         }
                         app.player_state.progress_ms = 0;
 
-                        // Debounce album art fetch (2 second cooldown to prevent storm during seeking)
-                        let art_cooldown_ms = 2000u64;
-                        let can_fetch_art = now.saturating_sub(app.last_art_fetch_ms)
-                            >= art_cooldown_ms
-                            && app.last_fetched_art_uri.as_ref() != Some(&audio_item.uri);
+                        // Debounce album art fetch. The cooldown only guards a
+                        // refetch of the same URI; a track change is always
+                        // allowed through, which the old global cooldown
+                        // refused and left showing the previous cover (#24).
+                        let can_fetch_art = joshify::album_art::should_fetch_art(
+                            &audio_item.uri,
+                            app.last_fetched_art_uri.as_deref(),
+                            app.last_art_fetch_ms,
+                            now,
+                        );
 
                         if can_fetch_art {
                             app.last_art_fetch_ms = now;
